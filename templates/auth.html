@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登入 / 註冊 - ETF 投資管理系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        * { font-family: 'Inter', sans-serif; }
+        .toast-message {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: #1f2937; color: white; padding: 12px 24px; border-radius: 8px;
+            z-index: 1000; animation: fadeInOut 3s ease;
+        }
+        @keyframes fadeInOut {
+            0% { opacity: 0; transform: translateX(-50%) translateY(20px); }
+            15% { opacity: 1; transform: translateX(-50%) translateY(0); }
+            85% { opacity: 1; transform: translateX(-50%) translateY(0); }
+            100% { opacity: 0; transform: translateX(-50%) translateY(20px); }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 flex items-center justify-center min-h-screen p-4">
+
+    <div class="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100">
+        <div class="text-center pt-8 pb-4">
+            <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-indigo-100 text-indigo-600 mb-4">
+                <i class="fas fa-chart-line text-3xl"></i>
+            </div>
+            <h2 class="text-2xl font-bold text-slate-800" id="form-title">歡迎回來</h2>
+            <p class="text-slate-500 mt-1" id="form-subtitle">登入以管理您的投資組合</p>
+        </div>
+
+        <div class="p-8 pt-4">
+            <form id="auth-form" onsubmit="handleSubmit(event)">
+                
+                <div id="username-field" class="hidden mb-4">
+                    <label class="block text-sm font-medium text-slate-700 mb-1">使用者名稱</label>
+                    <input type="text" id="username" class="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition" placeholder="例如: ETF達人">
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-slate-700 mb-1">電子郵件</label>
+                    <input type="email" id="email" required class="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition" placeholder="your@email.com">
+                </div>
+
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-slate-700 mb-1">密碼 (至少 6 個字元)</label>
+                    <input type="password" id="password" required minlength="6" class="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition" placeholder="••••••••">
+                </div>
+
+                <button type="submit" id="submit-btn" class="w-full bg-indigo-600 text-white font-bold py-3 rounded-lg hover:bg-indigo-700 transition shadow-md flex justify-center items-center">
+                    登入
+                </button>
+            </form>
+
+            <div class="mt-6 text-center">
+                <button type="button" onclick="toggleMode()" id="toggle-btn" class="text-indigo-600 hover:text-indigo-800 font-medium text-sm transition focus:outline-none">
+                    還沒有帳號？立即註冊
+                </button>
+            </div>
+            
+            <div class="mt-4 text-center">
+                <a href="/" class="text-slate-400 hover:text-slate-600 text-sm"><i class="fas fa-home mr-1"></i>回首頁</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isLoginMode = true;
+
+        function showToast(message, isSuccess = true) {
+            const toast = document.createElement('div');
+            toast.className = 'toast-message';
+            toast.style.backgroundColor = isSuccess ? '#10b981' : '#ef4444';
+            toast.innerHTML = `<i class="fas ${isSuccess ? 'fa-check-circle' : 'fa-exclamation-circle'} mr-2"></i>${message}`;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        function toggleMode() {
+            isLoginMode = !isLoginMode;
+            const title = document.getElementById('form-title');
+            const subtitle = document.getElementById('form-subtitle');
+            const btn = document.getElementById('submit-btn');
+            const toggleBtn = document.getElementById('toggle-btn');
+            const usernameField = document.getElementById('username-field');
+            const usernameInput = document.getElementById('username');
+
+            if (isLoginMode) {
+                title.innerText = '歡迎回來';
+                subtitle.innerText = '登入以管理您的投資組合';
+                btn.innerText = '登入';
+                toggleBtn.innerText = '還沒有帳號？立即註冊';
+                usernameField.classList.add('hidden');
+                usernameInput.removeAttribute('required');
+            } else {
+                title.innerText = '建立新帳號';
+                subtitle.innerText = '加入我們，開啟投資之旅';
+                btn.innerText = '註冊';
+                toggleBtn.innerText = '已有帳號？返回登入';
+                usernameField.classList.remove('hidden');
+                usernameInput.setAttribute('required', 'true');
+            }
+        }
+
+        async function handleSubmit(e) {
+            e.preventDefault();
+            const btn = document.getElementById('submit-btn');
+            const originalText = btn.innerText;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>處理中...';
+            btn.disabled = true;
+
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+            const username = document.getElementById('username').value.trim();
+
+            const endpoint = isLoginMode ? '/api/auth/login' : '/api/auth/register';
+            const payload = isLoginMode ? { email, password } : { username, email, password };
+
+            try {
+                const res = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const data = await res.json();
+
+                if (res.ok && data.status === 'success') {
+                    if (isLoginMode) {
+                        localStorage.setItem('token', data.token);
+                        localStorage.setItem('user', JSON.stringify(data.user));
+                        showToast('登入成功，正在導向...', true);
+                        setTimeout(() => window.location.href = '/etf-list', 1000);
+                    } else {
+                        showToast('註冊成功！請使用新帳號登入', true);
+                        toggleMode();
+                        document.getElementById('password').value = '';
+                    }
+                } else {
+                    showToast(data.message || '操作失敗', false);
+                }
+            } catch (err) {
+                console.error(err);
+                showToast('網路連線錯誤，請稍後再試', false);
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const token = localStorage.getItem('token');
+            const user = localStorage.getItem('user');
+            if (token && user) {
+                window.location.href = '/etf-list';
+            }
+        });
+    </script>
+</body>
+</html>

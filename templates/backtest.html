@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>存股回測 - ETF 投資管理系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        *{font-family:'Inter',sans-serif;}
+        @keyframes fadeInOut{0%,100%{opacity:0;transform:translateX(-50%) translateY(8px)}15%,85%{opacity:1;transform:translateX(-50%) translateY(0)}}
+        .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);color:#fff;padding:10px 20px;border-radius:8px;z-index:9999;animation:fadeInOut 3s ease;font-size:.875rem;}
+        .quick-btn{transition:all .15s;}
+        .quick-btn:hover{transform:translateY(-1px);}
+        .quick-btn.active{background:#4f46e5;color:#fff;border-color:#4f46e5;}
+    </style>
+</head>
+<body class="bg-slate-50 pb-16 md:pb-0">
+
+<nav class="bg-white border-b border-slate-100 sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
+        <div class="flex items-center gap-6">
+            <a href="/" class="flex items-center gap-2 font-bold text-indigo-600 text-lg"><i class="fas fa-chart-line"></i>ETF投資系統</a>
+            <div class="hidden md:flex gap-1">
+                <a href="/etf-list"  class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">ETF精選</a>
+                <a href="/watchlist" class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">自選股</a>
+                <a href="/portfolio" class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">庫存</a>
+                <a href="/backtest"  class="px-3 py-1.5 text-sm rounded-md bg-indigo-50 text-indigo-600 font-medium">回測</a>
+                <a href="/profile"   class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">會員</a>
+            </div>
+        </div>
+        <div id="user-info">
+            <a href="/auth" class="text-sm bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700">登入</a>
+        </div>
+    </div>
+</nav>
+
+<div class="max-w-7xl mx-auto px-4 py-6">
+    <div class="mb-5">
+        <h1 class="text-xl font-bold text-slate-800">定期定額回測</h1>
+        <p class="text-xs text-slate-400 mt-0.5">模擬每月定額投入的長期複利效果</p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+        <!-- ── 左側設定 ── -->
+        <div class="lg:col-span-1 space-y-4">
+            <div class="bg-white rounded-xl border border-slate-100 p-5">
+                <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">快速選擇</h2>
+                <!-- 台股 -->
+                <p class="text-xs text-slate-400 mb-2">台股熱門</p>
+                <div class="flex flex-wrap gap-1.5 mb-3">
+                    <button onclick="pickTicker('0050')"  class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">0050</button>
+                    <button onclick="pickTicker('0056')"  class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">0056</button>
+                    <button onclick="pickTicker('00878')" class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">00878</button>
+                    <button onclick="pickTicker('00919')" class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">00919</button>
+                    <button onclick="pickTicker('006208')"class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">006208</button>
+                    <button onclick="pickTicker('00929')" class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">00929</button>
+                </div>
+                <!-- 美股 -->
+                <p class="text-xs text-slate-400 mb-2">美股熱門</p>
+                <div class="flex flex-wrap gap-1.5">
+                    <button onclick="pickTicker('SPY')"  class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">SPY</button>
+                    <button onclick="pickTicker('QQQ')"  class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">QQQ</button>
+                    <button onclick="pickTicker('VOO')"  class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">VOO</button>
+                    <button onclick="pickTicker('VTI')"  class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">VTI</button>
+                    <button onclick="pickTicker('SCHD')" class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">SCHD</button>
+                    <button onclick="pickTicker('VYM')"  class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">VYM</button>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl border border-slate-100 p-5">
+                <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4">回測參數</h2>
+                <form id="backtest-form" onsubmit="runBacktest(event)" class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">ETF 代碼</label>
+                        <input type="text" id="ticker" value="0050" required
+                            class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 uppercase font-bold text-indigo-600"
+                            placeholder="0050 或 SPY"
+                            oninput="syncQuickBtns(this.value.toUpperCase())">
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">開始日期</label>
+                            <input type="date" id="start-date" value="2014-01-01" required
+                                class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">結束日期</label>
+                            <input type="date" id="end-date" required
+                                class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                        </div>
+                    </div>
+
+                    <div class="border-t border-slate-100 pt-4 space-y-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">期初單筆投入 <span class="text-slate-400 font-normal">（元，可為 0）</span></label>
+                            <input type="number" id="acc-initial" value="0" min="0"
+                                class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">每月定期定額 <span class="text-slate-400 font-normal">（元）</span></label>
+                            <input type="number" id="acc-monthly" value="10000" min="0"
+                                class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                        </div>
+                    </div>
+
+                    <button type="submit" id="btn-submit"
+                        class="w-full bg-indigo-600 text-white font-semibold py-2.5 rounded-lg hover:bg-indigo-700 transition text-sm">
+                        <i class="fas fa-play mr-1.5"></i>開始回測
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- ── 右側結果 ── -->
+        <div class="lg:col-span-2 space-y-4">
+
+            <!-- 結果統計 4 格 -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div class="bg-white rounded-xl border border-slate-100 p-4">
+                    <p class="text-xs text-slate-400 mb-1">投入總本金</p>
+                    <p id="total-invested" class="text-lg font-bold text-slate-800 tabular-nums">---</p>
+                </div>
+                <div class="bg-indigo-600 rounded-xl p-4 text-white">
+                    <p class="text-xs text-indigo-200 mb-1">期末總資產</p>
+                    <p id="final-value" class="text-lg font-bold tabular-nums">---</p>
+                </div>
+                <div class="bg-white rounded-xl border border-slate-100 p-4">
+                    <p class="text-xs text-slate-400 mb-1">累積損益</p>
+                    <p id="total-profit" class="text-lg font-bold tabular-nums text-slate-800">---</p>
+                </div>
+                <div class="bg-white rounded-xl border border-slate-100 p-4">
+                    <p class="text-xs text-slate-400 mb-1">總報酬率</p>
+                    <p id="total-return" class="text-lg font-bold tabular-nums text-slate-800">---</p>
+                </div>
+            </div>
+
+            <!-- 走勢圖 -->
+            <div class="bg-white rounded-xl border border-slate-100 p-5" style="height:340px">
+                <div class="flex items-center justify-between mb-3">
+                    <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">資產市值走勢</p>
+                    <p id="result-ticker" class="text-xs text-indigo-500 font-bold"></p>
+                </div>
+                <div style="height:260px; position:relative">
+                    <canvas id="backtest-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- 提示說明 -->
+            <div class="bg-amber-50 border border-amber-100 rounded-xl p-4 text-xs text-amber-700 flex gap-2">
+                <i class="fas fa-info-circle mt-0.5 flex-shrink-0"></i>
+                <span>回測基於歷史月均價計算，不含股息再投入，僅供參考。實際投資結果可能因手續費、稅務及市場流動性而有所不同。</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 手機底部 -->
+<nav class="fixed bottom-0 w-full bg-white border-t border-slate-100 z-50 md:hidden">
+    <div class="flex justify-around py-2">
+        <a href="/etf-list"  class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-list text-lg"></i><span class="text-[10px]">精選</span></a>
+        <a href="/watchlist" class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-heart text-lg"></i><span class="text-[10px]">自選</span></a>
+        <a href="/portfolio" class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-chart-pie text-lg"></i><span class="text-[10px]">庫存</span></a>
+        <a href="/backtest"  class="flex flex-col items-center gap-0.5 text-indigo-600"><i class="fas fa-history text-lg"></i><span class="text-[10px] font-medium">回測</span></a>
+        <a href="/profile"   class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-user text-lg"></i><span class="text-[10px]">會員</span></a>
+    </div>
+</nav>
+
+<script>
+let chartInstance=null;
+document.getElementById('end-date').valueAsDate=new Date();
+
+function toast(msg,ok=true){
+    const el=document.createElement('div');el.className='toast';
+    el.style.background=ok?'#10b981':'#ef4444';
+    el.innerHTML=`<i class="fas ${ok?'fa-check':'fa-times-circle'} mr-2"></i>${msg}`;
+    document.body.appendChild(el);setTimeout(()=>el.remove(),3000);
+}
+
+function checkLogin(){
+    const u=localStorage.getItem('user');
+    if(u){
+        try{
+            const user=JSON.parse(u);
+            document.getElementById('user-info').innerHTML=`
+                <div class="flex items-center gap-2">
+                    <span class="text-sm text-slate-600 hidden md:inline">${user.username}</span>
+                    <button onclick="logout()" class="text-slate-400 hover:text-slate-700 px-2 py-1 rounded hover:bg-slate-100 text-sm"><i class="fas fa-sign-out-alt"></i></button>
+                </div>`;
+        }catch(e){localStorage.removeItem('user');}
+    }
+}
+function logout(){localStorage.removeItem('user');localStorage.removeItem('token');location.reload();}
+
+// 快速選擇
+function pickTicker(t){
+    document.getElementById('ticker').value=t;
+    syncQuickBtns(t);
+}
+function syncQuickBtns(val){
+    document.querySelectorAll('.quick-btn').forEach(b=>{
+        b.classList.toggle('active', b.textContent.trim()===val);
+    });
+}
+// 初始同步
+syncQuickBtns('0050');
+
+async function runBacktest(e){
+    e.preventDefault();
+    const btn=document.getElementById('btn-submit');
+    btn.innerHTML='<i class="fas fa-spinner fa-spin mr-1.5"></i>計算中…';
+    btn.disabled=true;
+
+    const ticker=document.getElementById('ticker').value.trim().toUpperCase();
+    const initialAmt=Number(document.getElementById('acc-initial').value)||0;
+    const monthlyAmt=Number(document.getElementById('acc-monthly').value)||0;
+
+    if(!ticker){toast('請輸入 ETF 代碼',false);resetBtn();return;}
+    if(initialAmt===0&&monthlyAmt===0){toast('請設定至少一項投入金額',false);resetBtn();return;}
+
+    try{
+        const res=await fetch('/api/backtest',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+                mode:'accumulate', ticker,
+                start_date:document.getElementById('start-date').value,
+                end_date:document.getElementById('end-date').value,
+                initial_amount:initialAmt,
+                monthly_amount:monthlyAmt
+            })
+        });
+        const result=await res.json();
+
+        if(result.status==='success'){
+            const d=result.data;
+            const up=d.total_profit>=0;
+
+            document.getElementById('total-invested').textContent='$'+Math.round(d.total_invested).toLocaleString();
+            document.getElementById('final-value').textContent='$'+Math.round(d.final_value).toLocaleString();
+
+            const profitEl=document.getElementById('total-profit');
+            profitEl.textContent=(up?'+':'-')+'$'+Math.abs(Math.round(d.total_profit)).toLocaleString();
+            profitEl.className=`text-lg font-bold tabular-nums ${up?'text-red-500':'text-green-600'}`;
+
+            const retEl=document.getElementById('total-return');
+            retEl.textContent=(d.total_return>=0?'+':'')+d.total_return.toFixed(1)+'%';
+            retEl.className=`text-lg font-bold tabular-nums ${d.total_return>=0?'text-red-500':'text-green-600'}`;
+
+            document.getElementById('result-ticker').textContent=ticker;
+
+            if(d.transactions?.length){
+                renderChart(d.transactions.map(t=>t.date), d.transactions.map(t=>t.market_value), d.transactions.map(t=>t.amount));
+            }
+            toast('回測完成',true);
+        } else {
+            toast(result.message||'回測失敗，請確認代碼與日期',false);
+        }
+    }catch(err){
+        toast('連線失敗，請稍後再試',false);
+    }
+    resetBtn();
+}
+
+function resetBtn(){
+    const btn=document.getElementById('btn-submit');
+    btn.innerHTML='<i class="fas fa-play mr-1.5"></i>開始回測';
+    btn.disabled=false;
+}
+
+function renderChart(labels, values, invested){
+    const ctx=document.getElementById('backtest-chart').getContext('2d');
+    if(chartInstance)chartInstance.destroy();
+    chartInstance=new Chart(ctx,{
+        type:'line',
+        data:{
+            labels,
+            datasets:[
+                {
+                    label:'資產市值',
+                    data:values,
+                    borderColor:'#6366f1',
+                    backgroundColor:'rgba(99,102,241,.08)',
+                    fill:true,tension:.4,pointRadius:0,pointHoverRadius:5,borderWidth:2,
+                    order:1
+                },
+                {
+                    label:'累計投入',
+                    data:invested.reduce((acc,v,i)=>{acc.push((acc[i-1]||0)+v);return acc;},[]),
+                    borderColor:'#e2e8f0',
+                    borderDash:[4,4],
+                    fill:false,tension:0,pointRadius:0,borderWidth:1.5,
+                    order:2
+                }
+            ]
+        },
+        options:{
+            responsive:true,maintainAspectRatio:false,
+            interaction:{intersect:false,mode:'index'},
+            plugins:{
+                legend:{display:true,position:'top',labels:{boxWidth:12,font:{size:11}}},
+                tooltip:{callbacks:{label:c=>`${c.dataset.label}: $${Math.round(c.raw).toLocaleString()}`}}
+            },
+            scales:{
+                y:{ticks:{callback:v=>'$'+(v>=1e6?(v/1e6).toFixed(1)+'M':(v/1000).toFixed(0)+'K')},grid:{color:'#f1f5f9'}},
+                x:{ticks:{maxTicksLimit:8,font:{size:11}},grid:{display:false}}
+            }
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded',()=>{checkLogin();renderChart([],[],[]);});
+</script>
+</body>
+</html>

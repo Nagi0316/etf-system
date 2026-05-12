@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ETF 精選 - 投資管理系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        * { font-family: 'Inter', sans-serif; }
+        .rank-1 { background:linear-gradient(135deg,#FFD700,#FDB931); color:#1a1a1a; }
+        .rank-2 { background:linear-gradient(135deg,#C0C0C0,#E8E8E8); color:#1a1a1a; }
+        .rank-3 { background:linear-gradient(135deg,#CD7F32,#B87333); color:#fff; }
+        .rank-other { background:#f1f5f9; color:#64748b; }
+        .rank-badge { width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:50%;font-weight:700;font-size:.75rem;flex-shrink:0; }
+        .row-hover:hover { background:#f8fafc; }
+        @keyframes fadeInOut{0%,100%{opacity:0;transform:translateX(-50%) translateY(10px)}15%,85%{opacity:1;transform:translateX(-50%) translateY(0)}}
+        .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);color:#fff;padding:10px 20px;border-radius:8px;z-index:9999;animation:fadeInOut 3s ease;font-size:.875rem;}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .spinner{display:inline-block;width:20px;height:20px;border:2px solid #e2e8f0;border-top-color:#6366f1;border-radius:50%;animation:spin .8s linear infinite;}
+    </style>
+</head>
+<body class="bg-slate-50 pb-16 md:pb-0">
+
+<nav class="bg-white border-b border-slate-100 sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
+        <div class="flex items-center gap-6">
+            <a href="/" class="flex items-center gap-2 font-bold text-indigo-600 text-lg">
+                <i class="fas fa-chart-line"></i>ETF投資系統
+            </a>
+            <div class="hidden md:flex gap-1">
+                <a href="/etf-list"  class="px-3 py-1.5 text-sm rounded-md bg-indigo-50 text-indigo-600 font-medium">ETF精選</a>
+                <a href="/watchlist" class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">自選股</a>
+                <a href="/portfolio" class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">庫存</a>
+                <a href="/backtest"  class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">回測</a>
+                <a href="/profile"   class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">會員</a>
+            </div>
+        </div>
+        <div class="flex items-center gap-3">
+            <div class="relative hidden md:block">
+                <input id="search-input" type="text" placeholder="搜尋代碼或名稱…"
+                    class="pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg w-52 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                <i class="fas fa-search absolute left-2.5 top-2.5 text-xs text-slate-400"></i>
+            </div>
+            <div id="user-info">
+                <a href="/auth" class="text-sm bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700">登入</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+<div class="max-w-7xl mx-auto px-4 py-6">
+
+    <!-- 頁首：標題 + 台/美切換 -->
+    <div class="flex items-center justify-between mb-5">
+        <div>
+            <h1 class="text-xl font-bold text-slate-800">ETF 排行榜</h1>
+            <p id="update-time" class="text-xs text-slate-400 mt-0.5">資料更新中…</p>
+        </div>
+        <div class="flex bg-slate-100 rounded-lg p-0.5">
+            <button id="btn-tw" onclick="switchMarket('TW')"
+                class="px-5 py-1.5 rounded-md text-sm font-semibold bg-white text-slate-800 shadow-sm transition-all">台股</button>
+            <button id="btn-us" onclick="switchMarket('US')"
+                class="px-5 py-1.5 rounded-md text-sm font-semibold text-slate-400 transition-all">美股</button>
+        </div>
+    </div>
+
+    <!-- 排名 Tab -->
+    <div class="flex gap-0 border-b border-slate-200 mb-0">
+        <button id="tab-volume" onclick="switchRanking('volume',event)"
+            class="rank-tab px-4 py-2.5 text-sm font-medium text-indigo-600 border-b-2 border-indigo-500 -mb-px">成交量</button>
+        <button id="tab-asset" onclick="switchRanking('asset',event)"
+            class="rank-tab px-4 py-2.5 text-sm font-medium text-slate-400 border-b-2 border-transparent -mb-px hover:text-slate-600">資產規模</button>
+        <button id="tab-return" onclick="switchRanking('return',event)"
+            class="rank-tab px-4 py-2.5 text-sm font-medium text-slate-400 border-b-2 border-transparent -mb-px hover:text-slate-600">年化報酬</button>
+        <button id="tab-yield" onclick="switchRanking('yield',event)"
+            class="rank-tab px-4 py-2.5 text-sm font-medium text-slate-400 border-b-2 border-transparent -mb-px hover:text-slate-600">殖利率</button>
+    </div>
+
+    <!-- 表格 -->
+    <div class="bg-white rounded-b-xl border border-t-0 border-slate-100 overflow-hidden">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-slate-100 text-xs font-medium text-slate-400 uppercase tracking-wide">
+                    <th class="px-4 py-3 text-left w-10">#</th>
+                    <th class="px-4 py-3 text-left">ETF</th>
+                    <th class="px-4 py-3 text-right">現價</th>
+                    <th class="px-4 py-3 text-right">今日漲跌</th>
+                    <th class="px-4 py-3 text-right" id="rank-col-header">今日成交量</th>
+                    <th class="px-4 py-3 text-right hidden md:table-cell">殖利率</th>
+                    <th class="px-4 py-3 w-10"></th>
+                </tr>
+            </thead>
+            <tbody id="ranking-table-body">
+                <tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">
+                    <div class="spinner mx-auto mb-3"></div>資料載入中…
+                </td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 手機底部 -->
+<nav class="fixed bottom-0 w-full bg-white border-t border-slate-100 z-50 md:hidden">
+    <div class="flex justify-around py-2">
+        <a href="/etf-list"  class="flex flex-col items-center gap-0.5 text-indigo-600"><i class="fas fa-list text-lg"></i><span class="text-[10px] font-medium">精選</span></a>
+        <a href="/watchlist" class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-heart text-lg"></i><span class="text-[10px]">自選</span></a>
+        <a href="/portfolio" class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-chart-pie text-lg"></i><span class="text-[10px]">庫存</span></a>
+        <a href="/backtest"  class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-history text-lg"></i><span class="text-[10px]">回測</span></a>
+        <a href="/profile"   class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-user text-lg"></i><span class="text-[10px]">會員</span></a>
+    </div>
+</nav>
+
+<!-- 搜尋 Modal -->
+<div id="search-modal" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-2xl w-full max-w-sm p-5 shadow-xl">
+        <div class="flex justify-between items-center mb-3">
+            <h3 class="font-bold text-slate-800 text-sm">搜尋結果</h3>
+            <button onclick="document.getElementById('search-modal').style.display='none'" class="text-slate-400 hover:text-slate-600"><i class="fas fa-times"></i></button>
+        </div>
+        <div id="search-results-list" class="space-y-2 max-h-80 overflow-y-auto"></div>
+    </div>
+</div>
+
+<script>
+let currentType='volume', currentMarket='TW', allEtfData=[], currentUser=null, updateInterval=null;
+
+function toast(msg, ok=true){
+    const el=document.createElement('div'); el.className='toast';
+    el.style.background=ok?'#10b981':'#ef4444';
+    el.innerHTML=`<i class="fas ${ok?'fa-check':'fa-times-circle'} mr-2"></i>${msg}`;
+    document.body.appendChild(el); setTimeout(()=>el.remove(),3000);
+}
+
+function fmtVol(v, market){
+    if(!v) return '-';
+    if(market==='TW'){
+        const lots=Math.round(v/1000);
+        if(lots>=100000) return (lots/10000).toFixed(1)+' 萬張';
+        return lots.toLocaleString()+' 張';
+    }
+    if(v>=1e9) return (v/1e9).toFixed(2)+'B';
+    if(v>=1e6) return (v/1e6).toFixed(1)+'M';
+    return v.toLocaleString();
+}
+
+function fmtAsset(v){
+    if(!v||v<=0) return '-';
+    if(v>=1e12) return (v/1e12).toFixed(2)+' 兆';
+    if(v>=1e10) return (v/1e10).toFixed(1)+' 百億';
+    if(v>=1e8)  return (v/1e8).toFixed(1)+' 億';
+    return (v/1e4).toFixed(1)+' 萬';
+}
+
+function payoutBadge(freq){
+    const map={'月配':'bg-blue-50 text-blue-600','季配':'bg-emerald-50 text-emerald-600',
+               '半年配':'bg-amber-50 text-amber-600','年配':'bg-purple-50 text-purple-600',
+               '不配息':'bg-slate-100 text-slate-400'};
+    if(!freq||freq==='未知') return '';
+    return `<span class="text-[11px] px-1.5 py-0.5 rounded font-medium ${map[freq]||'bg-slate-100 text-slate-400'} ml-1.5">${freq}</span>`;
+}
+
+function checkLogin(){
+    const u=localStorage.getItem('user');
+    if(u){
+        try{
+            currentUser=JSON.parse(u);
+            document.getElementById('user-info').innerHTML=`
+                <div class="flex items-center gap-2">
+                    <span class="text-sm text-slate-600 hidden md:inline">${currentUser.username}</span>
+                    <button onclick="logout()" class="text-sm text-slate-400 hover:text-slate-700 px-2 py-1 rounded hover:bg-slate-100"><i class="fas fa-sign-out-alt"></i></button>
+                </div>`;
+        }catch(e){localStorage.removeItem('user');}
+    }
+}
+function logout(){localStorage.removeItem('user');localStorage.removeItem('token');location.reload();}
+
+function switchMarket(m){
+    currentMarket=m;
+    const on='px-5 py-1.5 rounded-md text-sm font-semibold bg-white text-slate-800 shadow-sm transition-all';
+    const off='px-5 py-1.5 rounded-md text-sm font-semibold text-slate-400 transition-all';
+    document.getElementById('btn-tw').className=m==='TW'?on:off;
+    document.getElementById('btn-us').className=m==='US'?on:off;
+    renderTable(allEtfData,currentType);
+}
+
+function switchRanking(type, e){
+    currentType=type;
+    document.querySelectorAll('.rank-tab').forEach(t=>{
+        t.className='rank-tab px-4 py-2.5 text-sm font-medium text-slate-400 border-b-2 border-transparent -mb-px hover:text-slate-600';
+    });
+    const activeTab=document.getElementById('tab-'+type);
+    if(activeTab) activeTab.className='rank-tab px-4 py-2.5 text-sm font-medium text-indigo-600 border-b-2 border-indigo-500 -mb-px';
+
+    const headers={volume:'今日成交量',asset:'資產規模',return:'年化報酬',yield:'殖利率'};
+    document.getElementById('rank-col-header').textContent=headers[type]||'';
+
+    const tbody=document.getElementById('ranking-table-body');
+    tbody.innerHTML=`<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">
+        <div class="spinner mx-auto mb-3"></div>載入中…</td></tr>`;
+
+    fetch(`/api/etf-rankings/${type}`)
+        .then(r=>r.json())
+        .then(res=>{
+            if(res.status==='success'){
+                allEtfData=res.data||[];
+                const t=res.update_time||new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
+                document.getElementById('update-time').textContent=`更新於 ${t}`;
+                renderTable(allEtfData,type);
+            } else {
+                tbody.innerHTML=`<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">暫無資料</td></tr>`;
+            }
+        })
+        .catch(()=>{ tbody.innerHTML=`<tr><td colspan="7" class="px-4 py-14 text-center text-red-400 text-sm">載入失敗，請重新整理</td></tr>`; });
+}
+
+function renderTable(data, type){
+    const tbody=document.getElementById('ranking-table-body');
+    const rows=(data||[]).filter(d=>d.market===currentMarket).slice(0,10);
+
+    if(!rows.length){
+        tbody.innerHTML=`<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">
+            ${allEtfData.length?'此市場暫無資料':'數據抓取中，請稍後重新整理頁面'}</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML=rows.map((item,i)=>{
+        const rank=i+1;
+        const bCls=rank===1?'rank-1':rank===2?'rank-2':rank===3?'rank-3':'rank-other';
+        const chg=item.price_change_percent||0;
+        const chgCls=chg>=0?'text-red-500':'text-green-600';
+        const chgTxt=(chg>=0?'+':'')+chg.toFixed(2)+'%';
+        const price=item.current_price?item.current_price.toFixed(2):'-';
+
+        let rankVal='-';
+        if(type==='volume')      rankVal=fmtVol(item.volume||0,item.market);
+        else if(type==='asset')  rankVal=fmtAsset(item.asset_size);
+        else if(type==='return'){
+            const r=item.annual_return_1y||0;
+            rankVal=`<span class="${r>=0?'text-red-500':'text-green-600'}">${r>=0?'+':''}${r.toFixed(2)}%</span>`;
+        } else if(type==='yield'){
+            const y=item.dividend_yield||0;
+            rankVal=`<span class="text-emerald-600 font-medium">${y.toFixed(2)}%</span>`;
+        }
+
+        const yieldTxt=item.dividend_yield?item.dividend_yield.toFixed(2)+'%':'-';
+
+        return `
+        <tr class="row-hover border-b border-slate-50 cursor-pointer transition-colors"
+            onclick="location.href='/etf-detail/${item.ticker}'">
+            <td class="px-4 py-3.5">
+                <div class="rank-badge ${bCls}">${rank}</div>
+            </td>
+            <td class="px-4 py-3.5 max-w-0">
+                <div class="flex items-center gap-1 flex-wrap">
+                    <span class="font-bold text-indigo-600 text-sm">${item.ticker}</span>
+                    ${payoutBadge(item.payout_freq)}
+                </div>
+                <div class="text-xs text-slate-400 mt-0.5 truncate">${item.name||''}</div>
+            </td>
+            <td class="px-4 py-3.5 text-right font-semibold text-slate-800 tabular-nums">${price}</td>
+            <td class="px-4 py-3.5 text-right font-semibold tabular-nums ${chgCls}">${chgTxt}</td>
+            <td class="px-4 py-3.5 text-right text-slate-600 tabular-nums">${rankVal}</td>
+            <td class="px-4 py-3.5 text-right text-emerald-600 tabular-nums hidden md:table-cell">${yieldTxt}</td>
+            <td class="px-4 py-3.5 text-center" onclick="event.stopPropagation()">
+                <button onclick="addToWatchlist('${item.ticker}','${(item.name||'').replace(/'/g,"\\'")}','${item.market}')"
+                    title="加入自選"
+                    class="w-7 h-7 rounded-md bg-indigo-50 text-indigo-500 hover:bg-indigo-100 transition-colors inline-flex items-center justify-center">
+                    <i class="fas fa-plus text-xs"></i>
+                </button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+async function addToWatchlist(ticker,name,market){
+    if(!currentUser){toast('請先登入',false);setTimeout(()=>location.href='/auth',1000);return;}
+    try{
+        const res=await fetch('/api/watchlist/add',{
+            method:'POST',
+            headers:{'Content-Type':'application/json','X-User-Id':currentUser.id},
+            body:JSON.stringify({ticker,name,market})
+        });
+        const d=await res.json();
+        toast(d.status==='success'?`已加入 ${ticker}`:(d.message||'加入失敗'),d.status==='success');
+    }catch{toast('網路錯誤',false);}
+}
+
+document.getElementById('search-input')?.addEventListener('keypress',async e=>{
+    if(e.key!=='Enter') return;
+    const q=e.target.value.trim(); if(!q) return;
+    try{
+        const res=await fetch(`/api/etf/search/dynamic?q=${encodeURIComponent(q)}`);
+        const d=await res.json();
+        if(d.status==='success'&&d.data?.length){
+            if(d.data.length===1){location.href=`/etf-detail/${d.data[0].ticker}`;return;}
+            document.getElementById('search-results-list').innerHTML=d.data.map(item=>`
+                <div onclick="location.href='/etf-detail/${item.ticker}'"
+                    class="flex justify-between items-center p-3 rounded-lg border border-slate-100 cursor-pointer hover:bg-slate-50">
+                    <div>
+                        <span class="font-bold text-indigo-600 text-sm">${item.ticker}</span>
+                        <div class="text-xs text-slate-400">${item.name||''}</div>
+                    </div>
+                    <div class="text-right">
+                        <div class="font-medium text-sm tabular-nums">${item.current_price?item.current_price.toFixed(2):'-'}</div>
+                        <div class="text-xs tabular-nums ${(item.price_change_percent||0)>=0?'text-red-500':'text-green-600'}">
+                            ${(item.price_change_percent||0)>=0?'+':''}${(item.price_change_percent||0).toFixed(2)}%
+                        </div>
+                    </div>
+                </div>`).join('');
+            document.getElementById('search-modal').style.display='flex';
+        } else { toast('找不到相關 ETF',false); }
+    }catch{toast('搜尋失敗',false);}
+});
+
+window.onclick=e=>{const m=document.getElementById('search-modal');if(e.target===m)m.style.display='none';};
+
+document.addEventListener('DOMContentLoaded',()=>{
+    checkLogin();
+    switchRanking('volume',null);
+    updateInterval=setInterval(()=>switchRanking(currentType,null),300000);
+});
+</script>
+</body>
+</html>

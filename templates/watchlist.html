@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>自選股 - ETF 投資管理系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        *{font-family:'Inter',sans-serif;}
+        .row-hover:hover{background:#f8fafc;}
+        @keyframes fadeInOut{0%,100%{opacity:0;transform:translateX(-50%) translateY(8px)}15%,85%{opacity:1;transform:translateX(-50%) translateY(0)}}
+        .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);color:#fff;padding:10px 20px;border-radius:8px;z-index:9999;animation:fadeInOut 3s ease;font-size:.875rem;}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .spinner{display:inline-block;width:18px;height:18px;border:2px solid #e2e8f0;border-top-color:#6366f1;border-radius:50%;animation:spin .8s linear infinite;}
+    </style>
+</head>
+<body class="bg-slate-50 pb-16 md:pb-0">
+
+<nav class="bg-white border-b border-slate-100 sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
+        <div class="flex items-center gap-6">
+            <a href="/" class="flex items-center gap-2 font-bold text-indigo-600 text-lg"><i class="fas fa-chart-line"></i>ETF投資系統</a>
+            <div class="hidden md:flex gap-1">
+                <a href="/etf-list"  class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">ETF精選</a>
+                <a href="/watchlist" class="px-3 py-1.5 text-sm rounded-md bg-indigo-50 text-indigo-600 font-medium">自選股</a>
+                <a href="/portfolio" class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">庫存</a>
+                <a href="/backtest"  class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">回測</a>
+                <a href="/profile"   class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">會員</a>
+            </div>
+        </div>
+        <div id="user-info">
+            <a href="/auth" class="text-sm bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700">登入</a>
+        </div>
+    </div>
+</nav>
+
+<div class="max-w-7xl mx-auto px-4 py-6">
+    <div class="flex items-center justify-between mb-5">
+        <div>
+            <h1 class="text-xl font-bold text-slate-800">我的自選股</h1>
+            <p id="update-time" class="text-xs text-slate-400 mt-0.5">追蹤您關注的 ETF</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <div class="flex bg-slate-100 rounded-lg p-0.5">
+                <button id="btn-all" onclick="switchMarket('all')" class="px-4 py-1.5 rounded-md text-sm font-semibold bg-white text-slate-800 shadow-sm transition-all">全部</button>
+                <button id="btn-tw"  onclick="switchMarket('TW')"  class="px-4 py-1.5 rounded-md text-sm font-semibold text-slate-400 transition-all">台股</button>
+                <button id="btn-us"  onclick="switchMarket('US')"  class="px-4 py-1.5 rounded-md text-sm font-semibold text-slate-400 transition-all">美股</button>
+            </div>
+            <button onclick="openAddModal()" class="flex items-center gap-1.5 bg-indigo-600 text-white text-sm px-3 py-2 rounded-lg hover:bg-indigo-700 transition-all">
+                <i class="fas fa-plus text-xs"></i>新增
+            </button>
+        </div>
+    </div>
+
+    <!-- 登入提示 -->
+    <div id="login-prompt" class="hidden bg-white rounded-xl border border-slate-100 py-16 text-center">
+        <i class="fas fa-lock text-3xl text-slate-300 mb-3 block"></i>
+        <p class="text-slate-500 mb-4">請先登入以查看自選股</p>
+        <a href="/auth" class="bg-indigo-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-indigo-700">前往登入</a>
+    </div>
+
+    <!-- 空狀態 -->
+    <div id="empty-state" class="hidden bg-white rounded-xl border border-slate-100 py-16 text-center">
+        <i class="fas fa-star text-3xl text-slate-200 mb-3 block"></i>
+        <p class="text-slate-500 mb-1 font-medium">尚未加入自選股</p>
+        <p class="text-slate-400 text-sm mb-4">從 ETF 精選或搜尋頁面加入</p>
+        <button onclick="openAddModal()" class="bg-indigo-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-indigo-700">
+            <i class="fas fa-plus mr-1.5"></i>新增自選股
+        </button>
+    </div>
+
+    <!-- 表格 -->
+    <div id="table-wrap" class="bg-white rounded-xl border border-slate-100 overflow-hidden">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-slate-100 text-xs font-medium text-slate-400 uppercase tracking-wide">
+                    <th class="px-4 py-3 text-left">ETF</th>
+                    <th class="px-4 py-3 text-right">現價</th>
+                    <th class="px-4 py-3 text-right">漲跌幅</th>
+                    <th class="px-4 py-3 text-right hidden md:table-cell">今日高低</th>
+                    <th class="px-4 py-3 text-right hidden md:table-cell">殖利率</th>
+                    <th class="px-4 py-3 w-16"></th>
+                </tr>
+            </thead>
+            <tbody id="watchlist-body">
+                <tr><td colspan="6" class="px-4 py-14 text-center text-slate-400 text-sm">
+                    <div class="spinner mx-auto mb-3"></div>載入中…
+                </td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 手機底部 -->
+<nav class="fixed bottom-0 w-full bg-white border-t border-slate-100 z-50 md:hidden">
+    <div class="flex justify-around py-2">
+        <a href="/etf-list"  class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-list text-lg"></i><span class="text-[10px]">精選</span></a>
+        <a href="/watchlist" class="flex flex-col items-center gap-0.5 text-indigo-600"><i class="fas fa-heart text-lg"></i><span class="text-[10px] font-medium">自選</span></a>
+        <a href="/portfolio" class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-chart-pie text-lg"></i><span class="text-[10px]">庫存</span></a>
+        <a href="/backtest"  class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-history text-lg"></i><span class="text-[10px]">回測</span></a>
+        <a href="/profile"   class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-user text-lg"></i><span class="text-[10px]">會員</span></a>
+    </div>
+</nav>
+
+<!-- 新增 Modal -->
+<div id="addModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="font-bold text-slate-800">新增自選股</h3>
+            <button onclick="closeAddModal()" class="text-slate-400 hover:text-slate-600"><i class="fas fa-times"></i></button>
+        </div>
+        <input type="text" id="add-ticker" placeholder="輸入代碼，例：0050 或 QQQ"
+            class="w-full px-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 mb-1 uppercase">
+        <p class="text-xs text-slate-400 mb-4">支援台股（0050）與美股（SPY）所有 ETF</p>
+        <div class="flex gap-2">
+            <button id="add-confirm-btn" onclick="addToWatchlist()"
+                class="flex-1 bg-indigo-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-indigo-700">確認新增</button>
+            <button onclick="closeAddModal()"
+                class="flex-1 bg-slate-100 text-slate-600 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-200">取消</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentMarket='all', currentUser=null, watchlistData=[];
+
+function toast(msg,ok=true){
+    const el=document.createElement('div');el.className='toast';
+    el.style.background=ok?'#10b981':'#ef4444';
+    el.innerHTML=`<i class="fas ${ok?'fa-check':'fa-times-circle'} mr-2"></i>${msg}`;
+    document.body.appendChild(el);setTimeout(()=>el.remove(),3000);
+}
+
+function checkLogin(){
+    const u=localStorage.getItem('user');
+    if(u){
+        try{
+            currentUser=JSON.parse(u);
+            document.getElementById('user-info').innerHTML=`
+                <div class="flex items-center gap-2">
+                    <span class="text-sm text-slate-600 hidden md:inline">${currentUser.username}</span>
+                    <button onclick="logout()" class="text-slate-400 hover:text-slate-700 px-2 py-1 rounded hover:bg-slate-100 text-sm"><i class="fas fa-sign-out-alt"></i></button>
+                </div>`;
+            loadWatchlist();
+        }catch(e){localStorage.removeItem('user');showLoginPrompt();}
+    } else { showLoginPrompt(); }
+}
+function logout(){localStorage.removeItem('user');localStorage.removeItem('token');location.reload();}
+function showLoginPrompt(){
+    document.getElementById('login-prompt').classList.remove('hidden');
+    document.getElementById('table-wrap').classList.add('hidden');
+    document.getElementById('empty-state').classList.add('hidden');
+}
+
+async function loadWatchlist(){
+    try{
+        const res=await fetch('/api/watchlist',{headers:{'X-User-Id':currentUser.id}});
+        const d=await res.json();
+        if(d.status==='success'){
+            watchlistData=d.data||[];
+            document.getElementById('update-time').textContent=`更新於 ${new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'})}`;
+            renderWatchlist();
+        }
+    }catch(e){toast('載入失敗',false);}
+}
+
+function switchMarket(m){
+    currentMarket=m;
+    const on='px-4 py-1.5 rounded-md text-sm font-semibold bg-white text-slate-800 shadow-sm transition-all';
+    const off='px-4 py-1.5 rounded-md text-sm font-semibold text-slate-400 transition-all';
+    ['all','tw','us'].forEach(k=>{
+        document.getElementById('btn-'+k).className=(k===m.toLowerCase()||k==='all'&&m==='all')?on:off;
+    });
+    renderWatchlist();
+}
+
+function renderWatchlist(){
+    const tbody=document.getElementById('watchlist-body');
+    const empty=document.getElementById('empty-state');
+    const wrap=document.getElementById('table-wrap');
+
+    const rows=currentMarket==='all'?watchlistData:watchlistData.filter(d=>d.market===currentMarket);
+
+    if(!watchlistData.length){
+        wrap.classList.add('hidden');
+        empty.classList.remove('hidden');
+        return;
+    }
+    wrap.classList.remove('hidden');
+    empty.classList.add('hidden');
+
+    if(!rows.length){
+        tbody.innerHTML=`<tr><td colspan="6" class="px-4 py-14 text-center text-slate-400 text-sm">此市場無自選股</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML=rows.map(item=>{
+        const chg=item.price_change_percent||0;
+        const up=chg>=0;
+        const chgCls=up?'text-red-500':'text-green-600';
+        const price=item.current_price?item.current_price.toFixed(2):'-';
+        const high=item.day_high?item.day_high.toFixed(2):'-';
+        const low=item.day_low?item.day_low.toFixed(2):'-';
+        const yld=item.dividend_yield?item.dividend_yield.toFixed(2)+'%':'-';
+        const badgeMap={'月配':'bg-blue-50 text-blue-600','季配':'bg-emerald-50 text-emerald-600',
+                        '半年配':'bg-amber-50 text-amber-600','年配':'bg-purple-50 text-purple-600','不配息':'bg-slate-100 text-slate-400'};
+        const badgeCls=badgeMap[item.payout_freq]||'bg-slate-100 text-slate-400';
+        return `
+        <tr class="row-hover border-b border-slate-50 cursor-pointer transition-colors" onclick="location.href='/etf-detail/${item.ticker}'">
+            <td class="px-4 py-3.5">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                    <span class="font-bold text-indigo-600">${item.ticker}</span>
+                    <span class="text-[11px] px-1.5 py-0.5 rounded font-medium ${badgeCls}">${item.payout_freq||''}</span>
+                    <span class="text-xs text-slate-400">${item.market==='TW'?'台股':'美股'}</span>
+                </div>
+                <div class="text-xs text-slate-400 mt-0.5 truncate max-w-[180px]">${item.name||''}</div>
+            </td>
+            <td class="px-4 py-3.5 text-right font-semibold text-slate-800 tabular-nums">${price}</td>
+            <td class="px-4 py-3.5 text-right font-semibold tabular-nums ${chgCls}">${up?'+':''}${chg.toFixed(2)}%</td>
+            <td class="px-4 py-3.5 text-right text-xs text-slate-500 hidden md:table-cell tabular-nums">
+                <span class="text-red-400">${high}</span> / <span class="text-green-600">${low}</span>
+            </td>
+            <td class="px-4 py-3.5 text-right text-emerald-600 hidden md:table-cell tabular-nums">${yld}</td>
+            <td class="px-4 py-3.5 text-center" onclick="event.stopPropagation()">
+                <button onclick="removeFromWatchlist('${item.ticker}')"
+                    title="移除"
+                    class="w-7 h-7 rounded-md text-slate-300 hover:bg-red-50 hover:text-red-400 transition-colors inline-flex items-center justify-center">
+                    <i class="fas fa-trash text-xs"></i>
+                </button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function openAddModal(){
+    if(!currentUser){toast('請先登入',false);setTimeout(()=>location.href='/auth',1000);return;}
+    document.getElementById('add-ticker').value='';
+    document.getElementById('addModal').style.display='flex';
+}
+function closeAddModal(){document.getElementById('addModal').style.display='none';}
+
+async function addToWatchlist(){
+    const ticker=document.getElementById('add-ticker').value.trim().toUpperCase();
+    if(!ticker){toast('請輸入代碼',false);return;}
+    const btn=document.getElementById('add-confirm-btn');
+    btn.textContent='處理中…';btn.disabled=true;
+    try{
+        const res=await fetch('/api/watchlist/add',{
+            method:'POST',
+            headers:{'Content-Type':'application/json','X-User-Id':currentUser.id},
+            body:JSON.stringify({ticker})
+        });
+        const d=await res.json();
+        if(d.status==='success'){toast(`已加入 ${ticker}`,true);closeAddModal();loadWatchlist();}
+        else toast(d.message||'加入失敗',false);
+    }catch{toast('網路錯誤',false);}
+    finally{btn.textContent='確認新增';btn.disabled=false;}
+}
+
+async function removeFromWatchlist(ticker){
+    if(!confirm(`確定移除 ${ticker}？`))return;
+    try{
+        const res=await fetch(`/api/watchlist/remove/${ticker}`,{
+            method:'DELETE',headers:{'X-User-Id':currentUser.id}
+        });
+        const d=await res.json();
+        if(d.status==='success'){toast(`已移除 ${ticker}`,true);loadWatchlist();}
+        else toast(d.message||'移除失敗',false);
+    }catch{toast('網路錯誤',false);}
+}
+
+window.onclick=e=>{if(e.target===document.getElementById('addModal'))closeAddModal();};
+document.addEventListener('DOMContentLoaded',checkLogin);
+</script>
+</body>
+</html>

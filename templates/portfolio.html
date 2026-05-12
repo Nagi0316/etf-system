@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>庫存 - ETF 投資管理系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        *{font-family:'Inter',sans-serif;}
+        .row-hover:hover{background:#f8fafc;}
+        @keyframes fadeInOut{0%,100%{opacity:0;transform:translateX(-50%) translateY(8px)}15%,85%{opacity:1;transform:translateX(-50%) translateY(0)}}
+        .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);color:#fff;padding:10px 20px;border-radius:8px;z-index:9999;animation:fadeInOut 3s ease;font-size:.875rem;}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .spinner{display:inline-block;width:18px;height:18px;border:2px solid #e2e8f0;border-top-color:#6366f1;border-radius:50%;animation:spin .8s linear infinite;}
+    </style>
+</head>
+<body class="bg-slate-50 pb-16 md:pb-0">
+
+<nav class="bg-white border-b border-slate-100 sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
+        <div class="flex items-center gap-6">
+            <a href="/" class="flex items-center gap-2 font-bold text-indigo-600 text-lg"><i class="fas fa-chart-line"></i>ETF投資系統</a>
+            <div class="hidden md:flex gap-1">
+                <a href="/etf-list"  class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">ETF精選</a>
+                <a href="/watchlist" class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">自選股</a>
+                <a href="/portfolio" class="px-3 py-1.5 text-sm rounded-md bg-indigo-50 text-indigo-600 font-medium">庫存</a>
+                <a href="/backtest"  class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">回測</a>
+                <a href="/profile"   class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">會員</a>
+            </div>
+        </div>
+        <div class="flex items-center gap-3">
+            <div id="user-info">
+                <a href="/auth" class="text-sm bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700">登入</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+<div class="max-w-7xl mx-auto px-4 py-6">
+    <!-- 頁首 -->
+    <div class="flex items-center justify-between mb-5">
+        <div>
+            <h1 class="text-xl font-bold text-slate-800">投資庫存</h1>
+            <p id="update-time" class="text-xs text-slate-400 mt-0.5">管理持倉與交易記錄</p>
+        </div>
+        <button onclick="openTradeModal('new','buy')"
+            class="flex items-center gap-1.5 bg-indigo-600 text-white text-sm px-3 py-2 rounded-lg hover:bg-indigo-700 transition-all">
+            <i class="fas fa-plus text-xs"></i>新增成交
+        </button>
+    </div>
+
+    <!-- 登入提示 -->
+    <div id="login-prompt" class="hidden bg-white rounded-xl border border-slate-100 py-16 text-center mb-5">
+        <i class="fas fa-lock text-3xl text-slate-300 mb-3 block"></i>
+        <p class="text-slate-500 mb-4">請先登入以查看庫存</p>
+        <a href="/auth" class="bg-indigo-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-indigo-700">前往登入</a>
+    </div>
+
+    <!-- 概覽卡片 -->
+    <div id="summary-cards" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <div class="bg-indigo-600 rounded-xl p-4 text-white">
+            <p class="text-xs text-indigo-200 mb-1">總市值</p>
+            <p id="total-assets" class="text-xl font-bold tabular-nums">$ 0</p>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-100 p-4">
+            <p class="text-xs text-slate-400 mb-1">累積損益</p>
+            <p id="total-profit" class="text-xl font-bold tabular-nums text-slate-800">$ 0</p>
+            <p id="total-return" class="text-xs text-slate-400 mt-0.5">報酬率 0%</p>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-100 p-4">
+            <p class="text-xs text-slate-400 mb-1">預估年領股息</p>
+            <p id="estimated-dividend" class="text-xl font-bold tabular-nums text-emerald-600">$ 0</p>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-100 p-4">
+            <p class="text-xs text-slate-400 mb-1">持有檔數</p>
+            <p id="holding-count" class="text-xl font-bold text-slate-800">0 檔</p>
+        </div>
+    </div>
+
+    <!-- 市場篩選 + 表格 -->
+    <div class="flex items-center gap-3 mb-3">
+        <div class="flex bg-slate-100 rounded-lg p-0.5">
+            <button id="btn-all" onclick="filterMarket('all')" class="px-4 py-1.5 rounded-md text-sm font-semibold bg-white text-slate-800 shadow-sm transition-all">全部</button>
+            <button id="btn-tw"  onclick="filterMarket('TW')"  class="px-4 py-1.5 rounded-md text-sm font-semibold text-slate-400 transition-all">台股</button>
+            <button id="btn-us"  onclick="filterMarket('US')"  class="px-4 py-1.5 rounded-md text-sm font-semibold text-slate-400 transition-all">美股</button>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-xl border border-slate-100 overflow-hidden mb-5">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-slate-100 text-xs font-medium text-slate-400 uppercase tracking-wide">
+                    <th class="px-4 py-3 text-left">標的</th>
+                    <th class="px-4 py-3 text-right">持股</th>
+                    <th class="px-4 py-3 text-right">均成本</th>
+                    <th class="px-4 py-3 text-right">現價</th>
+                    <th class="px-4 py-3 text-right">市值</th>
+                    <th class="px-4 py-3 text-right">損益</th>
+                    <th class="px-4 py-3 text-right hidden md:table-cell">報酬率</th>
+                    <th class="px-4 py-3 w-20"></th>
+                </tr>
+            </thead>
+            <tbody id="portfolio-table-body">
+                <tr><td colspan="8" class="px-4 py-14 text-center text-slate-400 text-sm">
+                    <div class="spinner mx-auto mb-3"></div>載入中…
+                </td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- 交易明細 -->
+    <div class="flex items-center justify-between mb-3">
+        <h2 class="font-semibold text-slate-700 text-sm">交易明細</h2>
+        <button onclick="exportTransactions()" class="text-xs text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-download mr-1"></i>匯出 CSV
+        </button>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-100 overflow-hidden">
+        <div class="max-h-72 overflow-y-auto">
+            <table class="w-full text-sm">
+                <thead class="sticky top-0 bg-white border-b border-slate-100">
+                    <tr class="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                        <th class="px-4 py-3 text-left">日期</th>
+                        <th class="px-4 py-3 text-left">標的</th>
+                        <th class="px-4 py-3 text-left">類型</th>
+                        <th class="px-4 py-3 text-right">股數</th>
+                        <th class="px-4 py-3 text-right">成本</th>
+                        <th class="px-4 py-3 text-right hidden md:table-cell">總額</th>
+                        <th class="px-4 py-3 w-10"></th>
+                    </tr>
+                </thead>
+                <tbody id="transaction-table-body">
+                    <tr><td colspan="7" class="px-4 py-10 text-center text-slate-400 text-sm">尚無交易記錄</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 手機底部 -->
+<nav class="fixed bottom-0 w-full bg-white border-t border-slate-100 z-50 md:hidden">
+    <div class="flex justify-around py-2">
+        <a href="/etf-list"  class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-list text-lg"></i><span class="text-[10px]">精選</span></a>
+        <a href="/watchlist" class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-heart text-lg"></i><span class="text-[10px]">自選</span></a>
+        <a href="/portfolio" class="flex flex-col items-center gap-0.5 text-indigo-600"><i class="fas fa-chart-pie text-lg"></i><span class="text-[10px] font-medium">庫存</span></a>
+        <a href="/backtest"  class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-history text-lg"></i><span class="text-[10px]">回測</span></a>
+        <a href="/profile"   class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-user text-lg"></i><span class="text-[10px]">會員</span></a>
+    </div>
+</nav>
+
+<!-- 交易 Modal -->
+<div id="tradeModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-50 p-4" style="display:none">
+    <div class="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="font-bold text-slate-800" id="modal-title">新增成交</h3>
+            <button onclick="closeTradeModal()" class="text-slate-400 hover:text-slate-600"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="space-y-3">
+            <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">代號</label>
+                <input id="trade-ticker" type="text" placeholder="例：0050 或 SPY"
+                    class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 uppercase">
+            </div>
+            <div class="flex gap-4">
+                <label class="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="radio" name="trade-type" value="buy" checked class="text-indigo-600"> 買入
+                </label>
+                <label class="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="radio" name="trade-type" value="sell" class="text-indigo-600"> 賣出
+                </label>
+            </div>
+            <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">日期</label>
+                <input id="trade-date" type="date" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">股數</label>
+                    <input id="trade-shares" type="number" min="1" placeholder="0"
+                        class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">每股價格</label>
+                    <input id="trade-price" type="number" min="0" step="0.01" placeholder="0.00"
+                        class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                </div>
+            </div>
+            <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">手續費</label>
+                <input id="trade-commission" type="number" min="0" value="0"
+                    class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
+            </div>
+        </div>
+        <div class="flex gap-2 mt-4">
+            <button onclick="saveTrade(this)" class="flex-1 bg-indigo-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-indigo-700">確認成交</button>
+            <button onclick="closeTradeModal()" class="flex-1 bg-slate-100 text-slate-600 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-200">取消</button>
+        </div>
+    </div>
+</div>
+
+<!-- 刪除確認 Modal -->
+<div id="deleteModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-50 p-4" style="display:none">
+    <div class="bg-white rounded-2xl w-full max-w-xs p-6 shadow-xl text-center">
+        <i class="fas fa-exclamation-triangle text-3xl text-red-400 mb-3 block"></i>
+        <p class="font-bold text-slate-800 mb-1">確認刪除？</p>
+        <p class="text-sm text-slate-400 mb-5">此操作無法復原</p>
+        <div class="flex gap-2">
+            <button onclick="confirmDelete()" class="flex-1 bg-red-500 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-red-600">刪除</button>
+            <button onclick="closeDeleteModal()" class="flex-1 bg-slate-100 text-slate-600 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-200">取消</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentFilter='all', currentUser=null, portfolioData=[], transactionsData=[], deleteId=null;
+
+function toast(msg,ok=true){
+    const el=document.createElement('div');el.className='toast';
+    el.style.background=ok?'#10b981':'#ef4444';
+    el.innerHTML=`<i class="fas ${ok?'fa-check':'fa-times-circle'} mr-2"></i>${msg}`;
+    document.body.appendChild(el);setTimeout(()=>el.remove(),3000);
+}
+
+function checkLogin(){
+    const u=localStorage.getItem('user');
+    if(u){
+        try{
+            currentUser=JSON.parse(u);
+            document.getElementById('user-info').innerHTML=`
+                <div class="flex items-center gap-2">
+                    <span class="text-sm text-slate-600 hidden md:inline">${currentUser.username}</span>
+                    <button onclick="logout()" class="text-slate-400 hover:text-slate-700 px-2 py-1 rounded hover:bg-slate-100 text-sm"><i class="fas fa-sign-out-alt"></i></button>
+                </div>`;
+            loadData();
+        }catch(e){localStorage.removeItem('user');showLoginPrompt();}
+    } else {showLoginPrompt();}
+}
+function logout(){localStorage.removeItem('user');localStorage.removeItem('token');location.reload();}
+function showLoginPrompt(){
+    document.getElementById('login-prompt').classList.remove('hidden');
+    document.getElementById('summary-cards').classList.add('hidden');
+    document.getElementById('portfolio-table-body').innerHTML=`<tr><td colspan="8" class="px-4 py-14 text-center text-slate-400 text-sm"><i class="fas fa-lock block mb-2 text-2xl"></i>請先登入</td></tr>`;
+}
+
+async function loadData(){
+    if(!currentUser)return;
+    try{
+        const [pr, tr] = await Promise.all([
+            fetch('/api/portfolio',{headers:{'X-User-Id':currentUser.id}}).then(r=>r.json()),
+            fetch('/api/portfolio/transactions',{headers:{'X-User-Id':currentUser.id}}).then(r=>r.json())
+        ]);
+        if(pr.status==='success'){
+            portfolioData=pr.data||[];
+            if(pr.summary){
+                const s=pr.summary;
+                document.getElementById('total-assets').textContent=`$ ${Math.round(s.total_value).toLocaleString()}`;
+                const profitUp=s.total_profit>=0;
+                document.getElementById('total-profit').textContent=`${profitUp?'+':'-'} $ ${Math.abs(Math.round(s.total_profit)).toLocaleString()}`;
+                document.getElementById('total-profit').className=`text-xl font-bold tabular-nums ${profitUp?'text-red-500':'text-green-600'}`;
+                document.getElementById('total-return').textContent=`報酬率 ${profitUp?'+':''}${s.total_return.toFixed(1)}%`;
+                const estDiv=portfolioData.reduce((acc,item)=>acc+(item.market_value||0)*(item.dividend_yield||0)/100,0);
+                document.getElementById('estimated-dividend').textContent=`$ ${Math.round(estDiv).toLocaleString()}`;
+                document.getElementById('holding-count').textContent=`${portfolioData.length} 檔`;
+            }
+        }
+        if(tr.status==='success') transactionsData=tr.data||[];
+        renderPortfolio();renderTransactions();
+        document.getElementById('update-time').textContent=`更新於 ${new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'})}`;
+    }catch(e){toast('載入失敗',false);}
+}
+
+function filterMarket(m){
+    currentFilter=m;
+    const on='px-4 py-1.5 rounded-md text-sm font-semibold bg-white text-slate-800 shadow-sm transition-all';
+    const off='px-4 py-1.5 rounded-md text-sm font-semibold text-slate-400 transition-all';
+    ['all','tw','us'].forEach(k=>document.getElementById('btn-'+k).className=(k===m.toLowerCase())?on:off);
+    renderPortfolio();
+}
+
+function renderPortfolio(){
+    const tbody=document.getElementById('portfolio-table-body');
+    let rows=portfolioData;
+    if(currentFilter!=='all') rows=portfolioData.filter(d=>d.market===currentFilter);
+    if(!rows.length){
+        tbody.innerHTML=`<tr><td colspan="8" class="px-4 py-14 text-center text-slate-400 text-sm">${portfolioData.length?'此市場無庫存':'尚無庫存記錄'}</td></tr>`;
+        return;
+    }
+    tbody.innerHTML=rows.map(item=>{
+        const cp=item.current_price||item.avg_cost;
+        const mv=item.market_value||(item.shares*cp);
+        const cost=item.cost||(item.shares*item.avg_cost);
+        const profit=item.profit||(mv-cost);
+        const retPct=item.return_pct||(cost>0?profit/cost*100:0);
+        const up=profit>=0;
+        return `
+        <tr class="row-hover border-b border-slate-50 transition-colors">
+            <td class="px-4 py-3.5">
+                <div class="font-bold text-indigo-600 text-sm">${item.ticker}</div>
+                <div class="text-xs text-slate-400">${item.name||''}</div>
+            </td>
+            <td class="px-4 py-3.5 text-right text-slate-700 tabular-nums">${item.shares.toLocaleString()}</td>
+            <td class="px-4 py-3.5 text-right text-slate-600 tabular-nums">${item.avg_cost.toFixed(2)}</td>
+            <td class="px-4 py-3.5 text-right font-semibold text-slate-800 tabular-nums">${cp.toFixed(2)}</td>
+            <td class="px-4 py-3.5 text-right font-semibold text-slate-800 tabular-nums">${Math.round(mv).toLocaleString()}</td>
+            <td class="px-4 py-3.5 text-right font-semibold tabular-nums ${up?'text-red-500':'text-green-600'}">${up?'+':''}${Math.round(profit).toLocaleString()}</td>
+            <td class="px-4 py-3.5 text-right font-semibold tabular-nums hidden md:table-cell ${up?'text-red-500':'text-green-600'}">${up?'+':''}${retPct.toFixed(1)}%</td>
+            <td class="px-4 py-3.5 text-center">
+                <button onclick="openTradeModal('${item.ticker}','buy')" class="text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-2 py-1 rounded mr-1">買</button>
+                <button onclick="openTradeModal('${item.ticker}','sell')" class="text-xs bg-orange-50 text-orange-600 hover:bg-orange-100 px-2 py-1 rounded">賣</button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function renderTransactions(){
+    const tbody=document.getElementById('transaction-table-body');
+    if(!transactionsData.length){
+        tbody.innerHTML=`<tr><td colspan="7" class="px-4 py-10 text-center text-slate-400 text-sm">尚無交易記錄</td></tr>`;
+        return;
+    }
+    tbody.innerHTML=transactionsData.map(t=>{
+        const up=t.transaction_type==='buy';
+        const total=t.shares*t.price+t.commission;
+        return `
+        <tr class="row-hover border-b border-slate-50 transition-colors">
+            <td class="px-4 py-2.5 text-xs text-slate-500">${t.transaction_date||''}</td>
+            <td class="px-4 py-2.5 font-medium text-indigo-600 text-sm">${t.ticker}</td>
+            <td class="px-4 py-2.5">
+                <span class="text-xs px-1.5 py-0.5 rounded font-medium ${up?'bg-red-50 text-red-500':'bg-green-50 text-green-600'}">${up?'買入':'賣出'}</span>
+            </td>
+            <td class="px-4 py-2.5 text-right text-sm tabular-nums text-slate-700">${t.shares}</td>
+            <td class="px-4 py-2.5 text-right text-sm tabular-nums text-slate-700">${t.price.toFixed(2)}</td>
+            <td class="px-4 py-2.5 text-right text-sm tabular-nums text-slate-700 hidden md:table-cell">${Math.round(total).toLocaleString()}</td>
+            <td class="px-4 py-2.5 text-center">
+                <button onclick="openDeleteModal(${t.id})" class="text-slate-300 hover:text-red-400 transition-colors">
+                    <i class="fas fa-trash text-xs"></i>
+                </button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function openTradeModal(ticker,type){
+    if(!currentUser){toast('請先登入',false);setTimeout(()=>location.href='/auth',1000);return;}
+    document.getElementById('modal-title').textContent=ticker==='new'?'新增成交':`${ticker} — ${type==='buy'?'買入':'賣出'}`;
+    document.getElementById('trade-ticker').value=ticker==='new'?'':ticker;
+    document.querySelector(`input[name="trade-type"][value="${type}"]`).checked=true;
+    const today=new Date().toISOString().split('T')[0];
+    document.getElementById('trade-date').value=today;
+    document.getElementById('trade-date').max=today;
+    if(ticker==='new'){document.getElementById('trade-shares').value='';document.getElementById('trade-price').value='';}
+    document.getElementById('trade-commission').value='0';
+    document.getElementById('tradeModal').style.display='flex';
+}
+function closeTradeModal(){document.getElementById('tradeModal').style.display='none';}
+
+async function saveTrade(btn){
+    const ticker=document.getElementById('trade-ticker').value.trim().toUpperCase();
+    const type=document.querySelector('input[name="trade-type"]:checked').value;
+    const date=document.getElementById('trade-date').value;
+    const shares=parseInt(document.getElementById('trade-shares').value);
+    const price=parseFloat(document.getElementById('trade-price').value);
+    const commission=parseFloat(document.getElementById('trade-commission').value)||0;
+    if(!ticker||!shares||shares<=0||!price||price<=0){toast('請填寫所有欄位',false);return;}
+    if(type==='sell'){
+        const h=portfolioData.find(p=>p.ticker===ticker);
+        if(!h||h.shares<shares){toast(`持股不足（持有 ${h?.shares||0} 股）`,false);return;}
+    }
+    const orig=btn.textContent;btn.textContent='處理中…';btn.disabled=true;
+    try{
+        const res=await fetch('/api/portfolio/transaction',{
+            method:'POST',
+            headers:{'Content-Type':'application/json','X-User-Id':currentUser.id},
+            body:JSON.stringify({ticker,transaction_type:type,shares,price,commission,transaction_date:date})
+        });
+        const d=await res.json();
+        if(d.status==='success'){toast(`${type==='buy'?'買入':'賣出'} ${ticker} 成功`,true);closeTradeModal();await loadData();}
+        else toast(d.message||'失敗',false);
+    }catch{toast('網路錯誤',false);}
+    finally{btn.textContent=orig;btn.disabled=false;}
+}
+
+function openDeleteModal(id){deleteId=id;document.getElementById('deleteModal').style.display='flex';}
+function closeDeleteModal(){document.getElementById('deleteModal').style.display='none';deleteId=null;}
+async function confirmDelete(){
+    if(!deleteId||!currentUser)return;
+    try{
+        const res=await fetch(`/api/portfolio/transaction/${deleteId}`,{method:'DELETE',headers:{'X-User-Id':currentUser.id}});
+        const d=await res.json();
+        if(d.status==='success'){toast('已刪除',true);closeDeleteModal();await loadData();}
+        else toast(d.message||'刪除失敗',false);
+    }catch{toast('網路錯誤',false);}
+}
+
+function exportTransactions(){
+    if(!transactionsData.length){toast('尚無記錄',false);return;}
+    let csv='日期,標的,類型,股數,成本,手續費,總額\n';
+    transactionsData.forEach(t=>{
+        csv+=`${t.transaction_date},${t.ticker},${t.transaction_type==='buy'?'買入':'賣出'},${t.shares},${t.price},${t.commission},${Math.round(t.shares*t.price+t.commission)}\n`;
+    });
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'}));
+    a.download=`transactions_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();toast('匯出成功',true);
+}
+
+window.onclick=e=>{
+    if(e.target===document.getElementById('tradeModal'))closeTradeModal();
+    if(e.target===document.getElementById('deleteModal'))closeDeleteModal();
+};
+document.addEventListener('DOMContentLoaded',checkLogin);
+</script>
+</body>
+</html>

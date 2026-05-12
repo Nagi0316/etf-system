@@ -1,0 +1,219 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ETF 投資管理系統 - 首頁</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        * { font-family: 'Inter', sans-serif; }
+        .feature-card {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .feature-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.02);
+        }
+    </style>
+</head>
+<body class="bg-slate-50">
+    <!-- 導航欄 -->
+    <nav class="bg-white shadow-sm sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center space-x-8">
+                    <div class="flex items-center">
+                        <i class="fas fa-chart-line text-2xl text-indigo-600 mr-2"></i>
+                        <span class="text-xl font-bold text-indigo-600">ETF投資系統</span>
+                    </div>
+                    <div class="hidden md:flex space-x-4">
+                        <a href="/etf-list" class="px-3 py-2 text-slate-600 hover:text-indigo-600">ETF精選</a>
+                        <a href="/watchlist" class="px-3 py-2 text-slate-600 hover:text-indigo-600">自選股</a>
+                        <a href="/portfolio" class="px-3 py-2 text-slate-600 hover:text-indigo-600">庫存</a>
+                        <a href="/backtest" class="px-3 py-2 text-slate-600 hover:text-indigo-600">存股回測</a>
+                        <a href="/profile" class="px-3 py-2 text-slate-600 hover:text-indigo-600">會員</a>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="relative hidden md:block">
+                        <input type="text" id="search-input" placeholder="搜尋 ETF 代碼或名稱..." 
+                               class="pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 w-64">
+                        <i class="fas fa-search absolute left-3 top-3 text-slate-400"></i>
+                    </div>
+                    <div id="user-info">
+                        <button onclick="location.href='/auth'" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700">
+                            <i class="fas fa-user mr-2"></i>登入
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero 區塊 -->
+    <div class="bg-gradient-to-r from-indigo-600 to-purple-600 text-white">
+        <div class="max-w-7xl mx-auto px-4 py-20">
+            <div class="text-center">
+                <h1 class="text-5xl font-bold mb-4">ETF 投資管理系統</h1>
+                <p class="text-xl text-indigo-100 mb-8">智慧追蹤、精準分析、輕鬆管理您的 ETF 投資組合</p>
+                <div class="flex justify-center gap-4">
+                    <a href="/etf-list" class="bg-white text-indigo-600 px-6 py-3 rounded-lg font-bold hover:bg-indigo-50 transition shadow-lg">
+                        開始探索 ETF
+                    </a>
+                    <a href="/auth" class="border-2 border-white px-6 py-3 rounded-lg font-bold hover:bg-white hover:text-indigo-600 transition">
+                        免費註冊
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 功能特色 -->
+    <div class="max-w-7xl mx-auto px-4 py-16">
+        <h2 class="text-3xl font-bold text-center text-slate-800 mb-12">核心功能</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div class="bg-white rounded-xl shadow-sm p-8 text-center feature-card">
+                <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-chart-line text-2xl text-indigo-600"></i>
+                </div>
+                <h3 class="text-xl font-bold text-slate-800 mb-2">ETF 精選排行</h3>
+                <p class="text-slate-500">即時更新熱門排行榜，掌握市場動態，輕鬆發現潛力標的</p>
+            </div>
+            <div class="bg-white rounded-xl shadow-sm p-8 text-center feature-card">
+                <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-star text-2xl text-indigo-600"></i>
+                </div>
+                <h3 class="text-xl font-bold text-slate-800 mb-2">個人化自選股</h3>
+                <p class="text-slate-500">建立專屬自選清單，即時追蹤關注的 ETF，不錯過任何機會</p>
+            </div>
+            <div class="bg-white rounded-xl shadow-sm p-8 text-center feature-card">
+                <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-calculator text-2xl text-indigo-600"></i>
+                </div>
+                <h3 class="text-xl font-bold text-slate-800 mb-2">存股回測模擬</h3>
+                <p class="text-slate-500">定期定額策略歷史回測，評估長期投資報酬，制定最佳策略</p>
+            </div>
+            <div class="bg-white rounded-xl shadow-sm p-8 text-center feature-card">
+                <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-chart-pie text-2xl text-indigo-600"></i>
+                </div>
+                <h3 class="text-xl font-bold text-slate-800 mb-2">投資組合管理</h3>
+                <p class="text-slate-500">完整記錄交易明細，即時計算損益，掌握資產配置狀況</p>
+            </div>
+            <div class="bg-white rounded-xl shadow-sm p-8 text-center feature-card">
+                <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-search text-2xl text-indigo-600"></i>
+                </div>
+                <h3 class="text-xl font-bold text-slate-800 mb-2">動態 ETF 搜尋</h3>
+                <p class="text-slate-500">支援台股、美股所有 ETF，一鍵搜尋、即時加入追蹤</p>
+            </div>
+            <div class="bg-white rounded-xl shadow-sm p-8 text-center feature-card">
+                <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-chart-simple text-2xl text-indigo-600"></i>
+                </div>
+                <h3 class="text-xl font-bold text-slate-800 mb-2">即時價格走勢</h3>
+                <p class="text-slate-500">歷史價格圖表、配息資訊、殖利率分析，完整基本面評估</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 手機底部導航欄 -->
+    <nav class="fixed bottom-0 w-full bg-white shadow-lg border-t border-slate-200 z-50 md:hidden">
+        <div class="flex justify-around p-3">
+            <a href="/etf-list" class="flex flex-col items-center text-slate-400 hover:text-indigo-600">
+                <i class="fas fa-list text-xl mb-1"></i><span class="text-[10px]">精選</span>
+            </a>
+            <a href="/watchlist" class="flex flex-col items-center text-slate-400 hover:text-indigo-600">
+                <i class="fas fa-heart text-xl mb-1"></i><span class="text-[10px]">自選</span>
+            </a>
+            <a href="/portfolio" class="flex flex-col items-center text-slate-400 hover:text-indigo-600">
+                <i class="fas fa-chart-pie text-xl mb-1"></i><span class="text-[10px]">庫存</span>
+            </a>
+            <a href="/backtest" class="flex flex-col items-center text-slate-400 hover:text-indigo-600">
+                <i class="fas fa-history text-xl mb-1"></i><span class="text-[10px]">回測</span>
+            </a>
+            <a href="/profile" class="flex flex-col items-center text-slate-400 hover:text-indigo-600">
+                <i class="fas fa-user text-xl mb-1"></i><span class="text-[10px]">會員</span>
+            </a>
+        </div>
+    </nav>
+
+    <script>
+        function showToast(message, isSuccess = true) {
+            const toast = document.createElement('div');
+            toast.className = 'toast-message';
+            toast.style.backgroundColor = isSuccess ? '#10b981' : '#ef4444';
+            toast.style.position = 'fixed';
+            toast.style.bottom = '20px';
+            toast.style.left = '50%';
+            toast.style.transform = 'translateX(-50%)';
+            toast.style.color = 'white';
+            toast.style.padding = '12px 24px';
+            toast.style.borderRadius = '8px';
+            toast.style.zIndex = '1000';
+            toast.style.animation = 'fadeInOut 3s ease';
+            toast.innerHTML = `<i class="fas ${isSuccess ? 'fa-check-circle' : 'fa-exclamation-circle'} mr-2"></i>${message}`;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        function checkLogin() {
+            const userStr = localStorage.getItem('user');
+            if (userStr) {
+                const user = JSON.parse(userStr);
+                document.getElementById('user-info').innerHTML = `
+                    <div class="flex items-center space-x-3">
+                        <span class="text-sm text-slate-600 hidden md:inline">${user.username}</span>
+                        <button onclick="logout()" class="bg-slate-100 text-slate-600 px-3 py-2 rounded-lg hover:bg-slate-200">
+                            <i class="fas fa-sign-out-alt"></i>
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('user');
+            localStorage.removeItem('token');
+            location.reload();
+        }
+
+        // 搜尋功能
+        document.getElementById('search-input')?.addEventListener('keypress', async (e) => {
+            if (e.key === 'Enter') {
+                const q = e.target.value.trim();
+                if (q) {
+                    try {
+                        const response = await fetch(`/api/etf/search?q=${encodeURIComponent(q)}`);
+                        const result = await response.json();
+                        if (result.status === 'success' && result.data.length > 0) {
+                            window.location.href = `/etf-detail/${result.data[0].ticker}`;
+                        } else {
+                            showToast('找不到相關 ETF', false);
+                        }
+                    } catch (error) {
+                        console.error('搜尋失敗:', error);
+                    }
+                }
+            }
+        });
+
+        document.addEventListener('DOMContentLoaded', checkLogin);
+    </script>
+
+    <style>
+        .toast-message {
+            animation: fadeInOut 3s ease;
+        }
+        @keyframes fadeInOut {
+            0% { opacity: 0; transform: translateX(-50%) translateY(20px); }
+            15% { opacity: 1; transform: translateX(-50%) translateY(0); }
+            85% { opacity: 1; transform: translateX(-50%) translateY(0); }
+            100% { opacity: 0; transform: translateX(-50%) translateY(20px); }
+        }
+    </style>
+</body>
+</html>
