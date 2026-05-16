@@ -8,7 +8,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from contextlib import asynccontextmanager, contextmanager
 from functools import wraps
 from typing import Optional
-
+#測試
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import ssl
