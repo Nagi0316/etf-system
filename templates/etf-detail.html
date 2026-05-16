@@ -11,738 +11,591 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
         * { font-family: 'Inter', sans-serif; }
         .toast-message {
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: #1f2937;
-            color: white;
-            padding: 12px 24px;
-            border-radius: 8px;
-            z-index: 1000;
-            animation: fadeInOut 3s ease;
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            color: white; padding: 12px 24px; border-radius: 8px;
+            z-index: 1000; animation: fadeInOut 3s ease forwards;
         }
         @keyframes fadeInOut {
-            0% { opacity: 0; transform: translateX(-50%) translateY(20px); }
-            15% { opacity: 1; transform: translateX(-50%) translateY(0); }
-            85% { opacity: 1; transform: translateX(-50%) translateY(0); }
+            0%   { opacity: 0; transform: translateX(-50%) translateY(20px); }
+            15%  { opacity: 1; transform: translateX(-50%) translateY(0); }
+            85%  { opacity: 1; transform: translateX(-50%) translateY(0); }
             100% { opacity: 0; transform: translateX(-50%) translateY(20px); }
         }
         .loading-spinner {
-            display: inline-block;
-            width: 40px;
-            height: 40px;
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #6366f1;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
+            display: inline-block; width: 40px; height: 40px;
+            border: 3px solid #f3f3f3; border-top: 3px solid #6366f1;
+            border-radius: 50%; animation: spin 1s linear infinite;
         }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        .info-card {
-            transition: all 0.2s ease;
-        }
-        .info-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1);
-        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .period-btn { transition: all .15s; color: #94a3b8; }
+        .period-btn:hover { background:#eef2ff; color:#4f46e5; }
+        .period-btn.active { background:#eef2ff; color:#4f46e5; font-weight:600; }
     </style>
 </head>
-<body class="bg-slate-50">
-    <!-- 導航欄 -->
-    <nav class="bg-white shadow-sm sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto px-4">
-            <div class="flex justify-between h-16">
-                <div class="flex items-center space-x-8">
-                    <div class="flex items-center cursor-pointer" onclick="location.href='/'">
-                        <i class="fas fa-chart-line text-2xl text-indigo-600 mr-2"></i>
-                        <span class="text-xl font-bold text-indigo-600">ETF投資系統</span>
-                    </div>
-                    <div class="flex space-x-4">
-                        <a href="/etf-list" class="px-3 py-2 text-slate-600 hover:text-indigo-600">ETF精選</a>
-                        <a href="/watchlist" class="px-3 py-2 text-slate-600 hover:text-indigo-600">自選股</a>
-                        <a href="/portfolio" class="px-3 py-2 text-slate-600 hover:text-indigo-600">庫存</a>
-                        <a href="/backtest" class="px-3 py-2 text-slate-600 hover:text-indigo-600">存股回測</a>
-                        <a href="/profile" class="px-3 py-2 text-slate-600 hover:text-indigo-600">會員</a>
-                    </div>
+<body class="bg-slate-50 pb-16 md:pb-0">
+
+<!-- 導航欄 -->
+<nav class="bg-white shadow-sm sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4">
+        <div class="flex justify-between h-16">
+            <div class="flex items-center space-x-6">
+                <div class="flex items-center cursor-pointer" onclick="location.href='/'">
+                    <i class="fas fa-chart-line text-2xl text-indigo-600 mr-2"></i>
+                    <span class="text-xl font-bold text-indigo-600">ETF投資系統</span>
                 </div>
-                <div class="flex items-center space-x-4">
-                    <div class="relative">
-                        <input type="text" id="search-input" placeholder="搜尋 ETF 代碼或名稱..." 
-                               class="pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 w-64">
-                        <i class="fas fa-search absolute left-3 top-3 text-slate-400"></i>
-                    </div>
-                    <div id="user-info">
-                        <button onclick="location.href='/auth'" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700">
-                            <i class="fas fa-user mr-2"></i>登入
-                        </button>
-                    </div>
+                <div class="hidden md:flex space-x-1">
+                    <a href="/etf-list"  class="px-3 py-2 text-sm text-slate-600 hover:text-indigo-600 rounded-md hover:bg-slate-50">ETF精選</a>
+                    <a href="/watchlist" class="px-3 py-2 text-sm text-slate-600 hover:text-indigo-600 rounded-md hover:bg-slate-50">自選股</a>
+                    <a href="/portfolio" class="px-3 py-2 text-sm text-slate-600 hover:text-indigo-600 rounded-md hover:bg-slate-50">庫存</a>
+                    <a href="/backtest"  class="px-3 py-2 text-sm text-slate-600 hover:text-indigo-600 rounded-md hover:bg-slate-50">存股回測</a>
+                    <a href="/profile"   class="px-3 py-2 text-sm text-slate-600 hover:text-indigo-600 rounded-md hover:bg-slate-50">會員</a>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="relative hidden md:block">
+                    <input type="text" id="search-input" placeholder="搜尋 ETF..."
+                           class="pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 w-52">
+                    <i class="fas fa-search absolute left-3 top-2.5 text-slate-400 text-sm"></i>
+                </div>
+                <div id="user-info">
+                    <button onclick="location.href='/auth'" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700">
+                        <i class="fas fa-user mr-1.5"></i>登入
+                    </button>
                 </div>
             </div>
         </div>
-    </nav>
+    </div>
+</nav>
 
-    <!-- 主要內容 -->
-    <div class="max-w-7xl mx-auto px-4 py-8">
-        <!-- 載入中 -->
-        <div id="loading" class="text-center py-16">
-            <div class="loading-spinner mx-auto mb-4"></div>
-            <p class="text-slate-500">載入 ETF 資料中...</p>
+<div class="max-w-7xl mx-auto px-4 py-6">
+
+    <!-- 載入中 -->
+    <div id="loading" class="text-center py-20">
+        <div class="loading-spinner mx-auto mb-4"></div>
+        <p class="text-slate-500" id="loading-msg">載入 ETF 資料中...</p>
+    </div>
+
+    <!-- 錯誤 -->
+    <div id="error-message" class="hidden text-center py-20">
+        <i class="fas fa-exclamation-circle text-5xl text-red-400 mb-4 block"></i>
+        <h2 class="text-xl font-bold text-slate-700 mb-2">無法載入資料</h2>
+        <p id="error-text" class="text-slate-500 mb-6">發生錯誤，請稍後再試</p>
+        <button onclick="location.href='/etf-list'" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+            <i class="fas fa-arrow-left mr-2"></i>返回列表
+        </button>
+    </div>
+
+    <!-- 內容 -->
+    <div id="content" class="hidden space-y-4">
+
+        <button onclick="location.href='/etf-list'" class="text-sm text-slate-500 hover:text-indigo-600 flex items-center gap-1.5">
+            <i class="fas fa-arrow-left text-xs"></i>返回排行榜
+        </button>
+
+        <!-- 標題列 -->
+        <div class="bg-white rounded-xl border border-slate-100 p-5">
+            <div class="flex justify-between items-start gap-4 flex-wrap">
+                <div>
+                    <div class="flex items-center gap-2 mb-1 flex-wrap">
+                        <h1 id="etf-ticker" class="text-2xl font-bold text-indigo-600">-</h1>
+                        <span id="payout-badge" class="px-2.5 py-0.5 rounded-full text-xs font-bold"></span>
+                        <span id="market-badge" class="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-500"></span>
+                    </div>
+                    <p id="etf-name" class="text-base text-slate-700 font-medium mb-1"></p>
+                    <div class="flex flex-wrap gap-4 text-xs text-slate-400">
+                        <span id="issuer-row" class="hidden"><i class="fas fa-building mr-1"></i><span id="issuer"></span></span>
+                        <span id="listing-row" class="hidden"><i class="fas fa-calendar-alt mr-1"></i>成立 <span id="listing-date"></span></span>
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button id="watchlist-btn" onclick="toggleWatchlist()"
+                        class="px-3 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all">
+                        <i class="fas fa-star mr-1.5"></i>自選
+                    </button>
+                    <button onclick="openTradeModal()"
+                        class="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-all">
+                        <i class="fas fa-exchange-alt mr-1.5"></i>交易
+                    </button>
+                </div>
+            </div>
         </div>
 
-        <!-- 錯誤訊息 -->
-        <div id="error-message" class="hidden text-center py-16">
-            <i class="fas fa-exclamation-circle text-5xl text-red-400 mb-4"></i>
-            <h2 class="text-xl font-bold text-slate-700 mb-2">無法載入資料</h2>
-            <p id="error-text" class="text-slate-500 mb-6">發生錯誤，請稍後再試</p>
-            <button onclick="location.href='/etf-list'" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
-                <i class="fas fa-arrow-left mr-2"></i>返回列表
-            </button>
+        <!-- 今日行情 4 格 -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div class="bg-white rounded-xl border border-slate-100 p-4">
+                <p class="text-xs text-slate-400 mb-1">現價</p>
+                <p id="current-price" class="text-2xl font-bold text-slate-800 tabular-nums">-</p>
+                <p id="price-change" class="text-xs mt-1">-</p>
+            </div>
+            <div class="bg-white rounded-xl border border-slate-100 p-4">
+                <p class="text-xs text-slate-400 mb-1">今日成交量</p>
+                <p id="volume" class="text-2xl font-bold text-slate-800 tabular-nums">-</p>
+                <p id="volume-unit" class="text-xs mt-1 text-slate-400">-</p>
+            </div>
+            <div class="bg-white rounded-xl border border-slate-100 p-4">
+                <p class="text-xs text-slate-400 mb-1">今日最高</p>
+                <p id="day-high" class="text-2xl font-bold text-red-500 tabular-nums">-</p>
+                <p class="text-xs mt-1 text-slate-400">日內高點</p>
+            </div>
+            <div class="bg-white rounded-xl border border-slate-100 p-4">
+                <p class="text-xs text-slate-400 mb-1">今日最低</p>
+                <p id="day-low" class="text-2xl font-bold text-green-600 tabular-nums">-</p>
+                <p class="text-xs mt-1 text-slate-400">日內低點</p>
+            </div>
         </div>
 
-        <!-- 內容區塊 -->
-        <div id="content" class="hidden">
-            <!-- 返回 -->
-            <div class="mb-4">
-                <button onclick="location.href='/etf-list'" class="text-sm text-slate-500 hover:text-indigo-600 flex items-center gap-1.5">
-                    <i class="fas fa-arrow-left text-xs"></i>返回排行榜
-                </button>
-            </div>
-
-            <!-- 標題列 -->
-            <div class="bg-white rounded-xl border border-slate-100 p-5 mb-4">
-                <div class="flex justify-between items-start gap-4">
-                    <div>
-                        <div class="flex items-center gap-2 mb-1">
-                            <h1 id="etf-ticker" class="text-2xl font-bold text-indigo-600">-</h1>
-                            <span id="payout-badge" class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700"></span>
-                        </div>
-                        <p id="etf-name" class="text-base text-slate-600 font-medium"></p>
-                        <div class="flex flex-wrap gap-4 mt-2 text-xs text-slate-400">
-                            <span><i class="fas fa-globe-asia mr-1"></i><span id="market">-</span></span>
-                            <span><i class="fas fa-building mr-1"></i><span id="issuer">-</span></span>
-                            <span><i class="fas fa-calendar-alt mr-1"></i>成立 <span id="listing-date">-</span></span>
-                        </div>
-                    </div>
-                    <div class="flex gap-2 flex-shrink-0">
-                        <button id="watchlist-btn" onclick="toggleWatchlist()"
-                            class="px-3 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all">
-                            <i class="fas fa-star mr-1.5"></i>自選
-                        </button>
-                        <button onclick="openTradeModal()"
-                            class="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-all">
-                            <i class="fas fa-exchange-alt mr-1.5"></i>交易
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 今日行情 4 格 -->
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                <div class="bg-white rounded-xl border border-slate-100 p-4">
-                    <p class="text-xs text-slate-400 mb-1">現價</p>
-                    <p id="current-price" class="text-2xl font-bold text-slate-800 tabular-nums">-</p>
-                    <p id="price-change" class="text-xs mt-1 text-slate-400">-</p>
-                </div>
-                <div class="bg-white rounded-xl border border-slate-100 p-4">
-                    <p class="text-xs text-slate-400 mb-1">今日成交量</p>
-                    <p id="volume" class="text-2xl font-bold text-slate-800 tabular-nums">-</p>
-                    <p id="volume-unit" class="text-xs mt-1 text-slate-400">-</p>
-                </div>
-                <div class="bg-white rounded-xl border border-slate-100 p-4">
-                    <p class="text-xs text-slate-400 mb-1">今日最高</p>
-                    <p id="day-high" class="text-2xl font-bold text-red-500 tabular-nums">-</p>
-                    <p class="text-xs mt-1 text-slate-400">日內高點</p>
-                </div>
-                <div class="bg-white rounded-xl border border-slate-100 p-4">
-                    <p class="text-xs text-slate-400 mb-1">今日最低</p>
-                    <p id="day-low" class="text-2xl font-bold text-green-600 tabular-nums">-</p>
-                    <p class="text-xs mt-1 text-slate-400">日內低點</p>
-                </div>
-            </div>
-
-            <!-- 基本資訊 + 報酬配息 -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                <!-- 基本資訊 -->
-                <div class="bg-white rounded-xl border border-slate-100 p-5">
-                    <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">基本資訊</h3>
-                    <div class="space-y-0 divide-y divide-slate-50">
-                        <div class="flex justify-between py-2.5 text-sm">
-                            <span class="text-slate-400">資產規模</span>
-                            <span id="asset-size" class="font-medium text-slate-700">-</span>
-                        </div>
-                        <div class="flex justify-between py-2.5 text-sm">
-                            <span class="text-slate-400">淨值 (NAV)</span>
-                            <span id="nav" class="font-medium text-slate-700 tabular-nums">-</span>
-                        </div>
-                        <div class="flex justify-between py-2.5 text-sm">
-                            <span class="text-slate-400">折溢價</span>
-                            <span id="premium" class="font-medium">-</span>
-                        </div>
-                        <div class="flex justify-between py-2.5 text-sm">
-                            <span class="text-slate-400">本益比 (P/E)</span>
-                            <span id="pe-ratio" class="font-medium text-slate-700 tabular-nums">-</span>
-                        </div>
-                        <div class="flex justify-between py-2.5 text-sm">
-                            <span class="text-slate-400">內扣費用率</span>
-                            <span id="expense-ratio" class="font-medium text-slate-700">-</span>
-                        </div>
-                        <div class="flex justify-between py-2.5 text-sm">
-                            <span class="text-slate-400">52週最高</span>
-                            <span id="wk52-high" class="font-medium text-red-500 tabular-nums">-</span>
-                        </div>
-                        <div class="flex justify-between py-2.5 text-sm">
-                            <span class="text-slate-400">52週最低</span>
-                            <span id="wk52-low" class="font-medium text-green-600 tabular-nums">-</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 報酬與配息 -->
-                <div class="bg-white rounded-xl border border-slate-100 p-5">
-                    <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">報酬與配息</h3>
-                    <div class="space-y-0 divide-y divide-slate-50">
-                        <div class="flex justify-between py-2.5 text-sm">
-                            <span class="text-slate-400">1 年報酬</span>
-                            <span id="return-1y" class="font-semibold tabular-nums">-</span>
-                        </div>
-                        <div class="flex justify-between py-2.5 text-sm">
-                            <span class="text-slate-400">3 年年化</span>
-                            <span id="return-3y" class="font-semibold tabular-nums">-</span>
-                        </div>
-                        <div class="flex justify-between py-2.5 text-sm">
-                            <span class="text-slate-400">5 年年化</span>
-                            <span id="return-5y" class="font-semibold tabular-nums">-</span>
-                        </div>
-                        <div class="flex justify-between py-2.5 text-sm">
-                            <span class="text-slate-400">配息頻率</span>
-                            <span id="payout-freq" class="font-medium text-slate-700">-</span>
-                        </div>
-                        <div class="flex justify-between py-2.5 text-sm">
-                            <span class="text-slate-400">近年殖利率</span>
-                            <span id="dividend-yield" class="font-semibold text-emerald-600 tabular-nums">-</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 歷史走勢圖 -->
+        <!-- 基本資訊 + 報酬配息 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="bg-white rounded-xl border border-slate-100 p-5">
-                <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wide">近一年走勢</h3>
+                <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">基本資訊</h3>
+                <div class="divide-y divide-slate-50">
+                    <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">資產規模</span><span id="asset-size" class="font-medium text-slate-700">-</span></div>
+                    <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">淨值 (NAV)</span><span id="nav" class="font-medium text-slate-700 tabular-nums">-</span></div>
+                    <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">折溢價</span><span id="premium" class="font-medium">-</span></div>
+                    <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">本益比 (P/E)</span><span id="pe-ratio" class="font-medium text-slate-700 tabular-nums">-</span></div>
+                    <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">內扣費用率</span><span id="expense-ratio" class="font-medium text-slate-700">-</span></div>
+                    <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">52週最高</span><span id="wk52-high" class="font-medium text-red-500 tabular-nums">-</span></div>
+                    <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">52週最低</span><span id="wk52-low" class="font-medium text-green-600 tabular-nums">-</span></div>
                 </div>
-                <canvas id="price-chart" height="180"></canvas>
             </div>
-        </div>
-    </div>
-
-    <!-- 交易 Modal -->
-    <div id="tradeModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
-        <div class="bg-white rounded-2xl w-full max-w-md p-6">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="text-xl font-bold text-slate-800" id="modal-title">交易</h3>
-                <button onclick="closeTradeModal()" class="text-slate-400 hover:text-slate-600">
-                    <i class="fas fa-times text-xl"></i>
-                </button>
-            </div>
-            
-            <div class="space-y-4">
-                <div>
-                    <label class="block text-sm font-bold text-slate-700 mb-2">交易類型</label>
-                    <div class="flex space-x-4">
-                        <label class="flex items-center">
-                            <input type="radio" name="trade-type" value="buy" class="w-4 h-4 text-indigo-600" checked>
-                            <span class="ml-2 text-slate-700">買入</span>
-                        </label>
-                        <label class="flex items-center">
-                            <input type="radio" name="trade-type" value="sell" class="w-4 h-4 text-indigo-600">
-                            <span class="ml-2 text-slate-700">賣出</span>
-                        </label>
-                    </div>
-                </div>
-
-                <div>
-                    <label class="block text-sm font-bold text-slate-700 mb-2">日期</label>
-                    <input type="date" id="trade-date" class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-400 outline-none">
-                </div>
-
-                <div>
-                    <label class="block text-sm font-bold text-slate-700 mb-2">股數</label>
-                    <input type="number" id="trade-shares" class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-400 outline-none" placeholder="輸入股數" min="1" step="1">
-                </div>
-
-                <div>
-                    <label class="block text-sm font-bold text-slate-700 mb-2">每股價格 (NT$)</label>
-                    <input type="number" id="trade-price" class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-400 outline-none" placeholder="每股價格" min="0" step="0.01">
-                </div>
-
-                <div>
-                    <label class="block text-sm font-bold text-slate-700 mb-2">手續費 (NT$)</label>
-                    <input type="number" id="trade-commission" class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-400 outline-none" placeholder="輸入手續費" min="0" step="1" value="0">
-                </div>
-
-                <div class="flex space-x-3 pt-4">
-                    <button onclick="saveTrade(this)" class="flex-1 bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 font-medium">
-                        確認成交
-                    </button>
-                    <button onclick="closeTradeModal()" class="flex-1 bg-slate-100 text-slate-600 py-2 rounded-lg hover:bg-slate-200 font-medium">
-                        取消
-                    </button>
+            <div class="bg-white rounded-xl border border-slate-100 p-5">
+                <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">報酬與配息</h3>
+                <div class="divide-y divide-slate-50">
+                    <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">1 年報酬</span><span id="return-1y" class="font-semibold tabular-nums">-</span></div>
+                    <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">3 年年化</span><span id="return-3y" class="font-semibold tabular-nums">-</span></div>
+                    <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">5 年年化</span><span id="return-5y" class="font-semibold tabular-nums">-</span></div>
+                    <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">配息頻率</span><span id="payout-freq" class="font-medium text-slate-700">-</span></div>
+                    <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">近年殖利率</span><span id="dividend-yield" class="font-semibold text-emerald-600 tabular-nums">-</span></div>
                 </div>
             </div>
         </div>
+
+        <!-- 走勢圖 -->
+        <div class="bg-white rounded-xl border border-slate-100 p-5">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide">價格走勢</h3>
+                <div class="flex gap-1">
+                    <button onclick="changePeriod('3m')" class="period-btn px-2.5 py-1 text-xs rounded">3M</button>
+                    <button onclick="changePeriod('6m')" class="period-btn px-2.5 py-1 text-xs rounded">6M</button>
+                    <button onclick="changePeriod('1y')" class="period-btn px-2.5 py-1 text-xs rounded active">1Y</button>
+                    <button onclick="changePeriod('3y')" class="period-btn px-2.5 py-1 text-xs rounded">3Y</button>
+                    <button onclick="changePeriod('5y')" class="period-btn px-2.5 py-1 text-xs rounded">5Y</button>
+                </div>
+            </div>
+            <p id="chart-note" class="hidden text-xs text-amber-500 text-right mb-1">⚠️ 歷史資料暫時無法取得，以下為 52 週區間估算</p>
+            <canvas id="price-chart" height="160"></canvas>
+            <p id="no-chart-msg" class="hidden text-center text-slate-400 text-sm py-8">暫無歷史價格資料</p>
+        </div>
+
     </div>
+</div>
 
-    <script>
-        let currentUser = null;
-        let etfData = null;
-        let priceChart = null;
-        let inWatchlist = false;
+<!-- 手機底部 -->
+<nav class="fixed bottom-0 w-full bg-white border-t border-slate-100 z-50 md:hidden">
+    <div class="flex justify-around py-2">
+        <a href="/etf-list"  class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-list text-lg"></i><span class="text-[10px]">精選</span></a>
+        <a href="/watchlist" class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-heart text-lg"></i><span class="text-[10px]">自選</span></a>
+        <a href="/portfolio" class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-chart-pie text-lg"></i><span class="text-[10px]">庫存</span></a>
+        <a href="/backtest"  class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-history text-lg"></i><span class="text-[10px]">回測</span></a>
+        <a href="/profile"   class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-user text-lg"></i><span class="text-[10px]">會員</span></a>
+    </div>
+</nav>
 
-        function showToast(message, isSuccess = true) {
-            const toast = document.createElement('div');
-            toast.className = 'toast-message';
-            toast.style.backgroundColor = isSuccess ? '#10b981' : '#ef4444';
-            toast.innerHTML = `<i class="fas ${isSuccess ? 'fa-check-circle' : 'fa-exclamation-circle'} mr-2"></i>${message}`;
-            document.body.appendChild(toast);
-            setTimeout(() => toast.remove(), 3000);
+<!-- 交易 Modal -->
+<div id="tradeModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-xl font-bold text-slate-800" id="modal-title">交易</h3>
+            <button onclick="closeTradeModal()" class="text-slate-400 hover:text-slate-600"><i class="fas fa-times text-xl"></i></button>
+        </div>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-bold text-slate-700 mb-2">交易類型</label>
+                <div class="flex space-x-4">
+                    <label class="flex items-center cursor-pointer"><input type="radio" name="trade-type" value="buy" class="w-4 h-4 text-indigo-600" checked><span class="ml-2 text-slate-700">買入</span></label>
+                    <label class="flex items-center cursor-pointer"><input type="radio" name="trade-type" value="sell" class="w-4 h-4 text-indigo-600"><span class="ml-2 text-slate-700">賣出</span></label>
+                </div>
+            </div>
+            <div><label class="block text-sm font-bold text-slate-700 mb-2">日期</label><input type="date" id="trade-date" class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-400 outline-none"></div>
+            <div><label class="block text-sm font-bold text-slate-700 mb-2">股數</label><input type="number" id="trade-shares" class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-400 outline-none" placeholder="輸入股數" min="1" step="1"></div>
+            <div><label class="block text-sm font-bold text-slate-700 mb-2">每股價格</label><input type="number" id="trade-price" class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-400 outline-none" placeholder="每股價格" min="0" step="0.01"></div>
+            <div><label class="block text-sm font-bold text-slate-700 mb-2">手續費</label><input type="number" id="trade-commission" class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-400 outline-none" placeholder="0" min="0" step="1" value="0"></div>
+            <div class="flex space-x-3 pt-2">
+                <button onclick="saveTrade(this)" class="flex-1 bg-indigo-600 text-white py-2.5 rounded-lg hover:bg-indigo-700 font-medium">確認成交</button>
+                <button onclick="closeTradeModal()" class="flex-1 bg-slate-100 text-slate-600 py-2.5 rounded-lg hover:bg-slate-200 font-medium">取消</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── 靜態補充資料（發行商 / 成立日期 / 費用率保底）──
+const STATIC_INFO = {
+    '0050':   { issuer:'元大投信', listing_date:'2003-06-25', expense_ratio:0.46 },
+    '0056':   { issuer:'元大投信', listing_date:'2007-12-26', expense_ratio:0.66 },
+    '00878':  { issuer:'國泰投信', listing_date:'2020-07-20', expense_ratio:0.65 },
+    '006208': { issuer:'富邦投信', listing_date:'2012-07-17', expense_ratio:0.46 },
+    '00919':  { issuer:'群益投信', listing_date:'2022-10-20', expense_ratio:0.90 },
+    '00929':  { issuer:'復華投信', listing_date:'2023-03-31', expense_ratio:0.95 },
+    '00713':  { issuer:'元大投信', listing_date:'2017-09-27', expense_ratio:0.45 },
+    '00940':  { issuer:'元大投信', listing_date:'2024-03-20', expense_ratio:0.65 },
+    '00939':  { issuer:'統一投信', listing_date:'2023-12-19', expense_ratio:0.85 },
+    '0052':   { issuer:'富邦投信', listing_date:'2006-10-30', expense_ratio:0.59 },
+    '00692':  { issuer:'富邦投信', listing_date:'2017-05-17', expense_ratio:0.37 },
+    '00679B': { issuer:'元大投信', listing_date:'2017-01-11', expense_ratio:0.30 },
+    '00687B': { issuer:'國泰投信', listing_date:'2017-09-27', expense_ratio:0.25 },
+    '00751B': { issuer:'元大投信', listing_date:'2019-01-16', expense_ratio:0.24 },
+    '006205': { issuer:'富邦投信', listing_date:'2011-08-16', expense_ratio:0.99 },
+    'SPY':  { issuer:'State Street', listing_date:'1993-01-22', expense_ratio:0.0945 },
+    'QQQ':  { issuer:'Invesco',      listing_date:'1999-03-10', expense_ratio:0.20 },
+    'VOO':  { issuer:'Vanguard',     listing_date:'2010-09-07', expense_ratio:0.03 },
+    'VTI':  { issuer:'Vanguard',     listing_date:'2001-05-24', expense_ratio:0.03 },
+    'VT':   { issuer:'Vanguard',     listing_date:'2008-06-24', expense_ratio:0.07 },
+    'SCHD': { issuer:'Schwab',       listing_date:'2011-10-20', expense_ratio:0.06 },
+    'VYM':  { issuer:'Vanguard',     listing_date:'2006-11-10', expense_ratio:0.06 },
+    'VIG':  { issuer:'Vanguard',     listing_date:'2006-04-21', expense_ratio:0.06 },
+    'TLT':  { issuer:'BlackRock',    listing_date:'2002-07-22', expense_ratio:0.15 },
+    'AGG':  { issuer:'BlackRock',    listing_date:'2003-09-22', expense_ratio:0.03 },
+    'XLK':  { issuer:'State Street', listing_date:'1998-12-16', expense_ratio:0.09 },
+    'SMH':  { issuer:'VanEck',       listing_date:'1999-12-20', expense_ratio:0.35 },
+    'IWM':  { issuer:'BlackRock',    listing_date:'2000-05-22', expense_ratio:0.19 },
+    'GLD':  { issuer:'State Street', listing_date:'2004-11-18', expense_ratio:0.40 },
+    'ARKK': { issuer:'ARK Invest',   listing_date:'2014-10-31', expense_ratio:0.75 },
+};
+
+let currentUser = null, etfData = null, priceChart = null;
+let inWatchlist = false, currentPeriod = '1y', currentTicker = '';
+
+function showToast(msg, ok = true) {
+    const el = document.createElement('div');
+    el.className = 'toast-message';
+    el.style.background = ok ? '#10b981' : '#ef4444';
+    el.innerHTML = `<i class="fas ${ok ? 'fa-check-circle' : 'fa-exclamation-circle'} mr-2"></i>${msg}`;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 3100);
+}
+
+function checkLogin() {
+    const u = localStorage.getItem('user');
+    if (!u) return;
+    try {
+        currentUser = JSON.parse(u);
+        document.getElementById('user-info').innerHTML = `
+            <div class="flex items-center gap-2">
+                <span class="text-sm text-slate-600 hidden md:inline">${currentUser.username}</span>
+                <button onclick="logout()" class="text-slate-400 hover:text-slate-700 px-2 py-1 rounded hover:bg-slate-100 text-sm"><i class="fas fa-sign-out-alt"></i></button>
+            </div>`;
+    } catch(e) { localStorage.removeItem('user'); }
+}
+function logout() { localStorage.removeItem('user'); localStorage.removeItem('token'); location.reload(); }
+
+async function loadETFDetail() {
+    const parts = window.location.pathname.split('/');
+    currentTicker = parts[parts.length - 1].toUpperCase();
+    document.title = `${currentTicker} - ETF詳細資料`;
+
+    try {
+        let res = await fetch(`/api/etf/detail/${currentTicker}`);
+        let result = await res.json();
+
+        if (result.status !== 'success') {
+            document.getElementById('loading-msg').textContent = '正在即時抓取數據，請稍候（約 15 秒）...';
+            await fetch(`/api/etf/update/${currentTicker}`, { method: 'POST' });
+            res = await fetch(`/api/etf/detail/${currentTicker}`);
+            result = await res.json();
         }
 
-        function checkLogin() {
-            const userStr = localStorage.getItem('user');
-            if (userStr) {
-                currentUser = JSON.parse(userStr);
-                document.getElementById('user-info').innerHTML = `
-                    <div class="flex items-center space-x-3">
-                        <span class="text-sm text-slate-600">${currentUser.username}</span>
-                        <button onclick="logout()" class="bg-slate-100 text-slate-600 px-3 py-2 rounded-lg hover:bg-slate-200">
-                            <i class="fas fa-sign-out-alt"></i>
-                        </button>
-                    </div>
-                `;
+        if (result.status === 'success') {
+            etfData = result.data;
+            renderData();
+            loadPriceHistory(currentTicker, '1y');
+            checkWatchlistStatus(currentTicker);
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('content').classList.remove('hidden');
+        } else {
+            throw new Error(result.message || '無法載入資料');
+        }
+    } catch(err) {
+        console.error(err);
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('error-message').classList.remove('hidden');
+        document.getElementById('error-text').textContent = err.message || '發生錯誤，請稍後再試';
+    }
+}
+
+function renderData() {
+    const d = etfData;
+    const stat = STATIC_INFO[d.ticker] || {};
+
+    // 標題
+    document.getElementById('etf-ticker').textContent = d.ticker;
+    document.getElementById('etf-name').textContent   = d.name || d.ticker;
+    document.title = `${d.ticker} ${d.name || ''} - ETF投資系統`;
+    document.getElementById('market-badge').textContent = d.market === 'TW' ? '台股' : '美股';
+
+    // 配息 badge
+    const freq = d.payout_freq || '';
+    const badgeMap = {
+        '月配':'bg-blue-100 text-blue-700','季配':'bg-emerald-100 text-emerald-700',
+        '半年配':'bg-amber-100 text-amber-700','年配':'bg-purple-100 text-purple-700',
+        '不配息':'bg-slate-100 text-slate-500'
+    };
+    const pb = document.getElementById('payout-badge');
+    pb.className = `px-2.5 py-0.5 rounded-full text-xs font-bold ${badgeMap[freq] || 'bg-slate-100 text-slate-500'}`;
+    pb.textContent = freq;
+
+    // 發行商 & 成立日期
+    const issuer  = d.issuer       || stat.issuer       || '';
+    const listing = d.listing_date || stat.listing_date || '';
+    if (issuer)  { document.getElementById('issuer').textContent       = issuer;  document.getElementById('issuer-row').classList.remove('hidden'); }
+    if (listing) { document.getElementById('listing-date').textContent = listing; document.getElementById('listing-row').classList.remove('hidden'); }
+
+    // 現價 & 漲跌
+    const price  = parseFloat(d.current_price) || 0;
+    const chgAmt = parseFloat(d.price_change) || 0;
+    const chgPct = parseFloat(d.price_change_percent) || 0;
+    const up     = chgPct >= 0;
+    document.getElementById('current-price').textContent = price > 0 ? price.toFixed(2) : '-';
+    document.getElementById('price-change').innerHTML = price > 0
+        ? `<span class="${up?'text-red-500':'text-green-600'} font-semibold">${up?'▲':'▼'} ${Math.abs(chgAmt).toFixed(2)} (${up?'+':''}${chgPct.toFixed(2)}%)</span>`
+        : '-';
+
+    // 今日高低
+    const dH = parseFloat(d.day_high) || price;
+    const dL = parseFloat(d.day_low)  || price;
+    document.getElementById('day-high').textContent = dH > 0 ? dH.toFixed(2) : '-';
+    document.getElementById('day-low').textContent  = dL > 0 ? dL.toFixed(2) : '-';
+
+    // 成交量
+    const vol = parseInt(d.volume) || 0;
+    if (d.market === 'TW') {
+        const lots = Math.round(vol / 1000);
+        document.getElementById('volume').textContent = lots >= 10000 ? (lots/10000).toFixed(1)+' 萬' : lots.toLocaleString();
+        document.getElementById('volume-unit').textContent = '張';
+    } else {
+        document.getElementById('volume').textContent = vol >= 1e6 ? (vol/1e6).toFixed(2)+'M' : vol.toLocaleString();
+        document.getElementById('volume-unit').textContent = '股';
+    }
+
+    // 資產規模
+    const assets = parseFloat(d.asset_size) || 0;
+    if (assets > 0) {
+        let txt;
+        if (assets >= 1e12)      txt = (assets/1e12).toFixed(2)+' 兆';
+        else if (assets >= 1e10) txt = (assets/1e10).toFixed(1)+' 百億';
+        else if (assets >= 1e8)  txt = (assets/1e8).toFixed(1)+' 億';
+        else if (assets >= 1e6)  txt = (assets/1e6).toFixed(1)+' 百萬';
+        else                     txt = assets.toLocaleString();
+        document.getElementById('asset-size').textContent = txt;
+    } else {
+        document.getElementById('asset-size').textContent = '-';
+    }
+
+    // NAV & 折溢價
+    const nav = parseFloat(d.nav) || price;
+    document.getElementById('nav').textContent = nav > 0 ? nav.toFixed(2) : '-';
+    if (nav > 0 && price > 0) {
+        const prem = (price - nav) / nav * 100;
+        const cls  = prem > 0.5 ? 'text-red-500' : prem < -0.5 ? 'text-green-600' : 'text-slate-500';
+        document.getElementById('premium').innerHTML = `<span class="${cls} font-medium">${prem>0?'+':''}${prem.toFixed(2)}%</span>`;
+    } else {
+        document.getElementById('premium').textContent = '0.00%';
+    }
+
+    // P/E
+    const pe = parseFloat(d.pe_ratio) || 0;
+    document.getElementById('pe-ratio').textContent = pe > 0 ? pe.toFixed(2) : '-';
+
+    // 費用率（DB 優先，沒有用靜態表）
+    let er = parseFloat(d.expense_ratio) || 0;
+    if (er <= 0 && stat.expense_ratio) er = stat.expense_ratio;
+    if (er > 0) {
+        const erPct = er < 0.1 ? er * 100 : er;  // 0.0046 → 0.46%
+        document.getElementById('expense-ratio').textContent = erPct.toFixed(2) + '%';
+    } else {
+        document.getElementById('expense-ratio').textContent = '-';
+    }
+
+    // 52 週
+    const h52 = parseFloat(d.fifty_two_week_high) || 0;
+    const l52 = parseFloat(d.fifty_two_week_low)  || 0;
+    document.getElementById('wk52-high').textContent = h52 > 0 ? h52.toFixed(2) : '-';
+    document.getElementById('wk52-low').textContent  = l52 > 0 ? l52.toFixed(2) : '-';
+
+    // 報酬率
+    const retFmt = v => v !== 0
+        ? `<span class="${v>=0?'text-red-500':'text-green-600'}">${v>=0?'+':''}${v.toFixed(2)}%</span>`
+        : '<span class="text-slate-400">-</span>';
+    document.getElementById('return-1y').innerHTML = retFmt(parseFloat(d.annual_return_1y)||0);
+    document.getElementById('return-3y').innerHTML = retFmt(parseFloat(d.annual_return_3y)||0);
+    document.getElementById('return-5y').innerHTML = retFmt(parseFloat(d.annual_return_5y)||0);
+
+    // 配息頻率 & 殖利率
+    document.getElementById('payout-freq').textContent = freq || '-';
+    const yld = parseFloat(d.dividend_yield) || 0;
+    document.getElementById('dividend-yield').textContent = yld > 0 ? yld.toFixed(2)+'%' : '-';
+}
+
+// ── 圖表 ──
+async function loadPriceHistory(ticker, period = '1y') {
+    try {
+        const res  = await fetch(`/api/etf/price-history/${ticker}?period=${period}`);
+        const data = await res.json();
+        if (data.status === 'success' && data.prices?.length > 0) {
+            drawChart(data.labels, data.prices.filter(p => p != null), false);
+        } else {
+            drawFallbackChart();
+        }
+    } catch(e) { drawFallbackChart(); }
+}
+
+function drawFallbackChart() {
+    if (!etfData) { showNoChart(); return; }
+    const price = parseFloat(etfData.current_price) || 0;
+    if (price <= 0) { showNoChart(); return; }
+    const h52 = parseFloat(etfData.fifty_two_week_high) || price * 1.05;
+    const l52 = parseFloat(etfData.fifty_two_week_low)  || price * 0.93;
+    const n = 13, labels = [], prices = [];
+    const now = new Date();
+    for (let i = n-1; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+        labels.push(`${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}`);
+        const t    = (n-1-i)/(n-1);
+        const wave = (Math.sin(t * Math.PI * 1.5 - 0.5) + 1) / 2;
+        const base = l52 + (h52-l52) * wave;
+        prices.push(i === 0 ? price : Math.round((base*(1-t*0.25) + price*t*0.25)*100)/100);
+    }
+    prices[prices.length-1] = price;
+    document.getElementById('chart-note').classList.remove('hidden');
+    drawChart(labels, prices, true);
+}
+
+function showNoChart() {
+    document.getElementById('price-chart').classList.add('hidden');
+    document.getElementById('no-chart-msg').classList.remove('hidden');
+}
+
+function drawChart(labels, prices, isFallback = false) {
+    const canvas = document.getElementById('price-chart');
+    canvas.classList.remove('hidden');
+    document.getElementById('no-chart-msg').classList.add('hidden');
+    if (!isFallback) document.getElementById('chart-note').classList.add('hidden');
+    if (priceChart) priceChart.destroy();
+
+    const isTW  = etfData?.market === 'TW';
+    const pfx   = isTW ? 'NT$ ' : '$ ';
+
+    priceChart = new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: isFallback ? '估算走勢' : '收盤價',
+                data: prices,
+                borderColor: isFallback ? '#94a3b8' : '#6366f1',
+                backgroundColor: isFallback ? 'rgba(148,163,184,0.07)' : 'rgba(99,102,241,0.08)',
+                borderDash: isFallback ? [5,4] : [],
+                fill: true, tension: 0.4,
+                pointRadius: 2, pointHoverRadius: 5,
+                pointBackgroundColor: isFallback ? '#94a3b8' : '#6366f1',
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: true,
+            interaction: { mode:'index', intersect:false },
+            plugins: { legend:{display:false}, tooltip:{ callbacks:{ label: c => pfx+c.raw.toFixed(2) } } },
+            scales: {
+                x: { grid:{display:false}, ticks:{maxTicksLimit:8, font:{size:11}} },
+                y: { ticks:{callback: v => pfx+v.toFixed(0), font:{size:11}}, grid:{color:'#f1f5f9'} }
             }
         }
+    });
+}
 
-        function logout() {
-            localStorage.removeItem('user');
-            localStorage.removeItem('token');
-            location.href = '/auth';
-        }
+function changePeriod(p) {
+    currentPeriod = p;
+    document.querySelectorAll('.period-btn').forEach(b => b.classList.toggle('active', b.textContent.toUpperCase()===p.toUpperCase()));
+    document.getElementById('chart-note').classList.add('hidden');
+    if (currentTicker) loadPriceHistory(currentTicker, p);
+}
 
-        async function loadETfDetail() {
-            const pathParts = window.location.pathname.split('/');
-            const ticker = pathParts[pathParts.length - 1];
-            
-            document.getElementById('page-title').textContent = `${ticker} - ETF 詳細資料`;
-            
-            try {
-                const response = await fetch(`/api/etf/detail/${ticker}`);
-                const result = await response.json();
-                
-                if (result.status === 'success') {
-                    etfData = result.data;
-                    renderData();
-                    loadPriceHistory(ticker);
-                    checkWatchlistStatus(ticker);
-                    document.getElementById('loading').classList.add('hidden');
-                    document.getElementById('content').classList.remove('hidden');
-                } else {
-                    throw new Error(result.message);
-                }
-            } catch (error) {
-                console.error('載入失敗:', error);
-                document.getElementById('loading').classList.add('hidden');
-                // 如果是資料還沒抓，自動觸發即時更新
-                if (error.message && error.message.includes('尚未抓取')) {
-                    document.getElementById('loading').classList.remove('hidden');
-                    document.querySelector('#loading p').textContent = '正在即時抓取數據，請稍候...';
-                    try {
-                        await fetch(`/api/etf/update/${ticker}`, { method: 'POST' });
-                        // 重新載入
-                        const r2 = await fetch(`/api/etf/detail/${ticker}`);
-                        const d2 = await r2.json();
-                        if (d2.status === 'success') {
-                            etfData = d2.data;
-                            renderData();
-                            loadPriceHistory(ticker);
-                            checkWatchlistStatus(ticker);
-                            document.getElementById('loading').classList.add('hidden');
-                            document.getElementById('content').classList.remove('hidden');
-                            return;
-                        }
-                    } catch(e2) {}
-                }
-                document.getElementById('error-message').classList.remove('hidden');
-                document.getElementById('error-text').textContent = error.message || '無法載入 ETF 資料';
-            }
-        }
+// ── 自選股 ──
+async function checkWatchlistStatus(ticker) {
+    if (!currentUser) return;
+    try {
+        const res = await fetch('/api/watchlist', { headers:{'X-User-Id':currentUser.id} });
+        const d   = await res.json();
+        if (d.status === 'success') { inWatchlist = d.data.some(i => i.ticker===ticker); updateWatchlistBtn(); }
+    } catch(e) {}
+}
+function updateWatchlistBtn() {
+    const btn = document.getElementById('watchlist-btn');
+    if (inWatchlist) {
+        btn.innerHTML = '<i class="fas fa-star text-yellow-400 mr-1.5"></i>已收藏';
+        btn.className = 'px-3 py-2 rounded-lg text-sm font-medium bg-yellow-50 text-yellow-600 hover:bg-yellow-100 transition-all';
+    } else {
+        btn.innerHTML = '<i class="fas fa-star mr-1.5"></i>自選';
+        btn.className = 'px-3 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all';
+    }
+}
+async function toggleWatchlist() {
+    if (!currentUser) { showToast('請先登入', false); setTimeout(()=>location.href='/auth',1000); return; }
+    try {
+        const res = inWatchlist
+            ? await fetch(`/api/watchlist/remove/${etfData.ticker}`, {method:'DELETE',headers:{'X-User-Id':currentUser.id}})
+            : await fetch('/api/watchlist/add', {method:'POST',headers:{'Content-Type':'application/json','X-User-Id':currentUser.id},body:JSON.stringify({ticker:etfData.ticker})});
+        const d = await res.json();
+        if (d.status==='success') { inWatchlist=!inWatchlist; updateWatchlistBtn(); showToast(inWatchlist?`已加入 ${etfData.ticker}`:`已移除 ${etfData.ticker}`); }
+        else showToast(d.message||'操作失敗', false);
+    } catch(e) { showToast('網路錯誤', false); }
+}
 
-        function renderData() {
-            const data = etfData;
-            
-            // 標題
-            document.getElementById('etf-ticker').textContent = data.ticker;
-            document.getElementById('etf-name').textContent = data.name || data.ticker;
-            document.getElementById('market').textContent = data.market === 'TW' ? '台股' : '美股';
-            document.getElementById('issuer').textContent = data.issuer || '-';
-            document.getElementById('listing-date').textContent = data.listing_date || '-';
-            document.title = `${data.ticker} ${data.name || ''} - ETF投資系統`;
-            
-            // 現價 & 漲跌
-            const price = data.current_price || 0;
-            const chg   = data.price_change_percent || 0;
-            const chgAmt = data.price_change || 0;
-            const up    = chg >= 0;
-            document.getElementById('current-price').textContent = price.toFixed(2);
-            document.getElementById('price-change').innerHTML =
-                `<span class="${up?'text-red-500':'text-green-600'} font-semibold">
-                    ${up?'▲':'▼'} ${Math.abs(chgAmt).toFixed(2)} (${up?'+':''}${chg.toFixed(2)}%)
-                </span>`;
-            
-            // 今日高低
-            const dHigh = data.day_high || price;
-            const dLow  = data.day_low  || price;
-            document.getElementById('day-high').textContent = dHigh.toFixed(2);
-            document.getElementById('day-low').textContent  = dLow.toFixed(2);
-            
-            // 成交量
-            const vol = data.volume || 0;
-            if (data.market === 'TW') {
-                const lots = Math.round(vol / 1000);
-                document.getElementById('volume').textContent =
-                    lots >= 10000 ? (lots/10000).toFixed(1) + ' 萬' : lots.toLocaleString();
-                document.getElementById('volume-unit').textContent = '張';
-            } else {
-                document.getElementById('volume').textContent =
-                    vol >= 1e6 ? (vol/1e6).toFixed(1) + 'M' : vol.toLocaleString();
-                document.getElementById('volume-unit').textContent = '股';
-            }
-            
-            // 資產規模
-            const assets = data.asset_size || 0;
-            let assetTxt = '-';
-            if (assets >= 1e12)     assetTxt = (assets/1e12).toFixed(2) + ' 兆';
-            else if (assets >= 1e10) assetTxt = (assets/1e10).toFixed(1) + ' 百億';
-            else if (assets >= 1e8)  assetTxt = (assets/1e8).toFixed(1) + ' 億';
-            else if (assets > 0)     assetTxt = assets.toLocaleString();
-            document.getElementById('asset-size').textContent = assetTxt;
-            
-            // NAV & 折溢價
-            const nav = data.nav || price;
-            document.getElementById('nav').textContent = nav > 0 ? nav.toFixed(2) : '-';
-            if (nav > 0 && price > 0) {
-                const prem = (price - nav) / nav * 100;
-                const cls = prem > 0.5 ? 'text-red-500' : prem < -0.5 ? 'text-green-600' : 'text-slate-500';
-                document.getElementById('premium').innerHTML =
-                    `<span class="${cls} font-medium">${prem > 0 ? '+' : ''}${prem.toFixed(2)}%</span>`;
-            } else {
-                document.getElementById('premium').textContent = '-';
-            }
-            
-            // P/E
-            const pe = data.pe_ratio || 0;
-            document.getElementById('pe-ratio').textContent = pe > 0 ? pe.toFixed(2) : '-';
-            
-            // 費用率
-            const er = data.expense_ratio || 0;
-            document.getElementById('expense-ratio').textContent = er > 0 ? (er * 100).toFixed(3) + '%' : '-';
-            
-            // 52週高低
-            const h52 = data.fifty_two_week_high || 0;
-            const l52 = data.fifty_two_week_low  || 0;
-            document.getElementById('wk52-high').textContent = h52 > 0 ? h52.toFixed(2) : '-';
-            document.getElementById('wk52-low').textContent  = l52 > 0 ? l52.toFixed(2) : '-';
-            
-            // 報酬率
-            const r1 = data.annual_return_1y || 0;
-            const r3 = data.annual_return_3y || 0;
-            const r5 = data.annual_return_5y || 0;
-            const retFmt = (v) => v !== 0
-                ? `<span class="${v>=0?'text-red-500':'text-green-600'}">${v>=0?'+':''}${v.toFixed(2)}%</span>`
-                : '<span class="text-slate-400">-</span>';
-            document.getElementById('return-1y').innerHTML = retFmt(r1);
-            document.getElementById('return-3y').innerHTML = retFmt(r3);
-            document.getElementById('return-5y').innerHTML = retFmt(r5);
-            
-            // 配息頻率 & 殖利率
-            const freq = data.payout_freq || '-';
-            document.getElementById('payout-freq').textContent = freq;
-            const badgeMap = {'月配':'bg-blue-100 text-blue-700','季配':'bg-emerald-100 text-emerald-700',
-                              '半年配':'bg-amber-100 text-amber-700','年配':'bg-purple-100 text-purple-700',
-                              '不配息':'bg-slate-100 text-slate-500'};
-            const badgeCls = badgeMap[freq] || 'bg-slate-100 text-slate-500';
-            document.getElementById('payout-badge').className =
-                `px-2.5 py-0.5 rounded-full text-xs font-bold ${badgeCls}`;
-            document.getElementById('payout-badge').textContent = freq;
-            
-            const yld = data.dividend_yield || 0;
-            document.getElementById('dividend-yield').textContent = yld > 0 ? yld.toFixed(2) + '%' : '-';
-        }
+// ── 交易 Modal ──
+function openTradeModal() {
+    if (!currentUser) { showToast('請先登入',false); setTimeout(()=>location.href='/auth',1000); return; }
+    document.getElementById('modal-title').textContent = `${etfData.ticker} - 交易`;
+    document.getElementById('trade-price').value = (parseFloat(etfData.current_price)||0).toFixed(2);
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('trade-date').value = document.getElementById('trade-date').max = today;
+    document.getElementById('trade-shares').value = '';
+    document.getElementById('trade-commission').value = '0';
+    document.getElementById('tradeModal').style.display = 'flex';
+}
+function closeTradeModal() { document.getElementById('tradeModal').style.display='none'; }
+async function saveTrade(btn) {
+    const type       = document.querySelector('input[name="trade-type"]:checked').value;
+    const shares     = parseInt(document.getElementById('trade-shares').value);
+    const price      = parseFloat(document.getElementById('trade-price').value);
+    const commission = parseFloat(document.getElementById('trade-commission').value)||0;
+    const date       = document.getElementById('trade-date').value;
+    if (!shares||shares<=0) { showToast('請輸入有效股數',false); return; }
+    if (!price ||price <=0) { showToast('請輸入有效價格',false); return; }
+    const orig = btn.innerHTML;
+    btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> 處理中...'; btn.disabled=true;
+    try {
+        const res = await fetch('/api/portfolio/transaction',{method:'POST',headers:{'Content-Type':'application/json','X-User-Id':currentUser.id},
+            body:JSON.stringify({ticker:etfData.ticker,transaction_type:type,shares,price,commission,transaction_date:date,name:etfData.name||etfData.ticker,market:etfData.market||'TW'})});
+        const d = await res.json();
+        if (d.status==='success') { showToast(`成功${type==='buy'?'買入':'賣出'} ${etfData.ticker}`); closeTradeModal(); }
+        else showToast(d.message||'交易失敗', false);
+    } catch(e) { showToast('網路錯誤',false); }
+    finally { btn.innerHTML=orig; btn.disabled=false; }
+}
 
-        async function loadPriceHistory(ticker) {
-            try {
-                const response = await fetch(`/api/etf/price-history/${ticker}`);
-                const data = await response.json();
+// ── 搜尋 ──
+document.getElementById('search-input')?.addEventListener('keypress', async e => {
+    if (e.key!=='Enter') return;
+    const q = e.target.value.trim(); if (!q) return;
+    try {
+        const res  = await fetch(`/api/etf/search/dynamic?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        if (data.status==='success'&&data.data.length>0) location.href=`/etf-detail/${data.data[0].ticker}`;
+        else showToast('找不到相關 ETF', false);
+    } catch(e) {}
+});
 
-                if (data.status === 'success' && data.prices && data.prices.length > 0) {
-                    drawChart(data.labels, data.prices.filter(p => p !== null));
-                } else {
-                    drawChart([], []);
-                }
-            } catch (error) {
-                console.error('載入歷史價格失敗:', error);
-                drawChart([], []);
-            }
-        }
-
-        function drawChart(labels, prices) {
-            const canvas = document.getElementById('price-chart');
-            if (!canvas) return;
-
-            const parent = canvas.parentNode;
-            parent.querySelectorAll('.no-data-msg').forEach(el => el.remove());
-
-            if (priceChart) priceChart.destroy();
-
-            if (prices.length === 0) {
-                canvas.style.display = 'none';
-                const noData = document.createElement('p');
-                noData.className = 'no-data-msg text-center text-slate-400 text-sm py-8';
-                noData.textContent = '暫無歷史價格資料';
-                parent.appendChild(noData);
-                return;
-            }
-
-            canvas.style.display = '';
-            const ctx = canvas.getContext('2d');
-            
-            priceChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: '收盤價',
-                        data: prices,
-                        borderColor: '#6366f1',
-                        backgroundColor: 'rgba(99, 102, 241, 0.1)',
-                        fill: true,
-                        tension: 0.4,
-                        pointRadius: 2,
-                        pointHoverRadius: 6,
-                        pointBackgroundColor: '#6366f1'
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: true,
-                    plugins: {
-                        tooltip: {
-                            callbacks: {
-                                label: (c) => 'NT$ ' + c.raw.toFixed(2)
-                            }
-                        }
-                    },
-                    scales: {
-                        y: {
-                            ticks: {
-                                callback: (v) => 'NT$ ' + v.toFixed(0)
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
-        async function checkWatchlistStatus(ticker) {
-            if (!currentUser) {
-                document.getElementById('watchlist-btn').innerHTML = '<i class="fas fa-star mr-2"></i>加入自選';
-                return;
-            }
-            
-            try {
-                const response = await fetch('/api/watchlist', {
-                    headers: { 'X-User-Id': currentUser.id }
-                });
-                const result = await response.json();
-                
-                if (result.status === 'success') {
-                    inWatchlist = result.data.some(item => item.ticker === ticker);
-                    const btn = document.getElementById('watchlist-btn');
-                    if (inWatchlist) {
-                        btn.innerHTML = '<i class="fas fa-star text-yellow-400 mr-2"></i>已收藏';
-                        btn.className = 'px-4 py-2 rounded-lg font-medium bg-yellow-50 text-yellow-600 hover:bg-yellow-100 transition-all';
-                    } else {
-                        btn.innerHTML = '<i class="fas fa-star mr-2"></i>加入自選';
-                        btn.className = 'px-4 py-2 rounded-lg font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all';
-                    }
-                }
-            } catch (error) {
-                console.error('檢查自選股狀態失敗:', error);
-            }
-        }
-
-        async function toggleWatchlist() {
-            if (!currentUser) {
-                showToast('請先登入', false);
-                setTimeout(() => location.href = '/auth', 1000);
-                return;
-            }
-            
-            const ticker = etfData.ticker;
-            
-            try {
-                let response;
-                if (inWatchlist) {
-                    response = await fetch(`/api/watchlist/remove/${ticker}`, {
-                        method: 'DELETE',
-                        headers: { 'X-User-Id': currentUser.id }
-                    });
-                } else {
-                    response = await fetch('/api/watchlist/add', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-User-Id': currentUser.id },
-                        body: JSON.stringify({ ticker })
-                    });
-                }
-                
-                const result = await response.json();
-                
-                if (response.ok && result.status === 'success') {
-                    showToast(inWatchlist ? `已移除 ${ticker}` : `已將 ${ticker} 加入自選股`, true);
-                    inWatchlist = !inWatchlist;
-                    const btn = document.getElementById('watchlist-btn');
-                    if (inWatchlist) {
-                        btn.innerHTML = '<i class="fas fa-star text-yellow-400 mr-2"></i>已收藏';
-                        btn.className = 'px-4 py-2 rounded-lg font-medium bg-yellow-50 text-yellow-600 hover:bg-yellow-100 transition-all';
-                    } else {
-                        btn.innerHTML = '<i class="fas fa-star mr-2"></i>加入自選';
-                        btn.className = 'px-4 py-2 rounded-lg font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all';
-                    }
-                } else {
-                    showToast(result.message || '操作失敗', false);
-                }
-            } catch (error) {
-                console.error('操作失敗:', error);
-                showToast('網路錯誤，請稍後再試', false);
-            }
-        }
-
-        function openTradeModal() {
-            if (!currentUser) {
-                showToast('請先登入', false);
-                setTimeout(() => location.href = '/auth', 1000);
-                return;
-            }
-            
-            const ticker = etfData.ticker;
-            const currentPrice = etfData.current_price || 0;
-            
-            document.getElementById('modal-title').innerHTML = `${ticker} - 交易`;
-            document.getElementById('trade-price').value = currentPrice.toFixed(2);
-            
-            const today = new Date().toISOString().split('T')[0];
-            document.getElementById('trade-date').value = today;
-            document.getElementById('trade-date').max = today;
-            
-            document.getElementById('trade-shares').value = '';
-            document.getElementById('trade-commission').value = '0';
-            
-            document.getElementById('tradeModal').style.display = 'flex';
-        }
-
-        function closeTradeModal() {
-            document.getElementById('tradeModal').style.display = 'none';
-        }
-
-        async function saveTrade(btn) {
-            const ticker = etfData.ticker;
-            const type = document.querySelector('input[name="trade-type"]:checked').value;
-            const date = document.getElementById('trade-date').value;
-            const shares = parseInt(document.getElementById('trade-shares').value);
-            const price = parseFloat(document.getElementById('trade-price').value);
-            const commission = parseFloat(document.getElementById('trade-commission').value) || 0;
-            
-            if (!shares || shares <= 0) {
-                showToast('請輸入有效的股數', false);
-                return;
-            }
-            if (!price || price <= 0) {
-                showToast('請輸入有效的價格', false);
-                return;
-            }
-            
-            const originalText = btn.innerHTML;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 處理中...';
-            btn.disabled = true;
-            
-            try {
-                const response = await fetch('/api/portfolio/transaction', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-User-Id': currentUser.id },
-                    body: JSON.stringify({
-                        ticker,
-                        transaction_type: type,
-                        shares,
-                        price,
-                        commission,
-                        transaction_date: date,
-                        name: etfData.name || ticker,
-                        market: etfData.market || 'TW'
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (response.ok && result.status === 'success') {
-                    showToast(`成功${type === 'buy' ? '買入' : '賣出'} ${ticker}`, true);
-                    closeTradeModal();
-                } else {
-                    showToast(result.message || '交易失敗', false);
-                }
-            } catch (error) {
-                console.error('交易失敗:', error);
-                showToast('網路錯誤，請稍後再試', false);
-            } finally {
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-            }
-        }
-
-        // 搜尋功能
-        document.getElementById('search-input')?.addEventListener('keypress', async (e) => {
-            if (e.key === 'Enter') {
-                const q = e.target.value.trim();
-                if (q) {
-                    try {
-                        const response = await fetch(`/api/etf/search/dynamic?q=${encodeURIComponent(q)}`);
-                        const result = await response.json();
-                        if (result.status === 'success' && result.data.length > 0) {
-                            if (result.data.length === 1) {
-                                window.location.href = `/etf-detail/${result.data[0].ticker}`;
-                            } else {
-                                showToast(`找到 ${result.data.length} 筆結果，請點擊上方排行榜`, false);
-                            }
-                        } else {
-                            showToast('找不到相關 ETF', false);
-                        }
-                    } catch (error) {
-                        console.error('搜尋失敗:', error);
-                    }
-                }
-            }
-        });
-
-        window.onclick = function(event) {
-            const modal = document.getElementById('tradeModal');
-            if (event.target === modal) closeTradeModal();
-        }
-
-        document.addEventListener('DOMContentLoaded', () => {
-            checkLogin();
-            loadETfDetail();
-        });
-    </script>
+window.onclick = e => { if (e.target===document.getElementById('tradeModal')) closeTradeModal(); };
+document.addEventListener('DOMContentLoaded', () => { checkLogin(); loadETFDetail(); });
+</script>
 </body>
 </html>

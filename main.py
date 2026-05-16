@@ -565,76 +565,133 @@ def _fetch_tw_realtime(ticker: str) -> Optional[dict]:
     """
     台灣證交所 MIS 即時報價 API
     上市 (TWSE): https://mis.twse.com.tw/stock/api/getStockInfo.jsp
-    上櫃 (OTC): https://mis.tpex.org.tw/
+    上櫃 (OTC):  https://mis.tpex.org.tw/stock/api/getStockInfo.jsp
+    ★ 修正：
+      1. 上櫃 ETF 改打正確的 tpex 端點（原本還是打 twse，導致上櫃抓不到）
+      2. 非交易時段 z="-" 時改用昨收 y 作為備援價格
     """
-    is_otc = ticker.upper().endswith('B') or ticker.startswith('006')
-    # 統一試 TWSE 格式
-    stock_id = f"tse_{ticker}.tw"
-    url = (
-        f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
-        f"?ex_ch={stock_id}&json=1&delay=0"
+    # 判斷是否為上櫃（末碼 B 為債券 ETF，上櫃代碼；006 開頭部分也是上櫃）
+    ticker_up = ticker.upper()
+    is_otc = ticker_up.endswith('B') or ticker_up in (
+        '006205', '006208',  # 富邦上証/台50 為上市，其他手動維護
     )
+    # 先試上市 TWSE
     try:
         s = _new_session()
+        stock_id = f"tse_{ticker}.tw"
+        url = (
+            f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
+            f"?ex_ch={stock_id}&json=1&delay=0"
+        )
         s.headers["Referer"] = "https://mis.twse.com.tw/"
         r = s.get(url, timeout=8)
-        data = r.json()
-        items = data.get("msgArray", [])
-        if not items:
-            # 試上櫃
-            stock_id2 = f"otc_{ticker}.tw"
-            url2 = url.replace(stock_id, stock_id2)
-            r2 = s.get(url2, timeout=8)
-            data2 = r2.json()
-            items = data2.get("msgArray", [])
-        if not items:
-            return None
-        d = items[0]
-        # z=成交價, y=昨收, h=最高, l=最低, v=成交量(千股), n=名稱
-        price   = _safe_float(d.get("z") or d.get("b"))   # z=成交 b=買一
-        prev    = _safe_float(d.get("y"))
-        high    = _safe_float(d.get("h"))
-        low     = _safe_float(d.get("l"))
-        vol_k   = _safe_float(d.get("v"))                  # 千股
-        name    = d.get("n", ticker)
-        if price <= 0:
-            return None
-        chg     = round(price - prev, 4)
-        chg_pct = round(chg / prev * 100, 4) if prev > 0 else 0.0
-        return {
-            "current_price":        price,
-            "price_change":         chg,
-            "price_change_percent": chg_pct,
-            "day_high":             high,
-            "day_low":              low,
-            "volume":               int(vol_k * 1000),
-            "name_tw":              name,
-        }
+        items = r.json().get("msgArray", [])
     except Exception as e:
         logger.debug(f"TWSE MIS {ticker}: {e}")
+        items = []
+
+    # TWSE 沒拿到 → 改打上櫃 TPEX（用獨立 session 避免 Referer 殘留）
+    if not items:
+        try:
+            s2 = _new_session()
+            stock_id2 = f"otc_{ticker}.tw"
+            url2 = (
+                f"https://mis.tpex.org.tw/stock/api/getStockInfo.jsp"
+                f"?ex_ch={stock_id2}&json=1&delay=0"
+            )
+            s2.headers["Referer"] = "https://mis.tpex.org.tw/"
+            r2 = s2.get(url2, timeout=8)
+            items = r2.json().get("msgArray", [])
+        except Exception as e:
+            logger.debug(f"TPEX MIS {ticker}: {e}")
+            items = []
+
+    if not items:
         return None
+
+    d = items[0]
+    # z=成交價（非交易時段回傳 "-"），y=昨收，b=買一，h=最高，l=最低，v=成交量(千股)
+    z_val   = d.get("z", "-")
+    y_val   = d.get("y", "0")
+    b_val   = d.get("b", "0")
+    # 優先用成交價，非交易時段用昨收，最後備援用買一
+    if z_val and z_val != "-":
+        price = _safe_float(z_val)
+    elif y_val and y_val != "-":
+        price = _safe_float(y_val)
+    else:
+        price = _safe_float(b_val)
+
+    prev    = _safe_float(y_val) if y_val != "-" else price
+    high    = _safe_float(d.get("h", "0"))
+    low     = _safe_float(d.get("l", "0"))
+    vol_k   = _safe_float(d.get("v", "0"))   # 千股
+    name    = d.get("n", ticker)
+
+    if price <= 0:
+        return None
+
+    # 非交易時段 high/low 可能也是 "-"，用 price 補位
+    if high <= 0: high = price
+    if low  <= 0: low  = price
+
+    chg     = round(price - prev, 4)
+    chg_pct = round(chg / prev * 100, 4) if prev > 0 else 0.0
+    return {
+        "current_price":        price,
+        "price_change":         chg,
+        "price_change_percent": chg_pct,
+        "day_high":             high,
+        "day_low":              low,
+        "volume":               int(vol_k * 1000),
+        "name_tw":              name,
+    }
 
 
 def _fetch_tw_history_twse(ticker: str) -> list:
     """
-    台灣證交所月均價歷史 API（最近 60 個月）
-    回傳 [(date_str, close_price), ...]
+    台股 ETF 歷史月線收盤價（最近 5 年）
+    優先用 Yahoo Finance Query2（穩定），失敗再試 TWSE STOCK_DAY
+    回傳 [close_price, ...] 由舊到新
     """
+    # ── 優先：Yahoo Finance 5 年月線 ──
+    try:
+        yt = _yahoo_ticker(ticker, 'TW')
+        url = (
+            f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
+            f"?range=5y&interval=1mo&includePrePost=false"
+        )
+        s = _new_session()
+        s.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
+        r = s.get(url, timeout=12)
+        if r.status_code == 200:
+            j = r.json()
+            result = j.get("chart", {}).get("result")
+            if result:
+                quotes = result[0].get("indicators", {}).get("quote", [{}])[0]
+                closes = [_safe_float(c) for c in (quotes.get("close") or []) if c is not None]
+                if len(closes) >= 6:
+                    logger.debug(f"TW history {ticker}: Yahoo {len(closes)} 筆")
+                    return closes
+    except Exception as e:
+        logger.debug(f"TW history Yahoo {ticker}: {e}")
+
+    # ── 備援：TWSE STOCK_DAY（逐月查，可能被擋）──
     results = []
     now = datetime.now()
-    for delta in range(0, 61, 3):  # 每次查 3 個月，共 20 次
+    s2 = _new_session()
+    s2.headers["Referer"] = "https://www.twse.com.tw/"
+    for delta in range(0, 61, 3):
         dt = now - relativedelta(months=delta)
         ym = dt.strftime("%Y%m01")
-        url = (
+        url2 = (
             f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
             f"?response=json&date={ym}&stockNo={ticker}"
         )
         try:
-            s = _new_session()
-            r = s.get(url, timeout=8)
-            d = r.json()
-            for row in d.get("data", []):
-                # row: [日期, 成交股數, 成交金額, 開盤, 最高, 最低, 收盤, 漲跌, 成交筆數]
+            r2 = s2.get(url2, timeout=8)
+            d2 = r2.json()
+            for row in d2.get("data", []):
                 try:
                     close = _safe_float(row[6].replace(",", ""))
                     if close > 0:
@@ -643,45 +700,264 @@ def _fetch_tw_history_twse(ticker: str) -> list:
                     pass
         except Exception:
             pass
+        time.sleep(0.5)
     results.reverse()
     return results
 
 
-def _fetch_tw_dividend_twse(ticker: str, current_price: float) -> tuple:
-    """用 TWSE 配息公告算殖利率"""
+def _fetch_tw_detail(ticker: str) -> dict:
+    """
+    台股 ETF 詳細資料：資產規模、本益比、費用率
+    來源優先順序：
+      1. TWSE fundInfo API（最穩定，專門給台股 ETF）
+      2. yfinance Ticker.info（走不同 endpoint，有時能通）
+      3. Yahoo quoteSummary（最常被擋，作為最後備援）
+    """
+    result = {}
+
+    # ── 來源 1：TWSE /fund/ETF/fundInfo（直接從證交所拿規模）──
     try:
-        url = f"https://www.twse.com.tw/exchangeReport/TWT48U?response=json&stockNo={ticker}"
+        url_twse = f"https://www.twse.com.tw/fund/ETF/fundInfo?response=json&stockNo={ticker}"
         s = _new_session()
-        r = s.get(url, timeout=8)
-        d = r.json()
-        rows = d.get("data", [])
+        s.headers["Referer"] = "https://www.twse.com.tw/"
+        r = s.get(url_twse, timeout=10)
+        if r.status_code == 200:
+            j = r.json()
+            # TWSE 回傳格式：{"status":"OK","data":[...]} 或 {"tables":[{"data":[...]}]}
+            rows = j.get("data") or []
+            if not rows and j.get("tables"):
+                rows = j["tables"][0].get("data", [])
+            for row in rows:
+                # 找包含「基金規模」或「總資產」的欄位（各年度最新一筆）
+                for cell in (row if isinstance(row, list) else []):
+                    cell_str = str(cell).replace(",", "").strip()
+                    try:
+                        val = float(cell_str)
+                        # 台股 ETF 規模通常在億元級，TWSE 以「萬元」為單位
+                        if val > 1e6:          # 萬元 → 換算回元
+                            result["asset_size"] = val * 10000
+                            break
+                        elif val > 1e4:        # 已是億元？
+                            result["asset_size"] = val * 1e8
+                            break
+                    except Exception:
+                        pass
+                if result.get("asset_size"):
+                    break
+    except Exception as e:
+        logger.debug(f"TW fundInfo TWSE {ticker}: {e}")
+
+    # ── 來源 2：TWSE /ETF/fund（另一個 endpoint，回傳規模單位為千元）──
+    if not result.get("asset_size"):
+        try:
+            url_twse2 = f"https://www.twse.com.tw/ETF/fund/{ticker}"
+            s2 = _new_session()
+            s2.headers["Referer"] = "https://www.twse.com.tw/"
+            r2 = s2.get(url_twse2, timeout=10)
+            if r2.status_code == 200:
+                j2 = r2.json()
+                # 嘗試解析各種格式
+                for key in ("totalAssets", "fundSize", "aum", "netAssets"):
+                    v = j2.get(key)
+                    if v:
+                        val = _safe_float(str(v).replace(",", ""))
+                        if val > 0:
+                            # 若小於 1e8 推測單位是千元，轉換
+                            result["asset_size"] = val * 1000 if val < 1e8 else val
+                            break
+        except Exception as e:
+            logger.debug(f"TW ETF/fund {ticker}: {e}")
+
+    # ── 來源 3：yfinance Ticker.info（走獨立 endpoint，有機會通過）──
+    yt = _yahoo_ticker(ticker, 'TW')
+    try:
+        stock = yf.Ticker(yt, session=_get_yf_session())
+        info = stock.info
+        if info and isinstance(info, dict) and info.get("regularMarketPrice"):
+            # asset_size
+            if not result.get("asset_size"):
+                for k in ("totalAssets", "netAssets", "totalNetAssets"):
+                    v = _safe_float(info.get(k) or 0)
+                    if v > 0:
+                        result["asset_size"] = v
+                        break
+            # pe_ratio
+            if not result.get("pe_ratio"):
+                for k in ("trailingPE", "forwardPE"):
+                    v = _safe_float(info.get(k) or 0)
+                    if v > 0:
+                        result["pe_ratio"] = v
+                        break
+            # expense_ratio
+            if not result.get("expense_ratio"):
+                for k in ("annualReportExpenseRatio", "expenseRatio"):
+                    v = _safe_float(info.get(k) or 0)
+                    if v > 0:
+                        result["expense_ratio"] = v
+                        break
+            # dividend_yield（作為備援，給 _fetch_tw_dividend_twse 用）
+            yf_yield = _safe_float(info.get("dividendYield") or info.get("yield") or 0)
+            if yf_yield > 0:
+                result["yf_dividend_yield"] = round(yf_yield * 100, 4) if yf_yield < 1 else round(yf_yield, 4)
+            logger.debug(f"TW yf.info {ticker}: asset={result.get('asset_size')}, pe={result.get('pe_ratio')}, er={result.get('expense_ratio')}")
+    except Exception as e:
+        logger.debug(f"TW yf.info {ticker}: {e}")
+
+    # ── 來源 4：Yahoo quoteSummary（最後備援）──
+    if not result.get("asset_size") or not result.get("expense_ratio"):
+        try:
+            s3 = _new_session()
+            url3 = (
+                f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{yt}"
+                f"?modules=summaryDetail,defaultKeyStatistics,fundProfile"
+            )
+            s3.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
+            r3 = s3.get(url3, timeout=12)
+            if r3.status_code == 200:
+                j3 = r3.json()
+                qs = j3.get("quoteSummary", {}).get("result", [{}])
+                if qs:
+                    raw = qs[0]
+                    if not result.get("asset_size"):
+                        for sec in ("summaryDetail", "defaultKeyStatistics"):
+                            for k in ("totalAssets", "netAssets"):
+                                v = raw.get(sec, {}).get(k)
+                                if isinstance(v, dict) and "raw" in v:
+                                    val = _safe_float(v["raw"])
+                                    if val > 0:
+                                        result["asset_size"] = val
+                    if not result.get("pe_ratio"):
+                        for sec in ("summaryDetail", "defaultKeyStatistics"):
+                            for k in ("trailingPE", "forwardPE"):
+                                v = raw.get(sec, {}).get(k)
+                                if isinstance(v, dict) and "raw" in v:
+                                    val = _safe_float(v["raw"])
+                                    if val > 0:
+                                        result["pe_ratio"] = val
+                    if not result.get("expense_ratio"):
+                        fp = raw.get("fundProfile", {})
+                        fees = fp.get("feesExpensesInvestment", {})
+                        for k in ("annualReportExpenseRatioNet", "annualReportExpenseRatio", "netExpenseRatio"):
+                            v = fees.get(k)
+                            if isinstance(v, dict) and "raw" in v:
+                                val = _safe_float(v["raw"])
+                                if val > 0:
+                                    result["expense_ratio"] = val
+                                    break
+        except Exception as e:
+            logger.debug(f"TW quoteSummary {ticker}: {e}")
+
+    logger.info(f"TW detail final {ticker}: asset={result.get('asset_size',0)/1e8:.1f}億 pe={result.get('pe_ratio',0):.1f} er={result.get('expense_ratio',0):.4f} yf_yld={result.get('yf_dividend_yield',0):.2f}%")
+    return result
+
+
+def _fetch_tw_asset_size(ticker: str) -> float:
+    """（向下相容 wrapper）"""
+    return _fetch_tw_detail(ticker).get("asset_size", 0.0)
+
+
+
+def _fetch_tw_dividend_twse(ticker: str, current_price: float) -> tuple:
+    """
+    台股 ETF 殖利率與配息頻率
+    優先用 Yahoo Finance（v8 chart events=dividends），失敗再試 TWSE TWT48U
+    """
+    # ── 優先：Yahoo Finance 配息記錄 ──
+    try:
+        yt = _yahoo_ticker(ticker, 'TW')
+        url = (
+            f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
+            f"?range=2y&interval=1mo&events=dividends&includePrePost=false"
+        )
+        s = _new_session()
+        s.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
+        r = s.get(url, timeout=10)
+        if r.status_code == 200:
+            j = r.json()
+            result = j.get("chart", {}).get("result")
+            if result:
+                # 先試從 meta 拿 dividendYield（最快）
+                meta = result[0].get("meta", {})
+                yf_yield = _safe_float(meta.get("dividendYield") or 0) * 100
+                # 再從 events 拿配息紀錄算頻率
+                events = result[0].get("events", {}).get("dividends", {})
+                cutoff = time.time() - 365 * 86400
+                recent = [v["amount"] for v in events.values()
+                          if v.get("date", 0) >= cutoff and v.get("amount", 0) > 0]
+                n = len(recent)
+                if n > 0:
+                    total = sum(recent)
+                    div_yield = round(total / current_price * 100, 4) if current_price > 0 else 0.0
+                    # 用 YF meta 殖利率補充（若 event 算出來更小）
+                    if yf_yield > div_yield:
+                        div_yield = round(yf_yield, 4)
+                elif yf_yield > 0:
+                    div_yield = round(yf_yield, 4)
+                    n = 4  # 預設季配
+                else:
+                    div_yield = 0.0
+
+                if   n >= 10: freq = "月配"
+                elif n >= 3:  freq = "季配"
+                elif n == 2:  freq = "半年配"
+                elif n == 1:  freq = "年配"
+                elif div_yield > 0: freq = "季配"
+                else:         freq = "不配息"
+
+                if div_yield > 0 or n > 0:
+                    logger.debug(f"TW dividend {ticker}: YF {div_yield:.2f}%/{freq} (n={n})")
+                    return div_yield, freq
+    except Exception as e:
+        logger.debug(f"TW dividend Yahoo {ticker}: {e}")
+
+    # ── 備援：TWSE TWT48U 配息公告 ──
+    try:
+        url2 = f"https://www.twse.com.tw/exchangeReport/TWT48U?response=json&stockNo={ticker}"
+        s2 = _new_session()
+        s2.headers["Referer"] = "https://www.twse.com.tw/"
+        r2 = s2.get(url2, timeout=10)
+        d2 = r2.json()
+        rows = d2.get("data", [])
         if not rows:
             return 0.0, "不配息"
-        # 只取近一年的記錄（最新 rows）
-        year_now = datetime.now().year
-        year_rows = [row for row in rows if len(row) > 0 and str(year_now - 1) in str(row[0])]
-        if not year_rows:
-            year_rows = rows[-4:] if len(rows) >= 4 else rows
-        # 每筆: [..., 現金股利, ...]  欄位索引依格式而定
+
+        # TWT48U 欄位結構（以 0050 為例）：
+        # [年度, 股利合計, 現金股利, 股票股利, ...] 或類似格式
+        # 取近 12 筆（約 1 年內，若月配則 12 筆，季配則 4 筆）
+        recent_rows = rows[-12:]
         total_div = 0.0
-        for row in year_rows:
-            for cell in row:
+        valid_count = 0
+
+        for row in recent_rows:
+            if not isinstance(row, list) or len(row) < 2:
+                continue
+            # 嘗試每個欄位找合理的配息金額（0.01 ~ 30 之間）
+            for cell in row[1:6]:   # 跳過第一欄（通常是日期/年度）
+                cell_str = str(cell).replace(",", "").strip()
                 try:
-                    v = _safe_float(str(cell).replace(",", ""))
-                    if 0 < v < 20:  # 合理範圍的股息數字
+                    v = float(cell_str)
+                    if 0.005 < v < 50:   # 合理配息範圍（元/股）
                         total_div += v
+                        valid_count += 1
                         break
-                except Exception:
+                except (ValueError, TypeError):
                     pass
-        n = len(year_rows)
-        div_yield = round(total_div / current_price * 100, 4) if current_price > 0 else 0.0
-        if   n >= 10: freq = "月配"
-        elif n >= 3:  freq = "季配"
-        elif n == 2:  freq = "半年配"
-        elif n == 1:  freq = "年配"
-        else:         freq = "不配息"
-        return div_yield, freq
-    except Exception:
+
+        if valid_count == 0:
+            return 0.0, "不配息"
+
+        div_yield2 = round(total_div / current_price * 100, 4) if current_price > 0 else 0.0
+
+        if   valid_count >= 10: freq2 = "月配"
+        elif valid_count >= 3:  freq2 = "季配"
+        elif valid_count == 2:  freq2 = "半年配"
+        elif valid_count == 1:  freq2 = "年配"
+        else:                   freq2 = "不配息"
+
+        logger.debug(f"TW dividend TWSE {ticker}: {div_yield2:.2f}%/{freq2} (n={valid_count})")
+        return div_yield2, freq2
+    except Exception as e:
+        logger.debug(f"TW dividend TWSE {ticker}: {e}")
         return 0.0, "不配息"
 
 
@@ -690,55 +966,77 @@ def _fetch_tw_dividend_twse(ticker: str, current_price: float) -> tuple:
 # ────────────────────────────────────────────
 def _fetch_us_quote_query2(ticker: str) -> Optional[dict]:
     """
-    直接打 Yahoo Finance v8 chart API，不透過 yfinance library，
-    避免 yfinance 自己的限流層。
+    直接打 Yahoo Finance v8 chart API，不透過 yfinance library。
+    ★ 修正：指數退避重試（最多 3 次）、429 後等更久、從 meta 讀備援價格
     """
     url = (
         f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}"
         f"?range=10d&interval=1d&includePrePost=false"
     )
-    try:
-        s = _new_session()
-        s.headers["Origin"]  = "https://finance.yahoo.com"
-        s.headers["Referer"] = f"https://finance.yahoo.com/quote/{ticker}"
-        r = s.get(url, timeout=10)
-        if r.status_code == 429:
-            logger.warning(f"Query2 {ticker}: 429，等 15 秒後重試")
-            time.sleep(15)
-            r = _new_session().get(url, timeout=10)
-        if r.status_code != 200:
-            return None
-        j = r.json()
-        result = j.get("chart", {}).get("result")
-        if not result:
-            return None
-        meta    = result[0].get("meta", {})
-        quotes  = result[0].get("indicators", {}).get("quote", [{}])[0]
-        closes  = [c for c in (quotes.get("close") or []) if c is not None]
-        highs   = [h for h in (quotes.get("high")  or []) if h is not None]
-        lows    = [l for l in (quotes.get("low")   or []) if l is not None]
-        volumes = [v for v in (quotes.get("volume") or []) if v is not None]
+    for attempt in range(3):
+        try:
+            s = _new_session()
+            s.headers["Origin"]  = "https://finance.yahoo.com"
+            s.headers["Referer"] = f"https://finance.yahoo.com/quote/{ticker}"
+            r = s.get(url, timeout=12)
 
-        if len(closes) < 2:
-            return None
+            if r.status_code == 429:
+                wait = 20 * (2 ** attempt)   # 20s → 40s → 80s
+                logger.warning(f"Query2 {ticker}: 429，等 {wait}s 後重試 (attempt {attempt+1}/3)")
+                time.sleep(wait)
+                continue
 
-        price   = _safe_float(closes[-1])
-        prev    = _safe_float(closes[-2])
-        chg     = round(price - prev, 4)
-        chg_pct = round(chg / prev * 100, 4) if prev > 0 else 0.0
+            if r.status_code != 200:
+                return None
 
-        return {
-            "current_price":        price,
-            "price_change":         chg,
-            "price_change_percent": chg_pct,
-            "day_high":             _safe_float(highs[-1])   if highs   else price,
-            "day_low":              _safe_float(lows[-1])    if lows    else price,
-            "volume":               int(volumes[-1])          if volumes else 0,
-            "prev_close":           prev,
-        }
-    except Exception as e:
-        logger.debug(f"Query2 quote {ticker}: {e}")
-        return None
+            j = r.json()
+            result = j.get("chart", {}).get("result")
+            if not result:
+                return None
+
+            meta    = result[0].get("meta", {})
+            quotes  = result[0].get("indicators", {}).get("quote", [{}])[0]
+            closes  = [c for c in (quotes.get("close") or []) if c is not None]
+            highs   = [h for h in (quotes.get("high")  or []) if h is not None]
+            lows    = [l for l in (quotes.get("low")   or []) if l is not None]
+            volumes = [v for v in (quotes.get("volume") or []) if v is not None]
+
+            # 優先用即時 meta 價格（更準確）
+            meta_price = _safe_float(
+                meta.get("regularMarketPrice") or
+                meta.get("chartPreviousClose") or 0
+            )
+            prev_close = _safe_float(meta.get("chartPreviousClose") or meta.get("previousClose") or 0)
+
+            if len(closes) >= 2:
+                price = _safe_float(closes[-1])
+                prev  = _safe_float(closes[-2])
+            elif meta_price > 0:
+                price = meta_price
+                prev  = prev_close if prev_close > 0 else meta_price
+            else:
+                return None
+
+            if price <= 0:
+                return None
+
+            chg     = round(price - prev, 4)
+            chg_pct = round(chg / prev * 100, 4) if prev > 0 else 0.0
+
+            return {
+                "current_price":        price,
+                "price_change":         chg,
+                "price_change_percent": chg_pct,
+                "day_high":             _safe_float(highs[-1])   if highs   else price,
+                "day_low":              _safe_float(lows[-1])    if lows    else price,
+                "volume":               int(volumes[-1])          if volumes else int(_safe_float(meta.get("regularMarketVolume") or 0)),
+                "prev_close":           prev,
+            }
+        except Exception as e:
+            logger.debug(f"Query2 quote {ticker} attempt {attempt+1}: {e}")
+            if attempt < 2:
+                time.sleep(5 * (attempt + 1))
+    return None
 
 
 def _fetch_us_history_query2(ticker: str, years: int = 5) -> list:
@@ -771,6 +1069,8 @@ def _fetch_us_detail_query1(ticker: str) -> dict:
     """
     打 Yahoo Finance quoteSummary API 抓詳細資料
     (expense_ratio, PE, AUM, fundFamily, inception 等)
+    ★ 修正：expense_ratio 從 fundProfile.feesExpensesInvestment 取，
+            PE 從 summaryDetail / defaultKeyStatistics 取
     """
     url = (
         f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
@@ -786,14 +1086,30 @@ def _fetch_us_detail_query1(ticker: str) -> dict:
         qs = j.get("quoteSummary", {}).get("result", [{}])
         if not qs:
             return {}
+
+        raw = qs[0]
         merged = {}
-        for section in qs[0].values():
+
+        # 展平各 section 的 raw 值
+        for section in raw.values():
             if isinstance(section, dict):
                 for k, v in section.items():
                     if isinstance(v, dict) and "raw" in v:
                         merged[k] = v["raw"]
                     elif not isinstance(v, (dict, list)):
                         merged[k] = v
+
+        # ── expense_ratio 修正：fundProfile.feesExpensesInvestment ──
+        fp = raw.get("fundProfile", {})
+        fees = fp.get("feesExpensesInvestment", {})
+        for k in ("annualReportExpenseRatioNet", "annualReportExpenseRatio", "netExpenseRatio"):
+            v = fees.get(k)
+            if isinstance(v, dict) and "raw" in v:
+                val = _safe_float(v["raw"])
+                if val > 0:
+                    merged["expenseRatio"] = val
+                    break
+
         return merged
     except Exception as e:
         logger.debug(f"quoteSummary {ticker}: {e}")
@@ -849,56 +1165,126 @@ def fetch_one_etf(ticker: str, market: str) -> Optional[dict]:
 
 
 def _fetch_tw_etf(ticker: str) -> Optional[dict]:
-    """台股 ETF：TWSE MIS 即時 + TWSE 歷史"""
+    """
+    台股 ETF 主抓取函數
+    策略：盡量減少 Yahoo 請求次數（避免 429），一次 chart API 同時取歷史+配息
+    """
+    # ── 步驟 1：TWSE MIS 即時報價（不會被擋）──
     quote = _fetch_tw_realtime(ticker)
     if not quote:
-        # TWSE 即時失敗 → 試 yfinance download（不同 endpoint）
-        try:
-            yt = _yahoo_ticker(ticker, 'TW')
-            df = yf.download(yt, period="10d", interval="1d",
-                             progress=False, auto_adjust=True)
-            if not df.empty and len(df) >= 2:
-                price = float(df['Close'].iloc[-1])
-                prev  = float(df['Close'].iloc[-2])
-                chg   = round(price - prev, 4)
-                quote = {
-                    "current_price": price,
-                    "price_change": chg,
-                    "price_change_percent": round(chg/prev*100, 4) if prev > 0 else 0.0,
-                    "day_high": float(df['High'].iloc[-1]),
-                    "day_low":  float(df['Low'].iloc[-1]),
-                    "volume":   int(df['Volume'].iloc[-1]),
-                }
-        except Exception as e:
-            logger.debug(f"yf.download TW {ticker}: {e}")
-
-    if not quote:
+        logger.warning(f"⚠️ {ticker} TWSE MIS 失敗，略過")
         return None
 
     price = quote["current_price"]
 
-    # 歷史報酬（TWSE 月均）
-    history_closes = _fetch_tw_history_twse(ticker)
-    now_ts = datetime.now()
+    # ── 步驟 2：一次 Yahoo v8 chart 同時取「歷史月線 + 配息 events」──
+    # 只打一次，減少 429 風險
+    yt = _yahoo_ticker(ticker, 'TW')
+    history_closes = []
+    div_yield      = 0.0
+    payout_freq    = "不配息"
+
+    try:
+        url = (
+            f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
+            f"?range=5y&interval=1mo&events=dividends&includePrePost=false"
+        )
+        s = _new_session()
+        s.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
+        r = s.get(url, timeout=15)
+
+        if r.status_code == 200:
+            j = r.json()
+            result = j.get("chart", {}).get("result")
+            if result:
+                # ── 歷史月線 ──
+                quotes = result[0].get("indicators", {}).get("quote", [{}])[0]
+                history_closes = [_safe_float(c) for c in (quotes.get("close") or []) if c is not None]
+                logger.info(f"{ticker}: Yahoo 歷史月線 {len(history_closes)} 筆")
+
+                # ── 配息 events ──
+                events = result[0].get("events", {}).get("dividends", {})
+                if events:
+                    cutoff = time.time() - 365 * 86400
+                    recent = [v["amount"] for v in events.values()
+                              if v.get("date", 0) >= cutoff and _safe_float(v.get("amount", 0)) > 0]
+                    if recent:
+                        total = sum(recent)
+                        div_yield = round(total / price * 100, 4) if price > 0 else 0.0
+                        n = len(recent)
+                        if   n >= 10: payout_freq = "月配"
+                        elif n >= 3:  payout_freq = "季配"
+                        elif n == 2:  payout_freq = "半年配"
+                        else:         payout_freq = "年配"
+                        logger.info(f"{ticker}: 殖利率={div_yield:.2f}% 頻率={payout_freq} (近1年{n}次)")
+
+                # meta dividendYield 作為備援
+                if div_yield <= 0:
+                    meta_yld = _safe_float(result[0].get("meta", {}).get("dividendYield") or 0)
+                    if meta_yld > 0:
+                        div_yield = round(meta_yld * 100, 4) if meta_yld < 1 else round(meta_yld, 4)
+                        if payout_freq == "不配息":
+                            payout_freq = "季配"
+                        logger.info(f"{ticker}: 殖利率(meta)={div_yield:.2f}%")
+        elif r.status_code == 429:
+            logger.warning(f"{ticker}: Yahoo 429，改用 TWSE 備援")
+    except Exception as e:
+        logger.warning(f"{ticker}: Yahoo chart 失敗: {e}")
+
+    # ── 步驟 3：若 Yahoo 失敗，用 TWSE 抓歷史月線 ──
+    if not history_closes:
+        history_closes = _fetch_tw_history_twse(ticker)
+        logger.info(f"{ticker}: TWSE 歷史月線 {len(history_closes)} 筆")
+
+    # ── 步驟 4：計算報酬率與 52 週高低 ──
     cutoff_1y = len(history_closes) - 12 if len(history_closes) >= 12 else 0
     cutoff_3y = len(history_closes) - 36 if len(history_closes) >= 36 else 0
     annual_return_1y = _annualized_return(history_closes[cutoff_1y:], 1.0)
     annual_return_3y = _annualized_return(history_closes[cutoff_3y:], 3.0)
     annual_return_5y = _annualized_return(history_closes, 5.0)
-
-    # 52週高低（從月均歷史取近 12 個月）
-    last12 = history_closes[-12:] if len(history_closes) >= 12 else history_closes
+    last12    = history_closes[-12:] if len(history_closes) >= 12 else history_closes
     wk52_high = max(last12) if last12 else quote["day_high"]
     wk52_low  = min(last12) if last12 else quote["day_low"]
 
-    # 殖利率
-    div_yield, payout_freq = _fetch_tw_dividend_twse(ticker, price)
+    # ── 步驟 5：資產規模 — 靜態對照表 + Yahoo 補充 ──
+    # 靜態對照表（億元，定期人工更新即可；Yahoo 能通時會覆蓋）
+    STATIC_AUM = {
+        '0050':   3200e8,   # 元大台灣50
+        '0056':   2100e8,   # 元大高股息
+        '00878':  1800e8,   # 國泰永續高股息
+        '006208':  850e8,   # 富邦台50
+        '00919':   750e8,   # 群益台灣精選高息
+        '00929':   620e8,   # 復華台灣科技優息
+        '00713':   520e8,   # 元大台灣高息低波
+        '00940':   430e8,   # 元大台灣價值高息
+        '00939':   380e8,   # 統一台灣高息動能
+        '0052':    180e8,   # 富邦科技
+        '00692':   280e8,   # 富邦公司治理
+        '00679B':  220e8,   # 元大美債20年
+        '00687B':  160e8,   # 國泰20年美債
+        '00751B':   80e8,   # 元大AAA至A公司債
+        '006205':   30e8,   # 富邦上証
+    }
+    asset_size = STATIC_AUM.get(ticker, 0.0)
+
+    # 嘗試從 Yahoo quoteSummary 更新（若未被限流）
+    tw_detail     = _fetch_tw_detail(ticker)
+    yf_asset      = tw_detail.get("asset_size", 0.0)
+    pe_ratio      = tw_detail.get("pe_ratio",   0.0)
+    expense_ratio = tw_detail.get("expense_ratio", 0.0)
+    if yf_asset > 0:
+        asset_size = yf_asset   # Yahoo 有拿到就用最新值
+
+    # 若殖利率還是 0，用 yf 備援
+    if div_yield <= 0 and tw_detail.get("yf_dividend_yield", 0) > 0:
+        div_yield   = tw_detail["yf_dividend_yield"]
+        payout_freq = "季配"
 
     # ETF master 的靜態資料（名稱已在 etf_master，不需再抓）
     logger.info(
         f"✅ {ticker}[TW]: {price} ({quote['price_change_percent']:+.2f}%) "
         f"量={quote['volume']:,} 息={div_yield:.2f}%/{payout_freq} "
-        f"1y={annual_return_1y:+.1f}%"
+        f"1y={annual_return_1y:+.1f}% AUM={asset_size/1e8:.0f}億"
     )
     return {
         'ticker':               ticker,
@@ -910,10 +1296,10 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
         'fifty_two_week_high':  wk52_high,
         'fifty_two_week_low':   wk52_low,
         'volume':               quote["volume"],
-        'asset_size':           0.0,
+        'asset_size':           asset_size,
         'nav':                  price,
-        'pe_ratio':             0.0,
-        'expense_ratio':        0.0,
+        'pe_ratio':             pe_ratio,
+        'expense_ratio':        expense_ratio,
         'dividend_yield':       div_yield,
         'payout_freq':          payout_freq,
         'annual_return_1y':     annual_return_1y,
@@ -970,7 +1356,8 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     detail    = _fetch_us_detail_query1(ticker)
     asset_size    = _safe_float(detail.get('totalAssets') or detail.get('netAssets'))
     pe_ratio      = _safe_float(detail.get('trailingPE') or detail.get('forwardPE'))
-    expense_ratio = _safe_float(detail.get('annualReportExpenseRatio') or detail.get('expenseRatio'))
+    # expenseRatio 已在 _fetch_us_detail_query1 統一從 fundProfile 提取
+    expense_ratio = _safe_float(detail.get('expenseRatio') or detail.get('annualReportExpenseRatio') or detail.get('annualReportExpenseRatioNet'))
     issuer        = (detail.get('fundFamily') or '')[:100]
     nav           = _safe_float(detail.get('navPrice') or price)
 
@@ -1035,9 +1422,14 @@ async def update_all_etf_data():
     today = datetime.now().date()
     updated = 0
     failed  = 0
-    for etf in ALL_ETFS:
-        # 隨機間隔避免被限流（3~8 秒）
-        await asyncio.sleep(random.uniform(3, 8))
+    for i, etf in enumerate(ALL_ETFS):
+        # 台股每筆間隔 5~10s（TWSE + Yahoo 各一次請求）
+        # 美股每筆間隔 12~20s（Yahoo 連打多個 endpoint 容易被 429）
+        if etf['market'] == 'TW':
+            await asyncio.sleep(random.uniform(5, 10))
+        else:
+            await asyncio.sleep(random.uniform(12, 20))
+
         try:
             data = await asyncio.to_thread(fetch_one_etf, etf['ticker'], etf['market'])
         except Exception as e:
@@ -1110,7 +1502,20 @@ async def lifespan(app: FastAPI):
     yield
 
 async def _delayed_update():
-    await asyncio.sleep(5)   # 5秒後立刻開始，不再等60秒
+    await asyncio.sleep(5)
+
+    # 清掉 dividend_yield=0 且 asset_size=0 的舊資料，強制重抓
+    try:
+        with get_db() as (conn, cursor):
+            cursor.execute("""
+                DELETE FROM etf_daily_data
+                WHERE dividend_yield = 0 AND asset_size = 0
+            """)
+            conn.commit()
+            logger.info("✅ 已清除殘留的零值資料，將重新抓取")
+    except Exception as e:
+        logger.warning(f"清除零值資料失敗: {e}")
+
     await update_all_etf_data()
 
 def _schedule_update():
@@ -1203,11 +1608,11 @@ async def auth_page(req: Request):
 @app.get("/api/etf-rankings/{rank_type}")
 async def get_etf_rankings(rank_type: str):
     ORDER = {
-        "volume":    "COALESCE(d.volume,0) DESC",
-        "asset":     "COALESCE(d.asset_size,0) DESC",
-        "yield":     "COALESCE(d.dividend_yield,0) DESC",
-        "return":    "COALESCE(d.annual_return_1y,0) DESC",
-        "followers": "COALESCE(d.asset_size,0) DESC",
+        "volume":    "CASE WHEN COALESCE(d.volume,0)>0 THEN 0 ELSE 1 END, COALESCE(d.volume,0) DESC",
+        "asset":     "CASE WHEN COALESCE(d.asset_size,0)>0 THEN 0 ELSE 1 END, COALESCE(d.asset_size,0) DESC",
+        "yield":     "CASE WHEN COALESCE(d.dividend_yield,0)>0 THEN 0 ELSE 1 END, COALESCE(d.dividend_yield,0) DESC",
+        "return":    "CASE WHEN COALESCE(d.annual_return_1y,0)<>0 THEN 0 ELSE 1 END, COALESCE(d.annual_return_1y,0) DESC",
+        "followers": "CASE WHEN COALESCE(d.asset_size,0)>0 THEN 0 ELSE 1 END, COALESCE(d.asset_size,0) DESC",
     }
     if rank_type not in ORDER:
         return safe_json({"status":"error","message":"無效類型"}, 400)
@@ -1446,6 +1851,73 @@ async def get_price_history(ticker: str, period: str = "1y"):
     except Exception as e:
         logger.error(f"price-history API 錯誤 {ticker}: {e}")
         return safe_json({"status":"error","message":str(e)}, 500)
+
+
+@app.post("/api/etf/update/{ticker}")
+async def update_single_etf(ticker: str):
+    """即時抓取單一 ETF 數據並寫入 DB（前端在首次無資料時呼叫）"""
+    ticker = ticker.upper()
+    try:
+        market = 'TW'
+        # 先確保 etf_master 有這筆
+        with get_db() as (conn, cursor):
+            cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
+            row = cursor.fetchone()
+            if row:
+                market = row['market']
+            else:
+                # 動態推斷市場
+                market = 'TW' if ticker[:4].isdigit() else 'US'
+                yt = _yahoo_ticker(ticker, market)
+                name = ticker
+                try:
+                    stock = yf.Ticker(yt, session=_get_yf_session())
+                    info = stock.info
+                    name = info.get('longName') or info.get('shortName') or ticker
+                    name = name[:200]
+                except Exception:
+                    pass
+                cursor.execute(
+                    "INSERT OR REPLACE INTO etf_master (ticker,name,market) VALUES (%s,%s,%s)",
+                    (ticker, name, market)
+                )
+                conn.commit()
+
+        data = await asyncio.to_thread(fetch_one_etf, ticker, market)
+        if not data:
+            return safe_json({"status":"error","message":"無法抓取此 ETF 資料"}, 404)
+
+        today = datetime.now().date()
+        with get_db() as (conn, cursor):
+            cursor.execute("""
+                INSERT OR REPLACE INTO etf_daily_data
+                (ticker, date,
+                 current_price, price_change, price_change_percent,
+                 volume, asset_size, nav,
+                 dividend_yield, payout_freq,
+                 annual_return_1y, annual_return_3y, annual_return_5y,
+                 pe_ratio, expense_ratio,
+                 day_high, day_low,
+                 fifty_two_week_high, fifty_two_week_low)
+                VALUES (%s,%s, %s,%s,%s, %s,%s,%s, %s,%s, %s,%s,%s, %s,%s, %s,%s, %s,%s)
+            """, (
+                data['ticker'], today,
+                data['current_price'],   data['price_change'],   data['price_change_percent'],
+                data['volume'],          data['asset_size'],     data['nav'],
+                data['dividend_yield'],  data['payout_freq'],
+                data['annual_return_1y'],data['annual_return_3y'],data['annual_return_5y'],
+                data['pe_ratio'],        data['expense_ratio'],
+                data['day_high'],        data['day_low'],
+                data['fifty_two_week_high'], data['fifty_two_week_low'],
+            ))
+            conn.commit()
+
+        return safe_json({"status":"success","message":f"{ticker} 已更新"})
+    except Exception as e:
+        logger.error(f"update single ETF 錯誤 {ticker}: {e}")
+        return safe_json({"status":"error","message":str(e)}, 500)
+
+
 
 
 @app.get("/api/etf/dividends/{ticker}")
