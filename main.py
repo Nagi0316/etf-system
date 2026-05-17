@@ -1404,7 +1404,7 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
 
 
 def _fetch_us_etf(ticker: str) -> Optional[dict]:
-    """美股 ETF：Yahoo Query2 REST API（繞過 yfinance）"""
+    """美股 ETF 主抓取函數 (2026 終極防禦、多端點互備版)"""
     quote = _fetch_us_quote_query2(ticker)
     if not quote:
         # 備援：yfinance download
@@ -1444,11 +1444,10 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     wk52_high = max(last12) if last12 else quote["day_high"]
     wk52_low  = min(last12) if last12 else quote["day_low"]
 
-    # 殖利率
+    # 殖利率基本抓取
     div_yield, payout_freq = _fetch_us_dividends_query2(ticker, price)
 
-    # 詳細資料 (AUM, PE, expense_ratio, issuer, inception)
-    # ── 【欄位修正】全面對齊 yfinance 備援機制，棄用失效的 quoteSummary ──
+    # ── 【核心修正】全面對齊 yfinance 備援與穿透，徹底清除失效的舊代碼 ──
     asset_size = 0.0
     pe_ratio = 0.0
     expense_ratio = 0.0
@@ -1466,28 +1465,38 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         pe_ratio = _safe_float(info.get("trailingPE") or info.get("forwardPE"))
         # 精確對齊內扣費用率 (Expense Ratio)
         expense_ratio = _safe_float(info.get("expenseRatio") or info.get("annualReportExpenseRatio"))
+        # 獲取發行商
         issuer = (info.get("fundFamily") or "")[:100]
+        # 獲取最新淨值
         nav = _safe_float(info.get("navPrice") or price)
+
+        # 混合交叉驗證殖利率，若 yfinance 更精確則更新
+        yf_yield = _safe_float(info.get('yield') or info.get('dividendYield')) * 100
+        if yf_yield > div_yield:
+            div_yield = round(yf_yield, 4)
+            if div_yield > 0 and payout_freq == '不配息':
+                payout_freq = '季配'
+                
+        # 從 info 中直接精確對齊並更新 52 週高低點資料 (若存在)
+        if _safe_float(info.get("fiftyTwoWeekHigh")) > 0:
+            wk52_high = _safe_float(info.get("fiftyTwoWeekHigh"))
+        if _safe_float(info.get("fiftyTwoWeekLow")) > 0:
+            wk52_low = _safe_float(info.get("fiftyTwoWeekLow"))
+            
     except Exception as e:
         logger.warning(f"⚠️ 抓取美股 {ticker} yf.info 靜態細節異常: {e}")
-    issuer        = (detail.get('fundFamily') or '')[:100]
-    nav           = _safe_float(detail.get('navPrice') or price)
 
-    # yfinance 殖利率補充
-    yf_yield = _safe_float(detail.get('yield') or detail.get('dividendYield')) * 100
-    if yf_yield > div_yield:
-        div_yield = round(yf_yield, 4)
-        if div_yield > 0 and payout_freq == '不配息':
-            payout_freq = '季配'
-
-    # 寫 issuer / listing_date 到 etf_master
+    # 寫入發行商與上市日期到資料庫的主檔 (etf_master)
     listing_date = None
-    raw_ld = detail.get('fundInceptionDate')
-    if raw_ld:
+    if hasattr(stock, 'fast_info') and stock.fast_info:
         try:
-            listing_date = datetime.fromtimestamp(int(raw_ld)).strftime('%Y-%m-%d')
+            # 部份 Ticker 有 fundInceptionDate 欄位
+            raw_ld = info.get('fundInceptionDate')
+            if raw_ld:
+                listing_date = datetime.fromtimestamp(int(raw_ld)).strftime('%Y-%m-%d')
         except Exception:
             pass
+
     if issuer or listing_date:
         try:
             with get_db() as (conn, cursor):
@@ -2043,11 +2052,19 @@ async def get_dividends(ticker: str):
             if r: market = r['market']
 
         if market == 'TW':
-            # TWSE 配息
-            div_yield, freq = await asyncio.to_thread(_fetch_tw_dividend_twse, ticker, 1.0)
+            # ── 【同步修正】取得當前價格，並改呼叫新版強固型官方除權息解析通道 ──
+            with get_db() as (conn, cursor):
+                cursor.execute("""
+                    SELECT COALESCE(current_price, 0) as current_price 
+                    FROM etf_daily_data WHERE ticker=%s ORDER BY date DESC LIMIT 1
+                """, (ticker,))
+                p_row = cursor.fetchone()
+            price = float(p_row['current_price']) if (p_row and p_row['current_price'] > 0) else 100.0
+            
+            div_yield, freq = await asyncio.to_thread(_fetch_tw_dividend_official, ticker, price)
             return safe_json({"status":"success","data":[],"dividend_yield":div_yield,"payout_freq":freq})
         else:
-            # Query2 配息事件
+            # Query2 配息事件 (美股維持原狀)
             def _get_divs():
                 url = (
                     f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}"
@@ -2074,7 +2091,6 @@ async def get_dividends(ticker: str):
             return safe_json({"status":"success","data":data})
     except Exception as e:
         return safe_json({"status":"success","data":[]})
-
 
 @app.post("/api/etf/force-update")
 async def force_update():
