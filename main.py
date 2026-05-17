@@ -733,38 +733,63 @@ def _fetch_tw_history_twse(ticker: str) -> list:
 
 
 def _fetch_tw_detail(ticker: str) -> dict:
-    """台股 ETF 詳細資料完美防禦版（全面結合靜態 AUM 保底與 HTML 解析）"""
+    """台股 ETF 詳細資料：結合本地靜態保底、TWSE 網頁解析與 yfinance 費用率穿透"""
     from bs4 import BeautifulSoup
     result = {"asset_size": 0.0, "pe_ratio": 0.0, "expense_ratio": 0.0}
     
-    # 靜態保底規模 (億元)，避免官方完全斷線時欄位掛掉
-    STATIC_AUM = {'0050': 3200e8, '0056': 2100e8, '00878': 1800e8, '006208': 850e8, '00919': 750e8}
-    if ticker in STATIC_AUM:
-        result["asset_size"] = STATIC_AUM[ticker]
+    # 1. 內建靜態保底（規模與台灣投信官方內扣費用率對齊修正）
+    STATIC_INFO = {
+        '0050':  {'asset': 3200e8, 'fee': 0.0043},
+        '0056':  {'asset': 2100e8, 'fee': 0.0066},
+        '00878': {'asset': 1800e8, 'fee': 0.0065},
+        '006208':{'asset': 850e8,  'fee': 0.0043},
+        '00919': {'asset': 750e8,  'fee': 0.0090},
+        '00929': {'asset': 620e8,  'fee': 0.0095},
+        '00713': {'asset': 520e8,  'fee': 0.0045}
+    }
+    if ticker in STATIC_INFO:
+        result["asset_size"] = STATIC_INFO[ticker]['asset']
+        result["expense_ratio"] = STATIC_INFO[ticker]['fee']
 
+    # 2. 嘗試從證交所即時抓取最新規模與 PE
     try:
         url = f"https://www.twse.com.tw/fund/ETF/fundInfo?response=json&stockNo={ticker}"
         s = _new_session()
         r = s.get(url, timeout=10)
         
-        if "html" in r.headers.get("Content-Type", "").lower():
+        if "html" in r.headers.get("Content-Type", "").lower() or r.text.strip().startswith("<!DOCTYPE"):
             soup = BeautifulSoup(r.text, "lxml")
             for td in soup.find_all("td"):
                 txt = td.get_text(strip=True).replace(",", "")
-                if txt.isdigit() and float(txt) > 100000:  # 判定規模(萬元)
-                    result["asset_size"] = float(txt) * 10000
+                if txt.isdigit() and float(txt) > 200000:  
+                    result["asset_size"] = float(txt) * 10000  # 證交所單位為萬元
                     break
         else:
-            rows = r.json().get("data") or r.json().get("tables", [{}])[0].get("data", [])
+            j = r.json()
+            rows = j.get("data") or j.get("tables", [{}])[0].get("data", [])
             for row in rows:
                 for cell in row:
                     cell_str = str(cell).replace(",", "").strip()
-                    if cell_str.isdigit() and float(cell_str) > 100000:
+                    if cell_str.isdigit() and float(cell_str) > 200000:
                         result["asset_size"] = float(cell_str) * 10000
                         break
     except Exception as e:
-        logger.debug(f"TWSE 規模解析異常: {e}")
+        logger.debug(f"TWSE 規模動態解析略過: {e}")
         
+    # 3. 使用 yfinance 快速通道穿透獲取 PE 與高低點備援
+    try:
+        import yfinance as yf
+        yt = f"{ticker}.TWO" if ticker.upper().endswith('B') else f"{ticker}.TW"
+        stock = yf.Ticker(yt)
+        fast = stock.fast_info
+        if fast and getattr(fast, 'last_price', 0) > 0:
+            if "trailingPE" in stock.info:
+                result["pe_ratio"] = _safe_float(stock.info["trailingPE"])
+            if result["expense_ratio"] <= 0:
+                result["expense_ratio"] = _safe_float(stock.info.get("expenseRatio") or stock.info.get("annualReportExpenseRatio"))
+    except Exception:
+        pass
+
     return result
 
 
@@ -1131,11 +1156,12 @@ def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
         "day_high": high,
         "day_low": low,
         "volume": int(vol_k * 1000),  # 精確換算為「股」
-        "prev_close": prev
+        "prev_close": prev,
+        "name_tw": d.get("n", ticker)
     }
 
 def _fetch_tw_dividend_official(ticker: str, current_price: float) -> tuple:
-    """從台灣證交所 TWT48U 完美還原近年配息與殖利率，支援 HTML 備援解析"""
+    """從台灣證交所 TWT48U 完美還原近年配息與殖利率，支援強固型 HTML / JSON 混合解析"""
     from bs4 import BeautifulSoup
     try:
         url = f"https://www.twse.com.tw/exchangeReport/TWT48U?response=json&stockNo={ticker}"
@@ -1143,13 +1169,13 @@ def _fetch_tw_dividend_official(ticker: str, current_price: float) -> tuple:
         s.headers["Referer"] = "https://www.twse.com.tw/"
         r = s.get(url, timeout=10)
         
-        # 核心防禦：如果證交所回傳 HTML 網頁而非 JSON
+        rows = []
+        # 安全防禦：檢查是否回傳網頁或是非 JSON 格式
         if "html" in r.headers.get("Content-Type", "").lower() or r.text.strip().startswith("<!DOCTYPE"):
             soup = BeautifulSoup(r.text, "lxml")
-            rows = []
             for tr in soup.find_all("tr"):
                 tds = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
-                if tds: rows.append(tds)
+                if len(tds) >= 4: rows.append(tds)
         else:
             rows = r.json().get("data", [])
 
@@ -1157,12 +1183,13 @@ def _fetch_tw_dividend_official(ticker: str, current_price: float) -> tuple:
 
         total_div = 0.0
         valid_count = 0
-        for row in rows[-12:]: 
-            for cell in row[1:7]:  # 擴大搜尋範圍
+        # 遍歷近期公告，排除標頭字串，精確過濾單次配息金額
+        for row in rows[-15:]: 
+            for cell in row[1:7]:  
                 cell_str = str(cell).replace(",", "").strip()
                 try:
                     v = float(cell_str)
-                    if 0.05 <= v <= 15.0: # 修正合理台灣單次配息區間
+                    if 0.02 <= v <= 15.0: # 修正合理台灣單次除權息金額區間
                         total_div += v
                         valid_count += 1
                         break
@@ -1181,15 +1208,14 @@ def _fetch_tw_dividend_official(ticker: str, current_price: float) -> tuple:
         return 0.0, "季配"
 
 def _fetch_us_quote_with_retry(ticker: str) -> Optional[dict]:
-    """美股 2026 終極防禦：Query2 + yfinance 雙通道混合切換"""
+    """美股終極防禦：跳過已被棄用的 quoteSummary，完美融合 Query2 Chart 與 yfinance fast_info"""
     import yfinance as yf
     
-    # 通道 A：嘗試標準 API 抓取
+    # ── 通道 A：自建輕量級 Query2 REST Chart 報價 ──
     url = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=5d&interval=1d"
     try:
         s = _new_session()
-        # 先打主頁拿 Cookie 權限
-        s.get(f"https://finance.yahoo.com/quote/{ticker}", timeout=5)
+        s.get(f"https://finance.yahoo.com/quote/{ticker}", timeout=5) # 撈取並綁定基礎 Cookie
         r = s.get(url, timeout=5)
         if r.status_code == 200:
             j = r.json()
@@ -1200,36 +1226,38 @@ def _fetch_us_quote_with_retry(ticker: str) -> Optional[dict]:
                 prev = _safe_float(meta.get("chartPreviousClose") or meta.get("previousClose"))
                 chg = round(price - prev, 4)
                 return {
-                    "current_price": price, "price_change": chg,
+                    "current_price": price, 
+                    "price_change": chg,
                     "price_change_percent": round((chg / prev * 100), 4) if prev > 0 else 0.0,
-                    "day_high": price, "day_low": price, "volume": 1000000, "prev_close": prev
+                    "day_high": _safe_float(meta.get("regularMarketDayHigh") or price), 
+                    "day_low": _safe_float(meta.get("regularMarketDayLow") or price), 
+                    "volume": int(_safe_float(meta.get("regularMarketVolume") or 1000000)), 
+                    "prev_close": prev
                 }
     except Exception:
         pass
 
-    # 通道 B：通道 A 被限流時（429），自動無縫啟動 yfinance 核心模組下載
-    logger.warning(f"⚠️ {ticker} 觸發 Yahoo 限流，自動啟用 yfinance 機制補位...")
+    # ── 通道 B：當通道 A 遭遇 HTTP 429 阻擋，自動觸發 yfinance 記憶體快速通道下載 ──
+    logger.warning(f"⚠️ 美股 {ticker} 遭遇限制，啟動 yfinance 多通道架構防禦...")
     try:
         stock = yf.Ticker(ticker)
-        # 用 fast_info 避開 quoteSummary 的 401/429 封鎖
-        info = stock.fast_info
-        price = _safe_float(info.get("last_price") or info.get("regular_market_price"))
-        prev = _safe_float(info.get("previous_close") or price)
+        fast = stock.fast_info
+        price = _safe_float(fast.get("last_price") or fast.get("regular_market_price"))
+        prev = _safe_float(fast.get("previous_close") or price)
         if price > 0:
             chg = round(price - prev, 4)
             return {
                 "current_price": price,
                 "price_change": chg,
                 "price_change_percent": round((chg / prev * 100), 4) if prev > 0 else 0.0,
-                "day_high": _safe_float(info.get("day_high") or price),
-                "day_low": _safe_float(info.get("day_low") or price),
-                "volume": int(info.get("last_volume") or 0),
+                "day_high": _safe_float(fast.get("day_high") or price),
+                "day_low": _safe_float(fast.get("day_low") or price),
+                "volume": int(fast.get("last_volume") or 0),
                 "prev_close": prev
             }
     except Exception as e:
-        logger.error(f"❌ 雙通道皆失敗 {ticker}: {e}")
+        logger.error(f"❌ 美股雙報價通道全面斷線 {ticker}: {e}")
     return None
-
 # ────────────────────────────────────────────
 # 主抓取函數：台股 / 美股 分流
 # ────────────────────────────────────────────
@@ -1420,11 +1448,28 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     div_yield, payout_freq = _fetch_us_dividends_query2(ticker, price)
 
     # 詳細資料 (AUM, PE, expense_ratio, issuer, inception)
-    detail    = _fetch_us_detail_query1(ticker)
-    asset_size    = _safe_float(detail.get('totalAssets') or detail.get('netAssets'))
-    pe_ratio      = _safe_float(detail.get('trailingPE') or detail.get('forwardPE'))
-    # expenseRatio 已在 _fetch_us_detail_query1 統一從 fundProfile 提取
-    expense_ratio = _safe_float(detail.get('expenseRatio') or detail.get('annualReportExpenseRatio') or detail.get('annualReportExpenseRatioNet'))
+    # ── 【欄位修正】全面對齊 yfinance 備援機制，棄用失效的 quoteSummary ──
+    asset_size = 0.0
+    pe_ratio = 0.0
+    expense_ratio = 0.0
+    issuer = ""
+    nav = price
+
+    try:
+        import yfinance as yf
+        stock = yf.Ticker(ticker)
+        info = stock.info or {}
+        
+        # 精確對齊資產規模 (AUM)
+        asset_size = _safe_float(info.get("totalAssets") or info.get("netAssets") or info.get("totalNetAssets"))
+        # 精確對齊本益比 (PE)
+        pe_ratio = _safe_float(info.get("trailingPE") or info.get("forwardPE"))
+        # 精確對齊內扣費用率 (Expense Ratio)
+        expense_ratio = _safe_float(info.get("expenseRatio") or info.get("annualReportExpenseRatio"))
+        issuer = (info.get("fundFamily") or "")[:100]
+        nav = _safe_float(info.get("navPrice") or price)
+    except Exception as e:
+        logger.warning(f"⚠️ 抓取美股 {ticker} yf.info 靜態細節異常: {e}")
     issuer        = (detail.get('fundFamily') or '')[:100]
     nav           = _safe_float(detail.get('navPrice') or price)
 
