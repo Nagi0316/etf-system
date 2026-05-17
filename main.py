@@ -44,6 +44,33 @@ AVATAR_DIR    = os.path.join(STATIC_DIR, "uploads", "avatars")
 
 for d in [TEMPLATES_DIR, AVATAR_DIR, os.path.join(STATIC_DIR, "css")]:
     os.makedirs(d, exist_ok=True)
+#v1
+# ──────────────────────────────────────────────────────────────────
+#  【新增】網路請求與資料轉換安全輔助函數
+# ──────────────────────────────────────────────────────────────────
+def _new_session() -> req_lib.Session:
+    """建立帶有標準瀏覽器標頭的 Session，防止被網站判定為惡意爬蟲"""
+    s = req_lib.Session()
+    s.verify = False  # 配合系統停用 SSL 憑證檢查
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
+    })
+    return s
+
+def _safe_float(v) -> float:
+    """安全的數值轉換，避免 API 回傳 None 或 '-' 字串時造成系統崩潰"""
+    if v is None:
+        return 0.0
+    try:
+        s_val = str(v).replace(",", "").strip()
+        if not s_val or s_val == "-":
+            return 0.0
+        return float(s_val)
+    except Exception:
+        return 0.0
 
 # ══════════════════════════════════════════════════════════════════
 #  資料庫層 — 支援 TiDB Cloud (MySQL 8 + SSL) 與本地 SQLite 自動切換
@@ -1152,7 +1179,157 @@ def _fetch_us_dividends_query2(ticker: str, current_price: float) -> tuple:
     except Exception as e:
         logger.debug(f"dividends {ticker}: {e}")
         return 0.0, "不配息"
+#v1
+# ──────────────────────────────────────────────────────────────────
+#  【新增】核心抓取層：精準官方分流與美股抗封鎖重構
+# ──────────────────────────────────────────────────────────────────
+def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
+    """證交所/櫃買中心 MIS 完美即時報價解析（解決非交易時段、張數換算問題）"""
+    ticker_up = ticker.upper()
+    is_otc = ticker_up.endswith('B') or ticker_up in ('006208', '006205') 
+    
+    urls = [
+        f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{ticker}.tw&json=1&delay=0",
+        f"https://mis.tpex.org.tw/stock/api/getStockInfo.jsp?ex_ch=otc_{ticker}.tw&json=1&delay=0"
+    ]
+    if is_otc:
+        urls.reverse()
 
+    items = []
+    for url in urls:
+        try:
+            s = _new_session()
+            s.headers["Referer"] = "https://mis.twse.com.tw/" if "twse" in url else "https://mis.tpex.org.tw/"
+            r = s.get(url, timeout=6)
+            if r.status_code == 200:
+                items = r.json().get("msgArray", [])
+                if items: break
+        except Exception as e:
+            logger.debug(f"MIS 嘗試失敗 {url}: {e}")
+            
+    if not items:
+        return None
+
+    d = items[0]
+    z_val = d.get("z", "-").strip()
+    y_val = d.get("y", "0").strip()
+    b_val = d.get("b", "0").split('_')[0] if "_" in d.get("b", "") else d.get("b", "0")
+
+    if z_val and z_val != "-":
+        price = _safe_float(z_val)
+    elif y_val and y_val != "-" and _safe_float(y_val) > 0:
+        price = _safe_float(y_val)
+    else:
+        price = _safe_float(b_val)
+
+    prev = _safe_float(y_val) if (y_val and y_val != "-") else price
+    high = _safe_float(d.get("h", "0"))
+    low = _safe_float(d.get("l", "0"))
+    vol_k = _safe_float(d.get("v", "0"))
+
+    if price <= 0: return None
+    if high <= 0: high = price
+    if low <= 0: low = price
+
+    chg = round(price - prev, 4)
+    chg_pct = round((chg / prev * 100), 4) if prev > 0 else 0.0
+
+    return {
+        "current_price": price,
+        "price_change": chg,
+        "price_change_percent": chg_pct,
+        "day_high": high,
+        "day_low": low,
+        "volume": int(vol_k * 1000),  # 精確換算為「股」
+        "prev_close": prev
+    }
+
+def _fetch_tw_dividend_official(ticker: str, current_price: float) -> tuple:
+    """從台灣證交所 TWT48U 完美還原近年配息與殖利率，擺脫 Yahoo 缺失數據問題"""
+    try:
+        url = f"https://www.twse.com.tw/exchangeReport/TWT48U?response=json&stockNo={ticker}"
+        s = _new_session()
+        s.headers["Referer"] = "https://www.twse.com.tw/"
+        r = s.get(url, timeout=10)
+        if r.status_code != 200: return 0.0, "季配"
+        
+        j = r.json()
+        rows = j.get("data", [])
+        if not rows: return 0.0, "不配息"
+
+        total_div = 0.0
+        valid_count = 0
+        for row in rows[-12:]: 
+            for cell in row[3:7]: 
+                cell_str = str(cell).replace(",", "").strip()
+                try:
+                    v = float(cell_str)
+                    if 0.01 <= v <= 20.0:
+                        total_div += v
+                        valid_count += 1
+                        break
+                except ValueError: continue
+
+        if valid_count == 0: return 0.0, "不配息"
+        div_yield = round((total_div / current_price * 100), 4) if current_price > 0 else 0.0
+        
+        if valid_count >= 10: freq = "月配"
+        elif valid_count >= 3: freq = "季配"
+        elif valid_count == 2: freq = "半年配"
+        else: freq = "年配"
+        return div_yield, freq
+    except Exception as e:
+        logger.error(f"解析 TWT48U 失敗 {ticker}: {e}")
+        return 0.0, "季配"
+
+def _fetch_us_quote_with_retry(ticker: str) -> Optional[dict]:
+    """美股 Yahoo Finance Query2 終極防禦版，加入 429 限流指數退避機制"""
+    url = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=5d&interval=1d"
+    for attempt in range(3):
+        try:
+            s = _new_session()
+            s.get(f"https://finance.yahoo.com/quote/{ticker}", timeout=8)
+            r = s.get(url, timeout=10)
+            if r.status_code == 429:
+                wait_time = 15 * (2 ** attempt)
+                logger.warning(f"⚠️ 美股 {ticker} 被限流 (429)，等待 {wait_time} 秒後重試...")
+                time.sleep(wait_time)
+                continue
+            if r.status_code != 200: return None
+
+            j = r.json()
+            result = j.get("chart", {}).get("result")
+            if not result: return None
+
+            meta = result[0].get("meta", {})
+            quotes = result[0].get("indicators", {}).get("quote", [{}])[0]
+            closes = [c for c in quotes.get("close", []) if c is not None]
+            highs = [h for h in quotes.get("high", []) if h is not None]
+            lows = [l for l in quotes.get("low", []) if l is not None]
+            volumes = [v for v in quotes.get("volume", []) if v is not None]
+
+            price = _safe_float(meta.get("regularMarketPrice"))
+            if not price and closes: price = _safe_float(closes[-1])
+            prev = _safe_float(meta.get("chartPreviousClose") or meta.get("previousClose"))
+            if not prev and len(closes) >= 2: prev = _safe_float(closes[-2])
+            if not prev: prev = price
+
+            chg = round(price - prev, 4)
+            chg_pct = round((chg / prev * 100), 4) if prev > 0 else 0.0
+
+            return {
+                "current_price": price,
+                "price_change": chg,
+                "price_change_percent": chg_pct,
+                "day_high": _safe_float(highs[-1]) if highs else price,
+                "day_low": _safe_float(lows[-1]) if lows else price,
+                "volume": int(volumes[-1]) if volumes else int(_safe_float(meta.get("regularMarketVolume"))),
+                "prev_close": prev
+            }
+        except Exception as e:
+            logger.debug(f"抓取美股異常 {ticker} (第 {attempt+1} 次): {e}")
+            time.sleep(2)
+    return None
 
 # ────────────────────────────────────────────
 # 主抓取函數：台股 / 美股 分流
@@ -1163,26 +1340,28 @@ def fetch_one_etf(ticker: str, market: str) -> Optional[dict]:
     else:
         return _fetch_us_etf(ticker)
 
-
+#v1
 def _fetch_tw_etf(ticker: str) -> Optional[dict]:
     """
-    台股 ETF 主抓取函數
-    策略：盡量減少 Yahoo 請求次數（避免 429），一次 chart API 同時取歷史+配息
+    台股 ETF 主抓取函數 (2026終極抗封鎖優化版)
+    結合證交所官方直連報價與除權息公告，輔以 Yahoo 歷史月線
     """
-    # ── 步驟 1：TWSE MIS 即時報價（不會被擋）──
-    quote = _fetch_tw_realtime(ticker)
+    import time as _time_lib  # 【動態保底】防止多執行緒下 time 模組遺失
+    
+    # ── 步驟 1：全新的證交所官方高精度即時報價 (自動切換上市、上櫃並換算成交量單位)
+    quote = _fetch_tw_realtime_perfect(ticker)
     if not quote:
-        logger.warning(f"⚠️ {ticker} TWSE MIS 失敗，略過")
+        logger.warning(f"無法取得台股 {ticker} 報價")
         return None
-
+        
     price = quote["current_price"]
 
-    # ── 步驟 2：一次 Yahoo v8 chart 同時取「歷史月線 + 配息 events」──
-    # 只打一次，減少 429 風險
-    yt = _yahoo_ticker(ticker, 'TW')
+    # ── 步驟 2：改用官方 TWT48U 數據計算殖利率與配息頻率 (完全脫離 Yahoo 缺失數據隱憂)
+    div_yield, payout_freq = _fetch_tw_dividend_official(ticker, price)
+
+    # ── 步驟 3：使用 Yahoo 補足 5 年歷史月線資料 ──
+    yt = _yahoo_ticker(ticker, 'TW')  
     history_closes = []
-    div_yield      = 0.0
-    payout_freq    = "不配息"
 
     try:
         url = (
@@ -1197,46 +1376,48 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
             j = r.json()
             result = j.get("chart", {}).get("result")
             if result:
-                # ── 歷史月線 ──
+                # 歷史月線
                 quotes = result[0].get("indicators", {}).get("quote", [{}])[0]
                 history_closes = [_safe_float(c) for c in (quotes.get("close") or []) if c is not None]
                 logger.info(f"{ticker}: Yahoo 歷史月線 {len(history_closes)} 筆")
 
-                # ── 配息 events ──
-                events = result[0].get("events", {}).get("dividends", {})
-                if events:
-                    cutoff = time.time() - 365 * 86400
-                    recent = [v["amount"] for v in events.values()
-                              if v.get("date", 0) >= cutoff and _safe_float(v.get("amount", 0)) > 0]
-                    if recent:
-                        total = sum(recent)
-                        div_yield = round(total / price * 100, 4) if price > 0 else 0.0
-                        n = len(recent)
-                        if   n >= 10: payout_freq = "月配"
-                        elif n >= 3:  payout_freq = "季配"
-                        elif n == 2:  payout_freq = "半年配"
-                        else:         payout_freq = "年配"
-                        logger.info(f"{ticker}: 殖利率={div_yield:.2f}% 頻率={payout_freq} (近1年{n}次)")
+                # 【防禦修正】如果證交所拿到的是「不配息」或「0」，才用 Yahoo 的 events 數據嘗試做二次補位
+                if div_yield <= 0 or payout_freq == "不配息":
+                    events = result[0].get("events", {}).get("dividends", {})
+                    if events:
+                        cutoff = _time_lib.time() - 365 * 86400
+                        recent = [v["amount"] for v in events.values()
+                                  if v.get("date", 0) >= cutoff and _safe_float(v.get("amount", 0)) > 0]
+                        if recent:
+                            total = sum(recent)
+                            div_yield = round(total / price * 100, 4) if price > 0 else 0.0
+                            n = len(recent)
+                            if   n >= 10: payout_freq = "月配"
+                            elif n >= 3:  payout_freq = "季配"
+                            elif n == 2:  payout_freq = "半年配"
+                            else:         payout_freq = "年配"
+                            logger.info(f"{ticker}: 官方無資料，改用 Yahoo 補位成功 -> 殖利率={div_yield:.2f}% 頻率={payout_freq}")
 
-                # meta dividendYield 作為備援
+                # meta dividendYield 終極備援
                 if div_yield <= 0:
                     meta_yld = _safe_float(result[0].get("meta", {}).get("dividendYield") or 0)
                     if meta_yld > 0:
                         div_yield = round(meta_yld * 100, 4) if meta_yld < 1 else round(meta_yld, 4)
                         if payout_freq == "不配息":
                             payout_freq = "季配"
-                        logger.info(f"{ticker}: 殖利率(meta)={div_yield:.2f}%")
+                        logger.info(f"{ticker}: 啟用 Yahoo Meta 殖利率備援={div_yield:.2f}%")
+                        
         elif r.status_code == 429:
-            logger.warning(f"{ticker}: Yahoo 429，改用 TWSE 備援")
+            logger.warning(f"{ticker}: Yahoo 429 被限流，改用本地/TWSE 歷史線備援")
     except Exception as e:
-        logger.warning(f"{ticker}: Yahoo chart 失敗: {e}")
+        logger.warning(f"{ticker}: Yahoo chart 歷史線抓取失敗: {e}")
 
-    # ── 步驟 3：若 Yahoo 失敗，用 TWSE 抓歷史月線 ──
+    # ── 步驟 4：若 Yahoo 被阻擋，啟動 TWSE 原生歷史線備援 ──
     if not history_closes:
         history_closes = _fetch_tw_history_twse(ticker)
-        logger.info(f"{ticker}: TWSE 歷史月線 {len(history_closes)} 筆")
+        logger.info(f"{ticker}: TWSE 歷史月線備援啟用，抓到 {len(history_closes)} 筆")
 
-    # ── 步驟 4：計算報酬率與 52 週高低 ──
+    # ── 步驟 5：計算各期報酬率與 52 週高低 ──
     cutoff_1y = len(history_closes) - 12 if len(history_closes) >= 12 else 0
     cutoff_3y = len(history_closes) - 36 if len(history_closes) >= 36 else 0
     annual_return_1y = _annualized_return(history_closes[cutoff_1y:], 1.0)
@@ -1246,46 +1427,33 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
     wk52_high = max(last12) if last12 else quote["day_high"]
     wk52_low  = min(last12) if last12 else quote["day_low"]
 
-    # ── 步驟 5：資產規模 — 靜態對照表 + Yahoo 補充 ──
-    # 靜態對照表（億元，定期人工更新即可；Yahoo 能通時會覆蓋）
+    # ── 步驟 6：資產規模與內扣費用處理 ──
     STATIC_AUM = {
-        '0050':   3200e8,   # 元大台灣50
-        '0056':   2100e8,   # 元大高股息
-        '00878':  1800e8,   # 國泰永續高股息
-        '006208':  850e8,   # 富邦台50
-        '00919':   750e8,   # 群益台灣精選高息
-        '00929':   620e8,   # 復華台灣科技優息
-        '00713':   520e8,   # 元大台灣高息低波
-        '00940':   430e8,   # 元大台灣價值高息
-        '00939':   380e8,   # 統一台灣高息動能
-        '0052':    180e8,   # 富邦科技
-        '00692':   280e8,   # 富邦公司治理
-        '00679B':  220e8,   # 元大美債20年
-        '00687B':  160e8,   # 國泰20年美債
-        '00751B':   80e8,   # 元大AAA至A公司債
-        '006205':   30e8,   # 富邦上証
+        '0050': 3200e8, '0056': 2100e8, '00878': 1800e8, '006208': 850e8,
+        '00919': 750e8, '00929': 620e8, '00713': 520e8, '00940': 430e8,
+        '00939': 380e8, '0052': 180e8, '00692': 280e8, '00679B': 220e8,
+        '00687B': 160e8, '00751B': 80e8, '006205': 30e8,
     }
     asset_size = STATIC_AUM.get(ticker, 0.0)
 
-    # 嘗試從 Yahoo quoteSummary 更新（若未被限流）
+    # 嘗試從 TWSE fundInfo 等管道撈取動態規模與費用率
     tw_detail     = _fetch_tw_detail(ticker)
     yf_asset      = tw_detail.get("asset_size", 0.0)
     pe_ratio      = tw_detail.get("pe_ratio",   0.0)
     expense_ratio = tw_detail.get("expense_ratio", 0.0)
     if yf_asset > 0:
-        asset_size = yf_asset   # Yahoo 有拿到就用最新值
+        asset_size = yf_asset
 
-    # 若殖利率還是 0，用 yf 備援
     if div_yield <= 0 and tw_detail.get("yf_dividend_yield", 0) > 0:
         div_yield   = tw_detail["yf_dividend_yield"]
         payout_freq = "季配"
 
-    # ETF master 的靜態資料（名稱已在 etf_master，不需再抓）
     logger.info(
-        f"✅ {ticker}[TW]: {price} ({quote['price_change_percent']:+.2f}%) "
-        f"量={quote['volume']:,} 息={div_yield:.2f}%/{payout_freq} "
-        f"1y={annual_return_1y:+.1f}% AUM={asset_size/1e8:.0f}億"
+        f"✅ {ticker}[TW] 資料彙整成功: 價={price} 變動={quote['price_change_percent']:+.2f}% "
+        f"量={quote['volume']:,} 息={div_yield:.2f}%/{payout_freq} AUM={asset_size/1e8:.0f}億"
     )
+    
+    # 統一回傳結構
     return {
         'ticker':               ticker,
         'current_price':        price,
