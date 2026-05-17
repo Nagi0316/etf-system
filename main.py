@@ -44,33 +44,7 @@ AVATAR_DIR    = os.path.join(STATIC_DIR, "uploads", "avatars")
 
 for d in [TEMPLATES_DIR, AVATAR_DIR, os.path.join(STATIC_DIR, "css")]:
     os.makedirs(d, exist_ok=True)
-#v1
-# ──────────────────────────────────────────────────────────────────
-#  【新增】網路請求與資料轉換安全輔助函數
-# ──────────────────────────────────────────────────────────────────
-def _new_session() -> req_lib.Session:
-    """建立帶有標準瀏覽器標頭的 Session，防止被網站判定為惡意爬蟲"""
-    s = req_lib.Session()
-    s.verify = False  # 配合系統停用 SSL 憑證檢查
-    s.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache"
-    })
-    return s
-
-def _safe_float(v) -> float:
-    """安全的數值轉換，避免 API 回傳 None 或 '-' 字串時造成系統崩潰"""
-    if v is None:
-        return 0.0
-    try:
-        s_val = str(v).replace(",", "").strip()
-        if not s_val or s_val == "-":
-            return 0.0
-        return float(s_val)
-    except Exception:
-        return 0.0
+# ── session / safe_float 定義於下方 560 行附近，此處不重複定義 ──
 
 # ══════════════════════════════════════════════════════════════════
 #  資料庫層 — 支援 TiDB Cloud (MySQL 8 + SSL) 與本地 SQLite 自動切換
@@ -567,13 +541,25 @@ _UA_POOL = [
 ]
 
 def _new_session() -> req_lib.Session:
+    """Yahoo Finance 用：帶 gzip，隨機 UA"""
     s = req_lib.Session()
     s.headers.update({
-        "User-Agent": random.choice(_UA_POOL),
-        "Accept": "application/json, text/plain, */*",
+        "User-Agent":      random.choice(_UA_POOL),
+        "Accept":          "application/json, text/plain, */*",
         "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8",
         "Accept-Encoding": "gzip, deflate, br",
-        "Cache-Control": "no-cache",
+        "Cache-Control":   "no-cache",
+    })
+    return s
+
+def _new_twse_session() -> req_lib.Session:
+    """TWSE / TPEX 用：不帶 Accept-Encoding，避免 gzip 壓縮後 JSON 解析失敗"""
+    s = req_lib.Session()
+    s.headers.update({
+        "User-Agent":      random.choice(_UA_POOL),
+        "Accept":          "application/json, text/plain, */*",
+        "Accept-Language": "zh-TW,zh;q=0.9",
+        "Cache-Control":   "no-cache",
     })
     return s
 
@@ -597,14 +583,12 @@ def _fetch_tw_realtime(ticker: str) -> Optional[dict]:
       1. 上櫃 ETF 改打正確的 tpex 端點（原本還是打 twse，導致上櫃抓不到）
       2. 非交易時段 z="-" 時改用昨收 y 作為備援價格
     """
-    # 判斷是否為上櫃（末碼 B 為債券 ETF，上櫃代碼；006 開頭部分也是上櫃）
+    # 判斷是否為上櫃（末碼 B 為債券 ETF 屬上櫃；數字代碼預設優先試上市）
     ticker_up = ticker.upper()
-    is_otc = ticker_up.endswith('B') or ticker_up in (
-        '006205', '006208',  # 富邦上証/台50 為上市，其他手動維護
-    )
-    # 先試上市 TWSE
+    is_otc = ticker_up.endswith('B')
+    # 先試上市 TWSE（用不帶 gzip 的 session，避免 JSON 解析失敗）
     try:
-        s = _new_session()
+        s = _new_twse_session()
         stock_id = f"tse_{ticker}.tw"
         url = (
             f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
@@ -617,10 +601,10 @@ def _fetch_tw_realtime(ticker: str) -> Optional[dict]:
         logger.debug(f"TWSE MIS {ticker}: {e}")
         items = []
 
-    # TWSE 沒拿到 → 改打上櫃 TPEX（用獨立 session 避免 Referer 殘留）
+    # TWSE 沒拿到 → 改打上櫃 TPEX
     if not items:
         try:
-            s2 = _new_session()
+            s2 = _new_twse_session()
             stock_id2 = f"otc_{ticker}.tw"
             url2 = (
                 f"https://mis.tpex.org.tw/stock/api/getStockInfo.jsp"
@@ -703,10 +687,10 @@ def _fetch_tw_history_twse(ticker: str) -> list:
     except Exception as e:
         logger.debug(f"TW history Yahoo {ticker}: {e}")
 
-    # ── 備援：TWSE STOCK_DAY（逐月查，可能被擋）──
+    # ── 備援：TWSE STOCK_DAY（逐月查，用不帶 gzip session）──
     results = []
     now = datetime.now()
-    s2 = _new_session()
+    s2 = _new_twse_session()
     s2.headers["Referer"] = "https://www.twse.com.tw/"
     for delta in range(0, 61, 3):
         dt = now - relativedelta(months=delta)
@@ -742,6 +726,7 @@ def _fetch_tw_detail(ticker: str) -> dict:
     if ticker in STATIC_AUM:
         result["asset_size"] = STATIC_AUM[ticker]
 
+<<<<<<< HEAD
     try:
         url = f"https://www.twse.com.tw/fund/ETF/fundInfo?response=json&stockNo={ticker}"
         s = _new_session()
@@ -753,6 +738,33 @@ def _fetch_tw_detail(ticker: str) -> dict:
                 txt = td.get_text(strip=True).replace(",", "")
                 if txt.isdigit() and float(txt) > 100000:  # 判定規模(萬元)
                     result["asset_size"] = float(txt) * 10000
+=======
+    # ── 來源 1：TWSE /fund/ETF/fundInfo（不帶 gzip，避免 JSON 解析失敗）──
+    try:
+        url_twse = f"https://www.twse.com.tw/fund/ETF/fundInfo?response=json&stockNo={ticker}"
+        s = _new_twse_session()
+        s.headers["Referer"] = "https://www.twse.com.tw/"
+        r = s.get(url_twse, timeout=10)
+        if r.status_code == 200:
+            j = r.json()
+            rows = j.get("data") or []
+            if not rows and j.get("tables"):
+                rows = j["tables"][0].get("data", [])
+            for row in rows:
+                for cell in (row if isinstance(row, list) else []):
+                    cell_str = str(cell).replace(",", "").strip()
+                    try:
+                        val = float(cell_str)
+                        if val > 1e6:
+                            result["asset_size"] = val * 10000
+                            break
+                        elif val > 1e4:
+                            result["asset_size"] = val * 1e8
+                            break
+                    except Exception:
+                        pass
+                if result.get("asset_size"):
+>>>>>>> 64cb4cc (修改存股回測功能)
                     break
         else:
             rows = r.json().get("data") or r.json().get("tables", [{}])[0].get("data", [])
@@ -763,8 +775,112 @@ def _fetch_tw_detail(ticker: str) -> dict:
                         result["asset_size"] = float(cell_str) * 10000
                         break
     except Exception as e:
+<<<<<<< HEAD
         logger.debug(f"TWSE 規模解析異常: {e}")
         
+=======
+        logger.debug(f"TW fundInfo TWSE {ticker}: {e}")
+
+    # ── 來源 2：TWSE /ETF/fund（不帶 gzip）──
+    if not result.get("asset_size"):
+        try:
+            url_twse2 = f"https://www.twse.com.tw/ETF/fund/{ticker}"
+            s2 = _new_twse_session()
+            s2.headers["Referer"] = "https://www.twse.com.tw/"
+            r2 = s2.get(url_twse2, timeout=10)
+            if r2.status_code == 200:
+                j2 = r2.json()
+                for key in ("totalAssets", "fundSize", "aum", "netAssets"):
+                    v = j2.get(key)
+                    if v:
+                        val = _safe_float(str(v).replace(",", ""))
+                        if val > 0:
+                            result["asset_size"] = val * 1000 if val < 1e8 else val
+                            break
+        except Exception as e:
+            logger.debug(f"TW ETF/fund {ticker}: {e}")
+
+    # ── 來源 3：yfinance Ticker.info（走獨立 endpoint，有機會通過）──
+    yt = _yahoo_ticker(ticker, 'TW')
+    try:
+        stock = yf.Ticker(yt, session=_get_yf_session())
+        info = stock.info
+        if info and isinstance(info, dict) and info.get("regularMarketPrice"):
+            # asset_size
+            if not result.get("asset_size"):
+                for k in ("totalAssets", "netAssets", "totalNetAssets"):
+                    v = _safe_float(info.get(k) or 0)
+                    if v > 0:
+                        result["asset_size"] = v
+                        break
+            # pe_ratio
+            if not result.get("pe_ratio"):
+                for k in ("trailingPE", "forwardPE"):
+                    v = _safe_float(info.get(k) or 0)
+                    if v > 0:
+                        result["pe_ratio"] = v
+                        break
+            # expense_ratio
+            if not result.get("expense_ratio"):
+                for k in ("annualReportExpenseRatio", "expenseRatio"):
+                    v = _safe_float(info.get(k) or 0)
+                    if v > 0:
+                        result["expense_ratio"] = v
+                        break
+            # dividend_yield（作為備援，給 _fetch_tw_dividend_twse 用）
+            yf_yield = _safe_float(info.get("dividendYield") or info.get("yield") or 0)
+            if yf_yield > 0:
+                result["yf_dividend_yield"] = round(yf_yield * 100, 4) if yf_yield < 1 else round(yf_yield, 4)
+            logger.debug(f"TW yf.info {ticker}: asset={result.get('asset_size')}, pe={result.get('pe_ratio')}, er={result.get('expense_ratio')}")
+    except Exception as e:
+        logger.debug(f"TW yf.info {ticker}: {e}")
+
+    # ── 來源 4：Yahoo quoteSummary（最後備援）──
+    if not result.get("asset_size") or not result.get("expense_ratio"):
+        try:
+            s3 = _new_session()
+            url3 = (
+                f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{yt}"
+                f"?modules=summaryDetail,defaultKeyStatistics,fundProfile"
+            )
+            s3.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
+            r3 = s3.get(url3, timeout=12)
+            if r3.status_code == 200:
+                j3 = r3.json()
+                qs = j3.get("quoteSummary", {}).get("result", [{}])
+                if qs:
+                    raw = qs[0]
+                    if not result.get("asset_size"):
+                        for sec in ("summaryDetail", "defaultKeyStatistics"):
+                            for k in ("totalAssets", "netAssets"):
+                                v = raw.get(sec, {}).get(k)
+                                if isinstance(v, dict) and "raw" in v:
+                                    val = _safe_float(v["raw"])
+                                    if val > 0:
+                                        result["asset_size"] = val
+                    if not result.get("pe_ratio"):
+                        for sec in ("summaryDetail", "defaultKeyStatistics"):
+                            for k in ("trailingPE", "forwardPE"):
+                                v = raw.get(sec, {}).get(k)
+                                if isinstance(v, dict) and "raw" in v:
+                                    val = _safe_float(v["raw"])
+                                    if val > 0:
+                                        result["pe_ratio"] = val
+                    if not result.get("expense_ratio"):
+                        fp = raw.get("fundProfile", {})
+                        fees = fp.get("feesExpensesInvestment", {})
+                        for k in ("annualReportExpenseRatioNet", "annualReportExpenseRatio", "netExpenseRatio"):
+                            v = fees.get(k)
+                            if isinstance(v, dict) and "raw" in v:
+                                val = _safe_float(v["raw"])
+                                if val > 0:
+                                    result["expense_ratio"] = val
+                                    break
+        except Exception as e:
+            logger.debug(f"TW quoteSummary {ticker}: {e}")
+
+    logger.info(f"TW detail final {ticker}: asset={result.get('asset_size',0)/1e8:.1f}億 pe={result.get('pe_ratio',0):.1f} er={result.get('expense_ratio',0):.4f} yf_yld={result.get('yf_dividend_yield',0):.2f}%")
+>>>>>>> 64cb4cc (修改存股回測功能)
     return result
 
 
@@ -827,10 +943,10 @@ def _fetch_tw_dividend_twse(ticker: str, current_price: float) -> tuple:
     except Exception as e:
         logger.debug(f"TW dividend Yahoo {ticker}: {e}")
 
-    # ── 備援：TWSE TWT48U 配息公告 ──
+    # ── 備援：TWSE TWT48U 配息公告（不帶 gzip）──
     try:
         url2 = f"https://www.twse.com.tw/exchangeReport/TWT48U?response=json&stockNo={ticker}"
-        s2 = _new_session()
+        s2 = _new_twse_session()
         s2.headers["Referer"] = "https://www.twse.com.tw/"
         r2 = s2.get(url2, timeout=10)
         d2 = r2.json()
@@ -1076,7 +1192,9 @@ def _fetch_us_dividends_query2(ticker: str, current_price: float) -> tuple:
 def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
     """證交所/櫃買中心 MIS 完美即時報價解析（解決非交易時段、張數換算問題）"""
     ticker_up = ticker.upper()
-    is_otc = ticker_up.endswith('B') or ticker_up in ('006208', '006205') 
+    # 末碼 B 為債券 ETF（上櫃），其餘數字代碼預設為上市
+    # 注意：006208（富邦台50）、006205（富邦上証）均為上市，不可放入 is_otc
+    is_otc = ticker_up.endswith('B')
     
     urls = [
         f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{ticker}.tw&json=1&delay=0",
@@ -1088,7 +1206,7 @@ def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
     items = []
     for url in urls:
         try:
-            s = _new_session()
+            s = _new_twse_session()
             s.headers["Referer"] = "https://mis.twse.com.tw/" if "twse" in url else "https://mis.tpex.org.tw/"
             r = s.get(url, timeout=6)
             if r.status_code == 200:
@@ -1135,11 +1253,15 @@ def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
     }
 
 def _fetch_tw_dividend_official(ticker: str, current_price: float) -> tuple:
+<<<<<<< HEAD
     """從台灣證交所 TWT48U 完美還原近年配息與殖利率，支援 HTML 備援解析"""
     from bs4 import BeautifulSoup
+=======
+    """從台灣證交所 TWT48U 完美還原近年配息與殖利率（不帶 gzip，避免 JSON 解析失敗）"""
+>>>>>>> 64cb4cc (修改存股回測功能)
     try:
         url = f"https://www.twse.com.tw/exchangeReport/TWT48U?response=json&stockNo={ticker}"
-        s = _new_session()
+        s = _new_twse_session()
         s.headers["Referer"] = "https://www.twse.com.tw/"
         r = s.get(url, timeout=10)
         
@@ -1180,6 +1302,7 @@ def _fetch_tw_dividend_official(ticker: str, current_price: float) -> tuple:
         logger.error(f"❌ 解析 TWT48U 失敗 {ticker}: {e}")
         return 0.0, "季配"
 
+<<<<<<< HEAD
 def _fetch_us_quote_with_retry(ticker: str) -> Optional[dict]:
     """美股 2026 終極防禦：Query2 + yfinance 雙通道混合切換"""
     import yfinance as yf
@@ -1230,6 +1353,8 @@ def _fetch_us_quote_with_retry(ticker: str) -> Optional[dict]:
         logger.error(f"❌ 雙通道皆失敗 {ticker}: {e}")
     return None
 
+=======
+>>>>>>> 64cb4cc (修改存股回測功能)
 # ────────────────────────────────────────────
 # 主抓取函數：台股 / 美股 分流
 # ────────────────────────────────────────────
@@ -2487,15 +2612,39 @@ async def delete_transaction(tid: int, request: Request):
 
 # ─────────────────────────────────────────────
 # 回測 API
+# 支援：
+#   · 日期格式：start_year/start_month ~ end_year/end_month（新）
+#               或 start_date/end_date（舊格式向下相容）
+#   · price_mode：'open'  = 月初第一個交易日收盤（預設）
+#                 'low'   = 每月最低點（需日線，假設完美擇時）
+#                 'high'  = 每月最高點（需日線，假設最差擇時）
 # ─────────────────────────────────────────────
 @app.post("/api/backtest")
 async def run_backtest(request: Request):
     try:
+        import calendar as _calendar
         body = await request.json()
+
         mode       = body.get('mode', 'accumulate')
         ticker     = body.get('ticker', '0050').upper()
-        start_date = body.get('start_date', '2020-01-01')
-        end_date   = body.get('end_date',   '2024-12-31')
+        price_mode = body.get('price_mode', 'open')   # 'open' | 'low' | 'high'
+
+        # ── 日期解析：優先讀年月，向下相容舊的 start_date/end_date ──
+        if body.get('start_year') and body.get('start_month'):
+            sy = int(body['start_year'])
+            sm = int(body['start_month'])
+            ey = int(body.get('end_year',  datetime.now().year))
+            em = int(body.get('end_month', datetime.now().month))
+            start_date = f"{sy:04d}-{sm:02d}-01"
+            last_day   = _calendar.monthrange(ey, em)[1]
+            end_date   = f"{ey:04d}-{em:02d}-{last_day:02d}"
+        else:
+            start_date = body.get('start_date', '2020-01-01')
+            end_date   = body.get('end_date',   '2024-12-31')
+
+        # price_mode 標籤（用於交易紀錄顯示）
+        _mode_labels = {'open': '月初買入', 'low': '月最低點', 'high': '月最高點'}
+        mode_label   = _mode_labels.get(price_mode, '月初買入')
 
         market = 'TW'
         with get_db() as (conn, cursor):
@@ -2505,51 +2654,70 @@ async def run_backtest(request: Request):
 
         yt = _yahoo_ticker(ticker, market)
 
-        # ── 用 Query2 REST API 抓日線歷史（不用 yfinance.history，避免 rate limit）──
+        start_ts = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp())
+        end_ts   = int(datetime.strptime(end_date,   '%Y-%m-%d').timestamp())
+
+        # ──────────────────────────────────────────────────────────
+        # 資料抓取
+        #   · price_mode='open'  → 月線（interval=1mo）
+        #   · price_mode='low'/'high' → 日線（interval=1d）再按月分組取極值
+        # ──────────────────────────────────────────────────────────
         def _get_backtest_hist():
+            interval = "1d" if price_mode in ("low", "high") else "1mo"
             url = (
                 f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
-                f"?period1={int(datetime.strptime(start_date,'%Y-%m-%d').timestamp())}"
-                f"&period2={int(datetime.strptime(end_date,'%Y-%m-%d').timestamp())}"
-                f"&interval=1mo&includePrePost=false"
+                f"?period1={start_ts}&period2={end_ts}"
+                f"&interval={interval}&includePrePost=false"
             )
             s = _new_session()
             s.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
-            r = s.get(url, timeout=15)
+            r = s.get(url, timeout=20)
             if r.status_code != 200:
                 return pd.DataFrame()
             j = r.json()
             result = j.get("chart", {}).get("result")
             if not result:
                 return pd.DataFrame()
+
             timestamps = result[0].get("timestamp", [])
-            quotes = result[0].get("indicators", {}).get("quote", [{}])[0]
-            closes = quotes.get("close", [])
+            quotes     = result[0].get("indicators", {}).get("quote", [{}])[0]
+            closes  = quotes.get("close",  [])
+            highs   = quotes.get("high",   [])
+            lows    = quotes.get("low",    [])
+
             rows = []
-            for ts, c in zip(timestamps, closes):
-                if c is not None:
-                    rows.append({"date": pd.Timestamp.fromtimestamp(ts), "Close": float(c)})
+            for i, ts in enumerate(timestamps):
+                c = closes[i] if i < len(closes) else None
+                h = highs[i]  if i < len(highs)  else None
+                l = lows[i]   if i < len(lows)   else None
+                if c is None:
+                    continue
+                rows.append({
+                    "date":  pd.Timestamp.fromtimestamp(ts),
+                    "Close": float(c),
+                    "High":  float(h) if h is not None else float(c),
+                    "Low":   float(l) if l is not None else float(c),
+                })
             if not rows:
                 return pd.DataFrame()
-            df = pd.DataFrame(rows).set_index("date")
-            return df
+            return pd.DataFrame(rows).set_index("date")
 
         hist = await asyncio.to_thread(_get_backtest_hist)
 
-        # 備援：台股用 TWSE 月均
-        if (hist.empty or len(hist) < 3) and market == 'TW':
+        # 備援：台股 open 模式用 TWSE 月均
+        if (hist.empty or len(hist) < 3) and market == 'TW' and price_mode == 'open':
             def _get_tw_hist():
                 closes = _fetch_tw_history_twse(ticker)
                 if not closes:
                     return pd.DataFrame()
-                now = datetime.now()
-                rows = []
+                now_dt   = datetime.now()
                 start_dt = datetime.strptime(start_date, '%Y-%m-%d')
                 end_dt   = datetime.strptime(end_date,   '%Y-%m-%d')
+                rows = []
                 for i, c in enumerate(closes):
-                    dt = now - relativedelta(months=len(closes)-1-i)
+                    dt = now_dt - relativedelta(months=len(closes)-1-i)
                     if start_dt <= dt <= end_dt:
-                        rows.append({"date": pd.Timestamp(dt), "Close": c})
+                        rows.append({"date": pd.Timestamp(dt), "Close": c, "High": c, "Low": c})
                 if not rows:
                     return pd.DataFrame()
                 return pd.DataFrame(rows).set_index("date")
@@ -2560,7 +2728,24 @@ async def run_backtest(request: Request):
         if hist.index.tz is not None:
             hist.index = hist.index.tz_localize(None)
 
-        transactions = []
+        # ──────────────────────────────────────────────────────────
+        # 若為日線，按月分組取最低/最高，合成月頻資料
+        # ──────────────────────────────────────────────────────────
+        if price_mode in ("low", "high"):
+            hist["_ym"] = hist.index.to_period("M")
+            if price_mode == "low":
+                idx = hist.groupby("_ym")["Low"].idxmin()
+            else:
+                idx = hist.groupby("_ym")["High"].idxmax()
+            monthly = hist.loc[idx].copy()
+            # 統一用 Close 存「本月買入價」
+            monthly["Close"] = monthly["Low"] if price_mode == "low" else monthly["High"]
+            hist = monthly.drop(columns=["_ym"], errors="ignore")
+
+        # ──────────────────────────────────────────────────────────
+        # 回測主邏輯
+        # ──────────────────────────────────────────────────────────
+        transactions   = []
         total_invested = 0.0
         total_shares   = 0.0
         is_bankrupt    = False
@@ -2570,15 +2755,22 @@ async def run_backtest(request: Request):
         if mode == 'accumulate':
             ini_amt = float(body.get('initial_amount', 0))
             mon_amt = float(body.get('monthly_amount', 10000))
+
+            # 期初單筆
             if ini_amt > 0:
                 p = float(hist['Close'].iloc[0])
                 if p > 0:
                     total_invested += ini_amt
                     total_shares   += ini_amt / p
-                    transactions.append({'date': hist.index[0].strftime('%Y-%m-%d'),
-                                         'type':'期初單筆','amount':round(ini_amt,2),
-                                         'price':round(p,2),'total_shares':round(total_shares,4),
-                                         'market_value':round(total_shares*p,2)})
+                    transactions.append({
+                        'date': hist.index[0].strftime('%Y-%m-%d'),
+                        'type': '期初單筆',
+                        'amount': round(ini_amt, 2), 'price': round(p, 2),
+                        'total_shares': round(total_shares, 4),
+                        'market_value': round(total_shares * p, 2),
+                    })
+
+            # 每月定期定額
             while current_date <= end:
                 month_data = hist[hist.index >= current_date]
                 if not month_data.empty and mon_amt > 0:
@@ -2586,10 +2778,13 @@ async def run_backtest(request: Request):
                     if p > 0:
                         total_invested += mon_amt
                         total_shares   += mon_amt / p
-                        transactions.append({'date': month_data.index[0].strftime('%Y-%m-%d'),
-                                             'type':'定期定額','amount':round(mon_amt,2),
-                                             'price':round(p,2),'total_shares':round(total_shares,4),
-                                             'market_value':round(total_shares*p,2)})
+                        transactions.append({
+                            'date': month_data.index[0].strftime('%Y-%m-%d'),
+                            'type': f'定期定額（{mode_label}）',
+                            'amount': round(mon_amt, 2), 'price': round(p, 2),
+                            'total_shares': round(total_shares, 4),
+                            'market_value': round(total_shares * p, 2),
+                        })
                 current_date += relativedelta(months=1)
 
         elif mode == 'withdraw':
@@ -2599,50 +2794,78 @@ async def run_backtest(request: Request):
             if p_start > 0:
                 total_invested = init_val
                 total_shares   = init_val / p_start
-                transactions.append({'date': hist.index[0].strftime('%Y-%m-%d'),
-                                     'type':'投入本金','amount':round(init_val,2),
-                                     'price':round(p_start,2),'total_shares':round(total_shares,4),
-                                     'market_value':round(init_val,2)})
+                transactions.append({
+                    'date': hist.index[0].strftime('%Y-%m-%d'),
+                    'type': '投入本金',
+                    'amount': round(init_val, 2), 'price': round(p_start, 2),
+                    'total_shares': round(total_shares, 4),
+                    'market_value': round(init_val, 2),
+                })
             next_date = current_date + relativedelta(months=1)
             while next_date <= end and not is_bankrupt:
                 month_data = hist[hist.index >= next_date]
                 if not month_data.empty and mon_wd > 0:
-                    p = float(month_data['Close'].iloc[0])
+                    p    = float(month_data['Close'].iloc[0])
                     need = mon_wd / p
                     if total_shares >= need - 0.0001:
                         total_shares -= need
-                        transactions.append({'date': month_data.index[0].strftime('%Y-%m-%d'),
-                                             'type':'每月提領','amount':round(mon_wd,2),
-                                             'price':round(p,2),'total_shares':round(total_shares,4),
-                                             'market_value':round(total_shares*p,2)})
+                        transactions.append({
+                            'date': month_data.index[0].strftime('%Y-%m-%d'),
+                            'type': f'每月提領（{mode_label}）',
+                            'amount': round(mon_wd, 2), 'price': round(p, 2),
+                            'total_shares': round(total_shares, 4),
+                            'market_value': round(total_shares * p, 2),
+                        })
                     else:
-                        transactions.append({'date': month_data.index[0].strftime('%Y-%m-%d'),
-                                             'type':'💀 資產枯竭','amount':round(total_shares*p,2),
-                                             'price':round(p,2),'total_shares':0,'market_value':0})
+                        transactions.append({
+                            'date': month_data.index[0].strftime('%Y-%m-%d'),
+                            'type': '💀 資產枯竭',
+                            'amount': round(total_shares * p, 2), 'price': round(p, 2),
+                            'total_shares': 0, 'market_value': 0,
+                        })
                         total_shares = 0; is_bankrupt = True; break
                 next_date += relativedelta(months=1)
 
+        # ── 計算結果 ──
         final_price = float(hist['Close'].iloc[-1])
         final_value = total_shares * final_price
+
         if mode == 'accumulate':
             total_profit = final_value - total_invested
         else:
-            withdrawn = sum(t['amount'] for t in transactions if '提領' in t['type'] or '枯竭' in t['type'])
+            withdrawn    = sum(t['amount'] for t in transactions if '提領' in t['type'] or '枯竭' in t['type'])
             total_profit = (final_value + withdrawn) - total_invested
 
-        return safe_json({"status":"success","data":{
-            "mode": mode, "is_bankrupt": is_bankrupt,
-            "total_invested": round(total_invested,2),
-            "final_value": round(final_value,2),
-            "total_profit": round(total_profit,2),
-            "total_return": round(total_profit/total_invested*100 if total_invested > 0 else 0, 2),
-            "final_price": round(final_price,2),
-            "total_shares": round(total_shares,4),
-            "transactions": transactions[-60:] if len(transactions) > 60 else transactions,
+        # 年化報酬率
+        n_months   = len(hist)
+        n_years    = n_months / 12
+        ann_return = 0.0
+        if total_invested > 0 and final_value > 0 and n_years >= 0.5:
+            try:
+                ann_return = round(((final_value / total_invested) ** (1 / n_years) - 1) * 100, 2)
+            except Exception:
+                ann_return = 0.0
+
+        return safe_json({"status": "success", "data": {
+            "mode":              mode,
+            "price_mode":        price_mode,
+            "price_mode_label":  mode_label,
+            "is_bankrupt":       is_bankrupt,
+            "start_date":        start_date,
+            "end_date":          end_date,
+            "total_invested":    round(total_invested, 2),
+            "final_value":       round(final_value,    2),
+            "total_profit":      round(total_profit,   2),
+            "total_return":      round(total_profit / total_invested * 100 if total_invested > 0 else 0, 2),
+            "annual_return":     ann_return,
+            "final_price":       round(final_price,    2),
+            "total_shares":      round(total_shares,   4),
+            "transactions":      transactions[-60:] if len(transactions) > 60 else transactions,
         }})
+
     except Exception as ex:
         logger.error(f"回測錯誤: {ex}")
-        return safe_json({"status":"error","message":str(ex)}, 500)
+        return safe_json({"status": "error", "message": str(ex)}, 500)
 
 
 if __name__ == "__main__":

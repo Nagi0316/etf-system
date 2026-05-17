@@ -15,14 +15,37 @@
         .quick-btn{transition:all .15s;}
         .quick-btn:hover{transform:translateY(-1px);}
         .quick-btn.active{background:#4f46e5;color:#fff;border-color:#4f46e5;}
+
+        /* 買入時機卡片 */
+        .mode-card{
+            border:2px solid #e2e8f0;border-radius:10px;padding:10px 12px;
+            cursor:pointer;transition:all .15s;display:flex;align-items:flex-start;gap:10px;
+        }
+        .mode-card:hover{border-color:#a5b4fc;background:#f8f7ff;}
+        .mode-card.selected{border-color:#4f46e5;background:#eef2ff;}
+        .mode-card input[type=radio]{margin-top:3px;accent-color:#4f46e5;flex-shrink:0;}
+        .mode-card .title{font-size:.8rem;font-weight:600;color:#334155;}
+        .mode-card .desc{font-size:.7rem;color:#94a3b8;margin-top:1px;}
+        .mode-card.selected .title{color:#4f46e5;}
+
+        /* 年月選擇器 */
+        .ym-select{
+            padding:6px 8px;font-size:.8125rem;border:1px solid #e2e8f0;
+            border-radius:8px;background:#fff;color:#334155;
+            outline:none;cursor:pointer;
+        }
+        .ym-select:focus{outline:none;box-shadow:0 0 0 2px #c7d2fe;}
     </style>
 </head>
 <body class="bg-slate-50 pb-16 md:pb-0">
 
+<!-- ── Navbar ── -->
 <nav class="bg-white border-b border-slate-100 sticky top-0 z-50">
     <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
         <div class="flex items-center gap-6">
-            <a href="/" class="flex items-center gap-2 font-bold text-indigo-600 text-lg"><i class="fas fa-chart-line"></i>ETF投資系統</a>
+            <a href="/" class="flex items-center gap-2 font-bold text-indigo-600 text-lg">
+                <i class="fas fa-chart-line"></i>ETF投資系統
+            </a>
             <div class="hidden md:flex gap-1">
                 <a href="/etf-list"  class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">ETF精選</a>
                 <a href="/watchlist" class="px-3 py-1.5 text-sm rounded-md text-slate-500 hover:bg-slate-50 hover:text-indigo-600">自選股</a>
@@ -39,27 +62,29 @@
 
 <div class="max-w-7xl mx-auto px-4 py-6">
     <div class="mb-5">
-        <h1 class="text-xl font-bold text-slate-800">定期定額回測</h1>
-        <p class="text-xs text-slate-400 mt-0.5">模擬每月定額投入的長期複利效果</p>
+        <h1 class="text-xl font-bold text-slate-800">存股回測</h1>
+        <p class="text-xs text-slate-400 mt-0.5">模擬每月定額投入的長期複利效果，支援月初 / 最低點 / 最高點三種買入策略</p>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
-        <!-- ── 左側設定 ── -->
+        <!-- ════════════════════════════
+             左側：設定區
+             ════════════════════════════ -->
         <div class="lg:col-span-1 space-y-4">
+
+            <!-- 快速選股 -->
             <div class="bg-white rounded-xl border border-slate-100 p-5">
                 <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">快速選擇</h2>
-                <!-- 台股 -->
                 <p class="text-xs text-slate-400 mb-2">台股熱門</p>
                 <div class="flex flex-wrap gap-1.5 mb-3">
-                    <button onclick="pickTicker('0050')"  class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">0050</button>
-                    <button onclick="pickTicker('0056')"  class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">0056</button>
-                    <button onclick="pickTicker('00878')" class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">00878</button>
-                    <button onclick="pickTicker('00919')" class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">00919</button>
-                    <button onclick="pickTicker('006208')"class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">006208</button>
-                    <button onclick="pickTicker('00929')" class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">00929</button>
+                    <button onclick="pickTicker('0050')"   class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">0050</button>
+                    <button onclick="pickTicker('0056')"   class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">0056</button>
+                    <button onclick="pickTicker('00878')"  class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">00878</button>
+                    <button onclick="pickTicker('00919')"  class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">00919</button>
+                    <button onclick="pickTicker('006208')" class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">006208</button>
+                    <button onclick="pickTicker('00929')"  class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">00929</button>
                 </div>
-                <!-- 美股 -->
                 <p class="text-xs text-slate-400 mb-2">美股熱門</p>
                 <div class="flex flex-wrap gap-1.5">
                     <button onclick="pickTicker('SPY')"  class="quick-btn text-xs border border-slate-200 rounded-md px-2.5 py-1 text-slate-600">SPY</button>
@@ -71,9 +96,12 @@
                 </div>
             </div>
 
+            <!-- 回測參數 -->
             <div class="bg-white rounded-xl border border-slate-100 p-5">
                 <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4">回測參數</h2>
                 <form id="backtest-form" onsubmit="runBacktest(event)" class="space-y-4">
+
+                    <!-- ETF 代碼 -->
                     <div>
                         <label class="block text-xs font-semibold text-slate-600 mb-1">ETF 代碼</label>
                         <input type="text" id="ticker" value="0050" required
@@ -82,30 +110,84 @@
                             oninput="syncQuickBtns(this.value.toUpperCase())">
                     </div>
 
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="block text-xs font-semibold text-slate-600 mb-1">開始日期</label>
-                            <input type="date" id="start-date" value="2014-01-01" required
-                                class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                    <!-- 年月區間 -->
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-2">回測區間</label>
+                        <!-- 開始年月 -->
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-xs text-slate-400 w-8 flex-shrink-0">開始</span>
+                            <input type="number" id="start-year" min="1993" max="2099"
+                                class="ym-select w-20 text-center"
+                                placeholder="年">
+                            <span class="text-xs text-slate-400">年</span>
+                            <input type="number" id="start-month" min="1" max="12"
+                                class="ym-select w-14 text-center"
+                                placeholder="月">
+                            <span class="text-xs text-slate-400">月</span>
                         </div>
-                        <div>
-                            <label class="block text-xs font-semibold text-slate-600 mb-1">結束日期</label>
-                            <input type="date" id="end-date" required
-                                class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                        <!-- 結束年月 -->
+                        <div class="flex items-center gap-1.5 mt-2">
+                            <span class="text-xs text-slate-400 w-8 flex-shrink-0">結束</span>
+                            <input type="number" id="end-year" min="1993" max="2099"
+                                class="ym-select w-20 text-center"
+                                placeholder="年">
+                            <span class="text-xs text-slate-400">年</span>
+                            <input type="number" id="end-month" min="1" max="12"
+                                class="ym-select w-14 text-center"
+                                placeholder="月">
+                            <span class="text-xs text-slate-400">月</span>
                         </div>
                     </div>
 
+                    <!-- 金額設定 -->
                     <div class="border-t border-slate-100 pt-4 space-y-3">
                         <div>
-                            <label class="block text-xs font-semibold text-slate-600 mb-1">期初單筆投入 <span class="text-slate-400 font-normal">（元，可為 0）</span></label>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">
+                                期初單筆投入 <span class="text-slate-400 font-normal">（元，可為 0）</span>
+                            </label>
                             <input type="number" id="acc-initial" value="0" min="0"
                                 class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
                         </div>
                         <div>
-                            <label class="block text-xs font-semibold text-slate-600 mb-1">每月定期定額 <span class="text-slate-400 font-normal">（元）</span></label>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">
+                                每月定期定額 <span class="text-slate-400 font-normal">（元）</span>
+                            </label>
                             <input type="number" id="acc-monthly" value="10000" min="0"
                                 class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
                         </div>
+                    </div>
+
+                    <!-- ★ 每月買入時機 -->
+                    <div class="border-t border-slate-100 pt-4">
+                        <label class="block text-xs font-semibold text-slate-600 mb-2">每月買入時機</label>
+                        <div class="space-y-2">
+                            <label class="mode-card selected" id="card-open">
+                                <input type="radio" name="price_mode" value="open" checked onchange="onModeChange()">
+                                <div>
+                                    <div class="title">📅 月初買入（預設）</div>
+                                    <div class="desc">每月第一個交易日收盤價，模擬最常見的定期定額</div>
+                                </div>
+                            </label>
+                            <label class="mode-card" id="card-low">
+                                <input type="radio" name="price_mode" value="low" onchange="onModeChange()">
+                                <div>
+                                    <div class="title">🟢 月最低點買入</div>
+                                    <div class="desc">假設每月都能買在最低價，觀察最佳情境效益</div>
+                                </div>
+                            </label>
+                            <label class="mode-card" id="card-high">
+                                <input type="radio" name="price_mode" value="high" onchange="onModeChange()">
+                                <div>
+                                    <div class="title">🔴 月最高點買入</div>
+                                    <div class="desc">假設每月都買在最高價，觀察最差情境損失</div>
+                                </div>
+                            </label>
+                        </div>
+                        <!-- 提示（最高/最低點才顯示）-->
+                        <p id="mode-hint" class="hidden mt-2 text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 leading-relaxed">
+                            <i class="fas fa-triangle-exclamation mr-1"></i>
+                            最高 / 最低點模式為<strong>事後完美資訊</strong>假設，實際不可預測，僅供策略比較參考。
+                        </p>
                     </div>
 
                     <button type="submit" id="btn-submit"
@@ -116,50 +198,75 @@
             </div>
         </div>
 
-        <!-- ── 右側結果 ── -->
+        <!-- ════════════════════════════
+             右側：結果區
+             ════════════════════════════ -->
         <div class="lg:col-span-2 space-y-4">
 
-            <!-- 結果統計 4 格 -->
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <!-- 結果統計：5 格（多了年化報酬率）-->
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
                 <div class="bg-white rounded-xl border border-slate-100 p-4">
                     <p class="text-xs text-slate-400 mb-1">投入總本金</p>
-                    <p id="total-invested" class="text-lg font-bold text-slate-800 tabular-nums">---</p>
+                    <p id="total-invested" class="text-base font-bold text-slate-800 tabular-nums">---</p>
                 </div>
                 <div class="bg-indigo-600 rounded-xl p-4 text-white">
                     <p class="text-xs text-indigo-200 mb-1">期末總資產</p>
-                    <p id="final-value" class="text-lg font-bold tabular-nums">---</p>
+                    <p id="final-value" class="text-base font-bold tabular-nums">---</p>
                 </div>
                 <div class="bg-white rounded-xl border border-slate-100 p-4">
                     <p class="text-xs text-slate-400 mb-1">累積損益</p>
-                    <p id="total-profit" class="text-lg font-bold tabular-nums text-slate-800">---</p>
+                    <p id="total-profit" class="text-base font-bold tabular-nums text-slate-800">---</p>
                 </div>
                 <div class="bg-white rounded-xl border border-slate-100 p-4">
                     <p class="text-xs text-slate-400 mb-1">總報酬率</p>
-                    <p id="total-return" class="text-lg font-bold tabular-nums text-slate-800">---</p>
+                    <p id="total-return" class="text-base font-bold tabular-nums text-slate-800">---</p>
                 </div>
+                <div class="bg-white rounded-xl border border-slate-100 p-4">
+                    <p class="text-xs text-slate-400 mb-1">年化報酬率 <span class="text-slate-300">*</span></p>
+                    <p id="annual-return" class="text-base font-bold tabular-nums text-slate-800">---</p>
+                </div>
+            </div>
+
+            <!-- 回測模式標籤（顯示目前使用哪種） -->
+            <div id="result-meta" style="display:none" class="flex items-center gap-2 flex-wrap">
+                <span class="text-xs text-slate-400">回測區間：</span>
+                <span id="result-range" class="text-xs font-medium text-slate-600 bg-slate-100 rounded px-2 py-0.5"></span>
+                <span class="text-xs text-slate-400 ml-2">買入策略：</span>
+                <span id="result-mode-badge" class="text-xs font-medium rounded px-2 py-0.5"></span>
+                <span class="text-xs font-bold text-indigo-500 ml-auto" id="result-ticker"></span>
             </div>
 
             <!-- 走勢圖 -->
             <div class="bg-white rounded-xl border border-slate-100 p-5" style="height:340px">
                 <div class="flex items-center justify-between mb-3">
                     <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">資產市值走勢</p>
-                    <p id="result-ticker" class="text-xs text-indigo-500 font-bold"></p>
                 </div>
-                <div style="height:260px; position:relative">
+                <div style="height:268px; position:relative">
                     <canvas id="backtest-chart"></canvas>
                 </div>
             </div>
 
-            <!-- 提示說明 -->
+            <!-- 交易明細（最後 30 筆） -->
+            <div class="bg-white rounded-xl border border-slate-100 p-5">
+                <div class="flex items-center justify-between mb-3">
+                    <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">交易明細</p>
+                    <p id="tx-count" class="text-xs text-slate-400"></p>
+                </div>
+                <div id="tx-table-wrap" class="overflow-x-auto">
+                    <p class="text-xs text-slate-400 py-6 text-center">尚未執行回測</p>
+                </div>
+            </div>
+
+            <!-- 說明 -->
             <div class="bg-amber-50 border border-amber-100 rounded-xl p-4 text-xs text-amber-700 flex gap-2">
                 <i class="fas fa-info-circle mt-0.5 flex-shrink-0"></i>
-                <span>回測基於歷史月均價計算，不含股息再投入，僅供參考。實際投資結果可能因手續費、稅務及市場流動性而有所不同。</span>
+                <span>回測基於歷史月均價計算，不含股息再投入，僅供參考。最高 / 最低點模式為事後假設，實際投資結果可能因手續費、稅務及市場流動性而有所不同。<br>* 年化報酬率以總投入與期末資產估算，定期定額模式下為近似值，非精確 IRR。</span>
             </div>
         </div>
     </div>
 </div>
 
-<!-- 手機底部 -->
+<!-- 手機底部 nav -->
 <nav class="fixed bottom-0 w-full bg-white border-t border-slate-100 z-50 md:hidden">
     <div class="flex justify-around py-2">
         <a href="/etf-list"  class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-list text-lg"></i><span class="text-[10px]">精選</span></a>
@@ -171,111 +278,216 @@
 </nav>
 
 <script>
-let chartInstance=null;
-document.getElementById('end-date').valueAsDate=new Date();
+/* ──────────────────────────────────────────
+   工具
+   ────────────────────────────────────────── */
+let chartInstance = null;
 
-function toast(msg,ok=true){
-    const el=document.createElement('div');el.className='toast';
-    el.style.background=ok?'#10b981':'#ef4444';
-    el.innerHTML=`<i class="fas ${ok?'fa-check':'fa-times-circle'} mr-2"></i>${msg}`;
-    document.body.appendChild(el);setTimeout(()=>el.remove(),3000);
+function toast(msg, ok=true){
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.style.background = ok ? '#10b981' : '#ef4444';
+    el.innerHTML = `<i class="fas ${ok?'fa-check':'fa-times-circle'} mr-2"></i>${msg}`;
+    document.body.appendChild(el);
+    setTimeout(()=>el.remove(), 3000);
 }
 
+function fmt(n){ return '$'+Math.round(n).toLocaleString(); }
+function fmtPct(n){ return (n>=0?'+':'')+n.toFixed(2)+'%'; }
+function colorClass(n){ return n>=0 ? 'text-red-500' : 'text-green-600'; }
+
+/* ──────────────────────────────────────────
+   登入狀態
+   ────────────────────────────────────────── */
 function checkLogin(){
-    const u=localStorage.getItem('user');
+    const u = localStorage.getItem('user');
     if(u){
         try{
-            const user=JSON.parse(u);
-            document.getElementById('user-info').innerHTML=`
+            const user = JSON.parse(u);
+            document.getElementById('user-info').innerHTML = `
                 <div class="flex items-center gap-2">
                     <span class="text-sm text-slate-600 hidden md:inline">${user.username}</span>
                     <button onclick="logout()" class="text-slate-400 hover:text-slate-700 px-2 py-1 rounded hover:bg-slate-100 text-sm"><i class="fas fa-sign-out-alt"></i></button>
                 </div>`;
-        }catch(e){localStorage.removeItem('user');}
+        }catch(e){ localStorage.removeItem('user'); }
     }
 }
-function logout(){localStorage.removeItem('user');localStorage.removeItem('token');location.reload();}
+function logout(){ localStorage.removeItem('user'); localStorage.removeItem('token'); location.reload(); }
 
-// 快速選擇
+/* ──────────────────────────────────────────
+   年月選單初始化
+   ────────────────────────────────────────── */
+function initYearMonthSelects(){
+    const now = new Date();
+    const CY  = now.getFullYear();
+    const CM  = now.getMonth() + 1;
+
+    // 預設：開始 = 10年前 1月，結束 = 本月
+    document.getElementById('start-year').value  = CY - 10;
+    document.getElementById('start-month').value = 1;
+    document.getElementById('end-year').value    = CY;
+    document.getElementById('end-month').value   = CM;
+}
+
+/* ──────────────────────────────────────────
+   快速選股
+   ────────────────────────────────────────── */
 function pickTicker(t){
-    document.getElementById('ticker').value=t;
+    document.getElementById('ticker').value = t;
     syncQuickBtns(t);
 }
 function syncQuickBtns(val){
-    document.querySelectorAll('.quick-btn').forEach(b=>{
-        b.classList.toggle('active', b.textContent.trim()===val);
+    document.querySelectorAll('.quick-btn').forEach(b => {
+        b.classList.toggle('active', b.textContent.trim() === val);
     });
 }
-// 初始同步
-syncQuickBtns('0050');
 
+/* ──────────────────────────────────────────
+   買入時機模式切換
+   ────────────────────────────────────────── */
+function onModeChange(){
+    const val = document.querySelector('input[name=price_mode]:checked').value;
+    ['open','low','high'].forEach(m => {
+        document.getElementById('card-'+m).classList.toggle('selected', m===val);
+    });
+    const hint = document.getElementById('mode-hint');
+    hint.classList.toggle('hidden', val==='open');
+}
+
+/* ──────────────────────────────────────────
+   執行回測
+   ────────────────────────────────────────── */
 async function runBacktest(e){
     e.preventDefault();
-    const btn=document.getElementById('btn-submit');
-    btn.innerHTML='<i class="fas fa-spinner fa-spin mr-1.5"></i>計算中…';
-    btn.disabled=true;
+    const btn = document.getElementById('btn-submit');
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1.5"></i>計算中…';
+    btn.disabled = true;
 
-    const ticker=document.getElementById('ticker').value.trim().toUpperCase();
-    const initialAmt=Number(document.getElementById('acc-initial').value)||0;
-    const monthlyAmt=Number(document.getElementById('acc-monthly').value)||0;
+    const ticker     = document.getElementById('ticker').value.trim().toUpperCase();
+    const initialAmt = Number(document.getElementById('acc-initial').value) || 0;
+    const monthlyAmt = Number(document.getElementById('acc-monthly').value) || 0;
+    const priceMode  = document.querySelector('input[name=price_mode]:checked').value;
 
-    if(!ticker){toast('請輸入 ETF 代碼',false);resetBtn();return;}
-    if(initialAmt===0&&monthlyAmt===0){toast('請設定至少一項投入金額',false);resetBtn();return;}
+    const startYear  = parseInt(document.getElementById('start-year').value)  || 0;
+    const startMonth = Math.min(12, Math.max(1, parseInt(document.getElementById('start-month').value) || 1));
+    const endYear    = parseInt(document.getElementById('end-year').value)    || 0;
+    const endMonth   = Math.min(12, Math.max(1, parseInt(document.getElementById('end-month').value)   || 1));
+
+    // 驗證
+    if(!ticker){ toast('請輸入 ETF 代碼', false); resetBtn(); return; }
+    if(initialAmt===0 && monthlyAmt===0){ toast('請設定至少一項投入金額', false); resetBtn(); return; }
+    if(!startYear || !endYear){ toast('請填入完整的開始和結束年份', false); resetBtn(); return; }
+    if(startYear > endYear || (startYear===endYear && startMonth >= endMonth)){
+        toast('結束年月必須晚於開始年月', false); resetBtn(); return;
+    }
 
     try{
-        const res=await fetch('/api/backtest',{
+        const res = await fetch('/api/backtest',{
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-                mode:'accumulate', ticker,
-                start_date:document.getElementById('start-date').value,
-                end_date:document.getElementById('end-date').value,
-                initial_amount:initialAmt,
-                monthly_amount:monthlyAmt
+            body: JSON.stringify({
+                mode:           'accumulate',
+                ticker,
+                price_mode:     priceMode,
+                start_year:     startYear,
+                start_month:    startMonth,
+                end_year:       endYear,
+                end_month:      endMonth,
+                initial_amount: initialAmt,
+                monthly_amount: monthlyAmt,
             })
         });
-        const result=await res.json();
+        const result = await res.json();
 
-        if(result.status==='success'){
-            const d=result.data;
-            const up=d.total_profit>=0;
-
-            document.getElementById('total-invested').textContent='$'+Math.round(d.total_invested).toLocaleString();
-            document.getElementById('final-value').textContent='$'+Math.round(d.final_value).toLocaleString();
-
-            const profitEl=document.getElementById('total-profit');
-            profitEl.textContent=(up?'+':'-')+'$'+Math.abs(Math.round(d.total_profit)).toLocaleString();
-            profitEl.className=`text-lg font-bold tabular-nums ${up?'text-red-500':'text-green-600'}`;
-
-            const retEl=document.getElementById('total-return');
-            retEl.textContent=(d.total_return>=0?'+':'')+d.total_return.toFixed(1)+'%';
-            retEl.className=`text-lg font-bold tabular-nums ${d.total_return>=0?'text-red-500':'text-green-600'}`;
-
-            document.getElementById('result-ticker').textContent=ticker;
-
-            if(d.transactions?.length){
-                renderChart(d.transactions.map(t=>t.date), d.transactions.map(t=>t.market_value), d.transactions.map(t=>t.amount));
-            }
-            toast('回測完成',true);
+        if(result.status === 'success'){
+            renderResult(result.data, ticker);
+            toast('回測完成', true);
         } else {
-            toast(result.message||'回測失敗，請確認代碼與日期',false);
+            toast(result.message || '回測失敗，請確認代碼與日期', false);
         }
-    }catch(err){
-        toast('連線失敗，請稍後再試',false);
+    } catch(err){
+        toast('連線失敗，請稍後再試', false);
     }
     resetBtn();
 }
 
 function resetBtn(){
-    const btn=document.getElementById('btn-submit');
-    btn.innerHTML='<i class="fas fa-play mr-1.5"></i>開始回測';
-    btn.disabled=false;
+    const btn = document.getElementById('btn-submit');
+    btn.innerHTML = '<i class="fas fa-play mr-1.5"></i>開始回測';
+    btn.disabled = false;
 }
 
-function renderChart(labels, values, invested){
-    const ctx=document.getElementById('backtest-chart').getContext('2d');
-    if(chartInstance)chartInstance.destroy();
-    chartInstance=new Chart(ctx,{
+/* ──────────────────────────────────────────
+   渲染結果
+   ────────────────────────────────────────── */
+function renderResult(d, ticker){
+    const up = d.total_profit >= 0;
+
+    // 統計數字
+    document.getElementById('total-invested').textContent = fmt(d.total_invested);
+    document.getElementById('final-value').textContent    = fmt(d.final_value);
+
+    const profitEl = document.getElementById('total-profit');
+    profitEl.textContent = (up?'+':'-') + '$' + Math.abs(Math.round(d.total_profit)).toLocaleString();
+    profitEl.className   = `text-base font-bold tabular-nums ${colorClass(d.total_profit)}`;
+
+    const retEl = document.getElementById('total-return');
+    retEl.textContent = fmtPct(d.total_return);
+    retEl.className   = `text-base font-bold tabular-nums ${colorClass(d.total_return)}`;
+
+    const annEl = document.getElementById('annual-return');
+    annEl.textContent = (d.annual_return !== undefined) ? fmtPct(d.annual_return) : '---';
+    annEl.className   = `text-base font-bold tabular-nums ${colorClass(d.annual_return||0)}`;
+
+    // 回測模式標籤
+    document.getElementById('result-meta').style.display = 'flex';
+    document.getElementById('result-ticker').textContent = ticker;
+    document.getElementById('result-range').textContent  =
+        `${d.start_date?.slice(0,7)} ～ ${d.end_date?.slice(0,7)}`;
+
+    const badge   = document.getElementById('result-mode-badge');
+    const modeMap = { open:'📅 月初買入', low:'🟢 月最低點', high:'🔴 月最高點' };
+    const colorMap = {
+        open:  'bg-indigo-100 text-indigo-700',
+        low:   'bg-green-100  text-green-700',
+        high:  'bg-red-100    text-red-700',
+    };
+    badge.textContent = modeMap[d.price_mode] || d.price_mode_label || '';
+    badge.className   = `text-xs font-medium rounded px-2 py-0.5 ${colorMap[d.price_mode]||'bg-slate-100 text-slate-600'}`;
+
+    // 圖表
+    if(d.transactions?.length){
+        // 累計投入（逐筆累加）
+        const cumInvested = [];
+        let sum = 0;
+        d.transactions.forEach(t => { sum += t.amount; cumInvested.push(sum); });
+        renderChart(
+            d.transactions.map(t => t.date),
+            d.transactions.map(t => t.market_value),
+            cumInvested,
+            d.price_mode
+        );
+    }
+
+    // 交易明細
+    renderTxTable(d.transactions || []);
+}
+
+/* ──────────────────────────────────────────
+   走勢圖
+   ────────────────────────────────────────── */
+function renderChart(labels, values, invested, priceMode){
+    const ctx = document.getElementById('backtest-chart').getContext('2d');
+    if(chartInstance) chartInstance.destroy();
+
+    const lineColor = priceMode==='low'  ? '#10b981'
+                    : priceMode==='high' ? '#ef4444'
+                    : '#6366f1';
+    const fillColor = priceMode==='low'  ? 'rgba(16,185,129,.08)'
+                    : priceMode==='high' ? 'rgba(239,68,68,.08)'
+                    : 'rgba(99,102,241,.08)';
+
+    chartInstance = new Chart(ctx,{
         type:'line',
         data:{
             labels,
@@ -283,37 +495,85 @@ function renderChart(labels, values, invested){
                 {
                     label:'資產市值',
                     data:values,
-                    borderColor:'#6366f1',
-                    backgroundColor:'rgba(99,102,241,.08)',
-                    fill:true,tension:.4,pointRadius:0,pointHoverRadius:5,borderWidth:2,
-                    order:1
+                    borderColor: lineColor,
+                    backgroundColor: fillColor,
+                    fill:true, tension:.4, pointRadius:0, pointHoverRadius:5, borderWidth:2,
+                    order:1,
                 },
                 {
                     label:'累計投入',
-                    data:invested.reduce((acc,v,i)=>{acc.push((acc[i-1]||0)+v);return acc;},[]),
+                    data: invested,
                     borderColor:'#e2e8f0',
                     borderDash:[4,4],
-                    fill:false,tension:0,pointRadius:0,borderWidth:1.5,
-                    order:2
+                    fill:false, tension:0, pointRadius:0, borderWidth:1.5,
+                    order:2,
                 }
             ]
         },
         options:{
-            responsive:true,maintainAspectRatio:false,
-            interaction:{intersect:false,mode:'index'},
+            responsive:true, maintainAspectRatio:false,
+            interaction:{ intersect:false, mode:'index' },
             plugins:{
-                legend:{display:true,position:'top',labels:{boxWidth:12,font:{size:11}}},
-                tooltip:{callbacks:{label:c=>`${c.dataset.label}: $${Math.round(c.raw).toLocaleString()}`}}
+                legend:{ display:true, position:'top', labels:{ boxWidth:12, font:{size:11} } },
+                tooltip:{ callbacks:{ label: c=>`${c.dataset.label}: $${Math.round(c.raw).toLocaleString()}` } }
             },
             scales:{
-                y:{ticks:{callback:v=>'$'+(v>=1e6?(v/1e6).toFixed(1)+'M':(v/1000).toFixed(0)+'K')},grid:{color:'#f1f5f9'}},
-                x:{ticks:{maxTicksLimit:8,font:{size:11}},grid:{display:false}}
+                y:{ ticks:{ callback: v=>'$'+(v>=1e6?(v/1e6).toFixed(1)+'M':(v/1000).toFixed(0)+'K') }, grid:{ color:'#f1f5f9' } },
+                x:{ ticks:{ maxTicksLimit:8, font:{size:11} }, grid:{ display:false } }
             }
         }
     });
 }
 
-document.addEventListener('DOMContentLoaded',()=>{checkLogin();renderChart([],[],[]);});
+/* ──────────────────────────────────────────
+   交易明細表格
+   ────────────────────────────────────────── */
+function renderTxTable(txs){
+    const wrap = document.getElementById('tx-table-wrap');
+    if(!txs.length){ wrap.innerHTML='<p class="text-xs text-slate-400 py-6 text-center">無交易資料</p>'; return; }
+
+    document.getElementById('tx-count').textContent = `共 ${txs.length} 筆`;
+
+    const typeColor = t =>
+        t.includes('最低點') ? 'text-green-600' :
+        t.includes('最高點') ? 'text-red-500'   :
+        t.includes('枯竭')   ? 'text-red-600 font-bold' : 'text-slate-600';
+
+    const rows = txs.map(t=>`
+        <tr class="hover:bg-slate-50 text-xs">
+            <td class="py-1.5 px-3 text-slate-500 whitespace-nowrap">${t.date}</td>
+            <td class="py-1.5 px-3 ${typeColor(t.type)}">${t.type}</td>
+            <td class="py-1.5 px-3 text-right text-slate-700 tabular-nums">$${t.price.toLocaleString()}</td>
+            <td class="py-1.5 px-3 text-right text-slate-700 tabular-nums">$${Math.round(t.amount).toLocaleString()}</td>
+            <td class="py-1.5 px-3 text-right tabular-nums font-medium ${t.market_value>0?'text-indigo-600':'text-slate-400'}">
+                $${Math.round(t.market_value).toLocaleString()}
+            </td>
+        </tr>`).join('');
+
+    wrap.innerHTML = `
+        <table class="w-full min-w-[480px]">
+            <thead>
+                <tr class="border-b border-slate-100 text-xs text-slate-400">
+                    <th class="text-left py-1.5 px-3 font-medium">日期</th>
+                    <th class="text-left py-1.5 px-3 font-medium">類型</th>
+                    <th class="text-right py-1.5 px-3 font-medium">買入價</th>
+                    <th class="text-right py-1.5 px-3 font-medium">本次金額</th>
+                    <th class="text-right py-1.5 px-3 font-medium">當時市值</th>
+                </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>`;
+}
+
+/* ──────────────────────────────────────────
+   初始化
+   ────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded',()=>{
+    checkLogin();
+    initYearMonthSelects();
+    syncQuickBtns('0050');
+    renderChart([],[],[]);
+});
 </script>
 </body>
 </html>
