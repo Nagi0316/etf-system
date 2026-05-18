@@ -1513,6 +1513,7 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         pass
 
     # 🚀【回傳字典欄位防禦】確保傳出乾淨的數字，若歷史月線歷史不足則給予 0.0 保底，絕不回傳 None
+    # 🚀【美股回傳防禦】確保數值型態完全正確，防止寫入資料庫時因型態衝突變 0.00%
     return {
         'ticker': ticker, 
         'current_price': price,
@@ -1523,11 +1524,11 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         'fifty_two_week_high': wk52_high, 
         'fifty_two_week_low': wk52_low,
         'volume': quote["volume"], 
-        'asset_size': asset_size, 
+        'asset_size': float(asset_size or 0.0), 
         'nav': nav,
-        'pe_ratio': pe_ratio, 
-        'expense_ratio': expense_ratio,
-        'dividend_yield': div_yield, 
+        'pe_ratio': float(pe_ratio or 0.0), 
+        'expense_ratio': float(expense_ratio or 0.0),
+        'dividend_yield': float(div_yield or 0.0), 
         'payout_freq': payout_freq,
         'annual_return_1y': float(annual_return_1y) if (annual_return_1y and annual_return_1y == annual_return_1y) else 0.0,
         'annual_return_3y': float(annual_return_3y) if (annual_return_3y and annual_return_3y == annual_return_3y) else 0.0,
@@ -2060,24 +2061,25 @@ async def update_one_etf(ticker: str):
                 """
 
             # ── 🎯 嚴格肉眼精準對齊：17 個欄位、17 個佔位符、17 個 Tuple 變數，絕無差錯！ ──
+            # ── 🎯 17個變數各就各位，完美刷新本益比、資產規模與殖利率 ──
             params = (
                 current_price,                                         # 1
-                price_change,                                          # 2
-                price_change_percent,                                  # 3
-                nav,                                                   # 4
-                volume,                                                # 5
+                float(info.get('price_change') or 0.0),                # 2
+                float(info.get('price_change_percent') or 0.0),        # 3
+                float(info.get('nav') or current_price),               # 4
+                int(info.get('volume') or 0),                          # 5
                 float(info.get('discount_premium') or 0.0),            # 6
                 float(info.get('dividend_yield') or 0.0),              # 7
                 float(info.get('annual_return_1y') or 0.0),            # 8
                 float(info.get('annual_return_3y') or 0.0),            # 9
                 float(info.get('annual_return_5y') or 0.0),            # 10
                 float(info.get('expense_ratio') or 0.0),               # 11
-                float(info.get('pe_ratio') or 0.0),                    # 12
+                float(info.get('pe_ratio') or 0.0),                    # 12 👈 本益比刷新！
                 float(info.get('fifty_two_week_high') or current_price),# 13
                 float(info.get('fifty_two_week_low') or current_price), # 14
                 str(info.get('payout_freq') or '-'),                   # 15
-                float(info.get('asset_size') or 0.0),                  # 16
-                ticker                                                 # 17 (WHERE 條件)
+                float(info.get('asset_size') or 0.0),                  # 16 👈 資產規模刷新！
+                ticker                                                 # 17 (WHERE)
             )
 
             cursor.execute(sql, params)
