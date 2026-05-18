@@ -371,7 +371,9 @@ def init_db():
         conn.commit()
 
     # ── 自動補欄位（舊資料庫平滑升級）──
+    # ── 尋找原本的 NEW_COLS，並在裡面多加第一行（折溢價欄位） ──
     NEW_COLS = [
+        ("etf_daily_data", "discount_premium",    "DECIMAL(10,2) DEFAULT 0"), # ✨ 新增這行
         ("etf_daily_data", "annual_return_3y",    "DECIMAL(7,4) DEFAULT 0"),
         ("etf_daily_data", "annual_return_5y",    "DECIMAL(7,4) DEFAULT 0"),
         ("etf_daily_data", "fifty_two_week_high", "DECIMAL(10,2) DEFAULT 0"),
@@ -1852,6 +1854,7 @@ async def get_etf_detail(ticker: str):
     ticker = ticker.upper()
     try:
         with get_db() as (conn, cursor):
+            # ✨ 修正：在 SELECT 中多撈出 COALESCE(d.discount_premium, 0) as discount_premium
             cursor.execute("""
                 SELECT m.ticker, m.name, m.market,
                     COALESCE(m.issuer,'') as issuer,
@@ -1859,6 +1862,7 @@ async def get_etf_detail(ticker: str):
                     COALESCE(d.current_price,0) as current_price,
                     COALESCE(d.price_change,0) as price_change,
                     COALESCE(d.price_change_percent,0) as price_change_percent,
+                    COALESCE(d.discount_premium,0) as discount_premium, 
                     COALESCE(d.volume,0) as volume,
                     COALESCE(d.asset_size,0) as asset_size,
                     COALESCE(d.nav,0) as nav,
@@ -1880,7 +1884,7 @@ async def get_etf_detail(ticker: str):
             row = cursor.fetchone()
 
         if not row:
-            return safe_json({"status":"error","message":"ETF 資料尚未抓取，請稍後再試（系統啟動後約 1 分鐘會自動更新）"}, 404)
+            return safe_json({"status":"error","message":"ETF 資料尚未抓取，請稍後再試"}, 404)
 
         _enrich([row])
         return safe_json({"status":"success","data":row})
@@ -2095,7 +2099,7 @@ async def update_one_etf(ticker: str):
 
         today = datetime.now().date()
         
-        # ─── 核心新增：動態計算折溢價 ───
+        # ─── 計算折溢價 ───
         c_price = float(data.get('current_price') or 0)
         n_price = float(data.get('nav') or c_price)
         discount_premium = 0.0
@@ -2103,6 +2107,7 @@ async def update_one_etf(ticker: str):
             discount_premium = round(((c_price - n_price) / n_price) * 100, 2)
 
         with get_db() as (conn, cursor):
+            # ✨ 修正：將 discount_premium 真正放入對齊的 SQL 結構中
             cursor.execute("""
                 INSERT OR REPLACE INTO etf_daily_data
                 (ticker, date,
@@ -2348,7 +2353,12 @@ async def remove_watchlist(ticker: str, request: Request):
 async def get_portfolio(request: Request):
     uid = request.headers.get('X-User-Id')
     if not uid:
-        return safe_json({"status":"success","data":[],"summary":{"total_cost":0,"total_value":0,"total_profit":0,"total_return":0}})
+        return safe_json({"status":"success","data":rows, "summary":{
+            "total_cost": round(total_cost,2),
+            "total_value": round(total_value,2),
+            "total_profit": total_profit,
+            "total_return": total_return,
+        }})
     try:
         with get_db() as (conn, cursor):
             cursor.execute("""
