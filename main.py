@@ -1896,7 +1896,7 @@ async def get_etf_detail(ticker: str):
             else:
                 res_data.update({
                     "current_price": 0, "price_change": 0, "price_change_percent": 0,
-                    "nav": 0, "volume": 0, "discount_premium": 0, "dividend_yield": 0,
+                    "nav": 0, "volume": 0, "discount_premium": 0.0, "dividend_yield": 0,
                     "annual_return_1y": 0, "payout_freq": "-", "asset_size": 1800e8 if ticker == '00878' else 0
                 })
     
