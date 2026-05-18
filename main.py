@@ -371,9 +371,7 @@ def init_db():
         conn.commit()
 
     # ── 自動補欄位（舊資料庫平滑升級）──
-    # ── 尋找原本的 NEW_COLS，並在裡面多加第一行（折溢價欄位） ──
     NEW_COLS = [
-        ("etf_daily_data", "discount_premium",    "DECIMAL(10,2) DEFAULT 0"), # ✨ 新增這行
         ("etf_daily_data", "annual_return_3y",    "DECIMAL(7,4) DEFAULT 0"),
         ("etf_daily_data", "annual_return_5y",    "DECIMAL(7,4) DEFAULT 0"),
         ("etf_daily_data", "fifty_two_week_high", "DECIMAL(10,2) DEFAULT 0"),
@@ -1854,7 +1852,6 @@ async def get_etf_detail(ticker: str):
     ticker = ticker.upper()
     try:
         with get_db() as (conn, cursor):
-            # ✨ 修正：在 SELECT 中多撈出 COALESCE(d.discount_premium, 0) as discount_premium
             cursor.execute("""
                 SELECT m.ticker, m.name, m.market,
                     COALESCE(m.issuer,'') as issuer,
@@ -1862,7 +1859,6 @@ async def get_etf_detail(ticker: str):
                     COALESCE(d.current_price,0) as current_price,
                     COALESCE(d.price_change,0) as price_change,
                     COALESCE(d.price_change_percent,0) as price_change_percent,
-                    COALESCE(d.discount_premium,0) as discount_premium, 
                     COALESCE(d.volume,0) as volume,
                     COALESCE(d.asset_size,0) as asset_size,
                     COALESCE(d.nav,0) as nav,
@@ -1884,7 +1880,7 @@ async def get_etf_detail(ticker: str):
             row = cursor.fetchone()
 
         if not row:
-            return safe_json({"status":"error","message":"ETF 資料尚未抓取，請稍後再試"}, 404)
+            return safe_json({"status":"error","message":"ETF 資料尚未抓取，請稍後再試（系統啟動後約 1 分鐘會自動更新）"}, 404)
 
         _enrich([row])
         return safe_json({"status":"success","data":row})
@@ -2037,7 +2033,7 @@ async def get_dividends(ticker: str):
             if r: market = r['market']
 
         if market == 'TW':
-            # ── 【修復 1】將原先格式錯誤的 {LATEST_DAILY_JOIN} 或字串替換，改用標準乾淨的歷史最新價查詢 ──
+            # ── 【同步修正】取得當前價格，並改呼叫新版強固型官方除權息解析通道 ──
             with get_db() as (conn, cursor):
                 cursor.execute("""
                     SELECT COALESCE(current_price, 0) as current_price 
@@ -2093,35 +2089,27 @@ async def update_one_etf(ticker: str):
             r = cursor.fetchone()
         market = r['market'] if r else ('TW' if ticker[:4].isdigit() else 'US')
 
+        # fetch_one_etf 內部已用 _new_session()，不需額外處理
         data = await asyncio.to_thread(fetch_one_etf, ticker, market)
         if not data:
             return safe_json({"status":"error","message":"無法取得數據，請稍後再試"}, 503)
 
         today = datetime.now().date()
-        
-        # ─── 計算折溢價 ───
-        c_price = float(data.get('current_price') or 0)
-        n_price = float(data.get('nav') or c_price)
-        discount_premium = 0.0
-        if c_price > 0 and n_price > 0:
-            discount_premium = round(((c_price - n_price) / n_price) * 100, 2)
-
         with get_db() as (conn, cursor):
-            # ✨ 修正：將 discount_premium 真正放入對齊的 SQL 結構中
             cursor.execute("""
                 INSERT OR REPLACE INTO etf_daily_data
                 (ticker, date,
-                 current_price, price_change, price_change_percent, discount_premium,
+                 current_price, price_change, price_change_percent,
                  volume, asset_size, nav,
                  dividend_yield, payout_freq,
                  annual_return_1y, annual_return_3y, annual_return_5y,
                  pe_ratio, expense_ratio,
                  day_high, day_low,
                  fifty_two_week_high, fifty_two_week_low)
-                VALUES (%s,%s, %s,%s,%s,%s, %s,%s,%s, %s,%s, %s,%s,%s, %s,%s, %s,%s, %s,%s)
+                VALUES (%s,%s, %s,%s,%s, %s,%s,%s, %s,%s, %s,%s,%s, %s,%s, %s,%s, %s,%s)
             """, (
                 data['ticker'], today,
-                data['current_price'],    data['price_change'],    data['price_change_percent'], discount_premium,
+                data['current_price'],    data['price_change'],    data['price_change_percent'],
                 data['volume'],           data['asset_size'],      data['nav'],
                 data['dividend_yield'],   data['payout_freq'],
                 data['annual_return_1y'], data['annual_return_3y'],data['annual_return_5y'],
@@ -2315,6 +2303,7 @@ async def add_watchlist(request: Request):
         market = body.get('market', 'TW' if ticker[:4].isdigit() else 'US')
 
         with get_db() as (conn, cursor):
+            # 若 ETF 主檔不存在，先建立
             cursor.execute("SELECT ticker FROM etf_master WHERE ticker=%s", (ticker,))
             if not cursor.fetchone():
                 cursor.execute("INSERT OR REPLACE INTO etf_master (ticker,name,market) VALUES (%s,%s,%s)",
@@ -2353,12 +2342,7 @@ async def remove_watchlist(ticker: str, request: Request):
 async def get_portfolio(request: Request):
     uid = request.headers.get('X-User-Id')
     if not uid:
-        return safe_json({"status":"success","data":rows, "summary":{
-            "total_cost": round(total_cost,2),
-            "total_value": round(total_value,2),
-            "total_profit": total_profit,
-            "total_return": total_return,
-        }})
+        return safe_json({"status":"success","data":[],"summary":{"total_cost":0,"total_value":0,"total_profit":0,"total_return":0}})
     try:
         with get_db() as (conn, cursor):
             cursor.execute("""
@@ -2377,7 +2361,7 @@ async def get_portfolio(request: Request):
                 ) d ON p.ticker=d.ticker
                 WHERE p.user_id=%s AND p.shares>0
                 ORDER BY p.ticker
-            """, (uid,))
+            """.format(join=LATEST_DAILY_JOIN), (uid,))
             rows = cursor.fetchall()
 
         total_cost = 0; total_value = 0
@@ -2396,12 +2380,12 @@ async def get_portfolio(request: Request):
 
         total_profit = round(total_value - total_cost, 2)
         total_return = round(total_profit / total_cost * 100 if total_cost > 0 else 0, 2)
-        return safe_json({"status":"success","data":rows{"summary":{
+        return safe_json({"status":"success","data":rows,"summary":{
             "total_cost": round(total_cost,2),
             "total_value": round(total_value,2),
             "total_profit": total_profit,
             "total_return": total_return,
-        }}})
+        }})
     except Exception as ex:
         logger.error(f"portfolio 錯誤: {ex}")
         return safe_json({"status":"error","message":str(ex)}, 500)
@@ -2427,6 +2411,7 @@ async def add_transaction(request: Request):
             return safe_json({"status":"error","message":"股數和價格必須大於0"}, 400)
 
         with get_db() as (conn, cursor):
+            # 確保 ETF 主檔存在
             cursor.execute("SELECT ticker FROM etf_master WHERE ticker=%s", (ticker,))
             if not cursor.fetchone():
                 cursor.execute("INSERT OR REPLACE INTO etf_master (ticker,name,market) VALUES (%s,%s,%s)",
@@ -2438,12 +2423,14 @@ async def add_transaction(request: Request):
                 if not row or float(row['shares']) < shares:
                     return safe_json({"status":"error","message":"持股不足"}, 400)
 
+            # 記錄交易
             cursor.execute("""
                 INSERT INTO user_transactions
                 (user_id,ticker,transaction_type,shares,price,commission,transaction_date)
                 VALUES (%s,%s,%s,%s,%s,%s,%s)
             """, (uid, ticker, ttype, shares, price, commission, tx_date))
 
+            # 重新計算 portfolio
             cursor.execute("""
                 SELECT
                     SUM(CASE WHEN transaction_type='buy' THEN shares ELSE -shares END) as total_shares,
@@ -2557,6 +2544,7 @@ async def run_backtest(request: Request):
         start_date = body.get('start_date', '2020-01-01')
         end_date   = body.get('end_date',   '2024-12-31')
         
+        # 交易成本設定（對齊台灣主流券商定期定額優惠）
         COMMISSION_RATE = 0.001425 * 0.28  # 28折優惠
         MIN_COMMISSION  = 1.0              # 定期定額低消 1 元
 
@@ -2568,14 +2556,18 @@ async def run_backtest(request: Request):
 
         yt = _yahoo_ticker(ticker, market)
 
+        # 🚀【核心優化 1】全面改走 yfinance 深度歷史下載，完美還原歷史除權息 (Adj Close)
         def _get_precise_hist():
             try:
+                # 使用 yf.download 下載日線數據，這是確保高股息 ETF 回測正確的唯一途徑
                 df = yf.download(yt, start=start_date, end=end_date, progress=False, auto_adjust=True)
                 if df.empty: return pd.DataFrame()
                 
+                # 展平多重索引 (MultiIndex) 確保相容性
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
                     
+                # 重新整理欄位，只留下回測核心
                 res_df = pd.DataFrame({
                     'Close': df['Close'].astype(float),
                     'High':  df['High'].astype(float) if 'High' in df else df['Close'].astype(float),
@@ -2602,27 +2594,32 @@ async def run_backtest(request: Request):
         start_dt = pd.to_datetime(start_date)
         end_dt   = pd.to_datetime(end_date)
         
+        # 🚀【核心優化 2】動態價格決策器（精確對齊最高、最低、收盤價）
         def _calculate_shares(avail_data, budget):
             if avail_data.empty: return 0.0, 0.0, 0.0
             
+            # 依據買入時機選擇價格點
             if price_mode == 'low':
-                p = float(avail_data['Low'].min())      
+                p = float(avail_data['Low'].min())      # 當月最低價
             elif price_mode == 'high':
-                p = float(avail_data['High'].max())     
+                p = float(avail_data['High'].max())     # 當月最高價
             else:
-                p = float(avail_data['Close'].iloc[0])   
+                p = float(avail_data['Close'].iloc[0])   # 每月第一個有效交易日收盤價（月初）
                 
             if p <= 0: return 0.0, 0.0, 0.0
             
+            # 🚀【核心優化 3】加入真實摩擦成本（手續費低消計算）
             fee = max(MIN_COMMISSION, budget * COMMISSION_RATE)
             net_budget = budget - fee
             bought_shares = net_budget / p
             return bought_shares, p, fee
 
+        # ── 策略執行：定期定額 (Accumulate) ──
         if mode == 'accumulate':
             ini_amt = float(body.get('initial_amount', 0))
             mon_amt = float(body.get('monthly_amount', 10000))
             
+            # 期初單筆投入
             if ini_amt > 0:
                 shares_bought, p_buy, tx_fee = _calculate_shares(hist, ini_amt)
                 if shares_bought > 0:
@@ -2634,10 +2631,12 @@ async def run_backtest(request: Request):
                         'total_shares': round(total_shares, 4), 'market_value': round(total_shares * p_buy, 2)
                     })
 
+            # 每月定期定額（精確按自然月動態推進）
             current_ym = start_dt.to_period('M')
             end_ym = end_dt.to_period('M')
             
             while current_ym <= end_ym:
+                # 篩選出該自然月份的所有有效交易日
                 month_mask = (hist.index.to_period('M') == current_ym)
                 month_data = hist[month_mask]
                 
@@ -2653,6 +2652,7 @@ async def run_backtest(request: Request):
                         })
                 current_ym += 1
 
+        # ── 策略執行：定期定額提領 (Withdraw) ──
         elif mode == 'withdraw':
             init_val = float(body.get('withdraw_initial', 10000000))
             mon_wd   = float(body.get('withdraw_monthly',    40000))
@@ -2675,7 +2675,7 @@ async def run_backtest(request: Request):
                 month_data = hist[month_mask]
                 
                 if not month_data.empty and mon_wd > 0:
-                    p_out = float(month_data['Close'].iloc[0]) 
+                    p_out = float(month_data['Close'].iloc[0]) # 提領一律以月初現價變現
                     need_shares = mon_wd / p_out
                     
                     if total_shares >= need_shares:
@@ -2686,6 +2686,7 @@ async def run_backtest(request: Request):
                             'total_shares': round(total_shares, 4), 'market_value': round(total_shares * p_out, 2)
                         })
                     else:
+                        # 資產歸零枯竭
                         transactions.append({
                             'date': month_data.index[0].strftime('%Y-%m-%d'), 'type': '💀 資產枯竭',
                             'amount': round(total_shares * p_out, 2), 'price': round(p_out, 2),
@@ -2698,11 +2699,13 @@ async def run_backtest(request: Request):
         final_price = float(hist['Close'].iloc[-1])
         final_value = total_shares * final_price
         
+        # 🚀【核心優化 4】精準年化報酬率 CAGR 計算（非近似值，採用精確時間跨度）
         days_span = (hist.index[-1] - hist.index[0]).days
         years_span = max(0.1, days_span / 365.25)
         
         if mode == 'accumulate':
             total_profit = final_value - total_invested
+            # 定期定額實質年化報酬率
             total_return = (total_profit / total_invested * 100) if total_invested > 0 else 0.0
             annual_return = round((((final_value / total_invested) ** (1 / years_span)) - 1) * 100, 2) if total_invested > 0 and final_value > 0 else 0.0
         else:
@@ -2711,11 +2714,12 @@ async def run_backtest(request: Request):
             total_return = (total_profit / total_invested * 100) if total_invested > 0 else 0.0
             annual_return = round(((((final_value + withdrawn) / total_invested) ** (1 / years_span)) - 1) * 100, 2) if total_invested > 0 else 0.0
 
+        # ---- 尋找原本計算 annual_return 的地方，並在下方加入這三行 ----
+        # 這裡我們直接帶入回測標的的年化複利表現，或是根據系統需求填入
         return_1y = annual_return  
         return_3y = annual_return if years_span >= 3 else 0.0
         return_5y = annual_return if years_span >= 5 else 0.0
 
-        # 【核心修正】將原本拋出 NameError 的變數 daily_values 移除，改為回傳乾淨的回測結果
         return safe_json({"status":"success","data":{
             "mode": mode, "is_bankrupt": is_bankrupt, "price_mode": price_mode,
             "total_invested": round(total_invested, 2),
@@ -2723,12 +2727,17 @@ async def run_backtest(request: Request):
             "total_profit": round(total_profit, 2),
             "total_return": round(total_return, 2),
             "annual_return": annual_return,
+            
+            # ------ 關鍵：把這三個欄位新增到回傳的 data 裡面 ------
             "return_1y": return_1y,
             "return_3y": return_3y,
             "return_5y": return_5y,
+            # --------------------------------------------------
+            
             "final_price": round(final_price, 2),
             "total_shares": round(total_shares, 4),
-            "transactions": transactions
+            "transactions": transactions,
+            "daily_values": daily_values
         }})
     except Exception as ex:
         logger.error(f"終極回測引擎執行異常: {ex}")
