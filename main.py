@@ -1303,7 +1303,17 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
     結合證交所官方直連報價與除權息公告，輔以 Yahoo 歷史月線
     """
     import time as _time_lib  # 【動態保底】防止多執行緒下 time 模組遺失
-    
+    #確保 price 與變動率有確實拿到數值
+    price = 0.0
+    price_change = 0.0
+    price_change_percent = 0.0
+    volume = 0
+
+    if 'msgArray' in json_data and len(json_data['msgArray']) > 0:
+        info = json_data['msgArray'][0]
+        price = _safe_float(info.get('z') or info.get('y') or 0)
+
+    simulated_nav = round(price * random.uniform(0.9985, 1.0015), 2) if price > 0 else 0.0
     # ── 步驟 1：全新的證交所官方高精度即時報價 (自動切換上市、上櫃並換算成交量單位)
     quote = _fetch_tw_realtime_perfect(ticker)
     if not quote:
@@ -1429,7 +1439,7 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
         'fifty_two_week_low':   wk52_low,
         'volume':               quote["volume"],
         'asset_size':           asset_size,
-        'nav':                  round(price * random.uniform(0.9985, 1.0015), 2), # 模擬上下 0.15% 的真實折溢價變動
+        'nav':                  simulated_nav,
         'pe_ratio':             pe_ratio,
         'expense_ratio':        expense_ratio,
         'dividend_yield':       div_yield,
