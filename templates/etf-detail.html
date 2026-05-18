@@ -423,12 +423,20 @@ function renderData() {
     document.getElementById('wk52-low').textContent  = l52 > 0 ? l52.toFixed(2) : '-';
 
     // 報酬率
-    const retFmt = v => v !== 0
-        ? `<span class="${v>=0?'text-red-500':'text-green-600'}">${v>=0?'+':''}${v.toFixed(2)}%</span>`
-        : '<span class="text-slate-400">-</span>';
-    document.getElementById('return-1y').innerHTML = retFmt(parseFloat(d.annual_return_1y)||0);
-    document.getElementById('return-3y').innerHTML = retFmt(parseFloat(d.annual_return_3y)||0);
-    document.getElementById('return-5y').innerHTML = retFmt(parseFloat(d.annual_return_5y)||0);
+    // ── 修正後的程式碼 ──
+    const retFmt = v => {
+        // 只有在數值完全是 null、undefined 或無法解析時才顯示橫槓
+        if (v === null || v === undefined || isNaN(v)) {
+            return '<span class="text-slate-400">-</span>';
+        }
+        // 正常數值（包含 0%）一律亮出顏色與百分比
+        return `<span class="${v >= 0 ? 'text-red-500' : 'text-green-600'} font-semibold">${v >= 0 ? '+' : ''}${v.toFixed(2)}%</span>`;
+    };
+
+    // 修正接值邏輯，保留原始數值傳入
+    document.getElementById('return-1y').innerHTML = retFmt(d.annual_return_1y !== undefined ? parseFloat(d.annual_return_1y) : null);
+    document.getElementById('return-3y').innerHTML = retFmt(d.annual_return_3y !== undefined ? parseFloat(d.annual_return_3y) : null);
+    document.getElementById('return-5y').innerHTML = retFmt(d.annual_return_5y !== undefined ? parseFloat(d.annual_return_5y) : null);
 
     // 配息頻率 & 殖利率
     document.getElementById('payout-freq').textContent = freq || '-';

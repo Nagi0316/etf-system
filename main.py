@@ -2089,27 +2089,35 @@ async def update_one_etf(ticker: str):
             r = cursor.fetchone()
         market = r['market'] if r else ('TW' if ticker[:4].isdigit() else 'US')
 
-        # fetch_one_etf 內部已用 _new_session()，不需額外處理
         data = await asyncio.to_thread(fetch_one_etf, ticker, market)
         if not data:
             return safe_json({"status":"error","message":"無法取得數據，請稍後再試"}, 503)
 
         today = datetime.now().date()
+        
+        # ─── 🚀 核心新增：動態計算折溢價 ───
+        c_price = float(data.get('current_price') or 0)
+        n_price = float(data.get('nav') or c_price)
+        discount_premium = 0.0
+        if c_price > 0 and n_price > 0:
+            discount_premium = round(((c_price - n_price) / n_price) * 100, 2)
+
         with get_db() as (conn, cursor):
+            # ─── 🚀 修改：將 discount_premium 塞入 SQL 欄位與數值中 ───
             cursor.execute("""
                 INSERT OR REPLACE INTO etf_daily_data
                 (ticker, date,
-                 current_price, price_change, price_change_percent,
+                 current_price, price_change, price_change_percent, discount_premium, -- 新增欄位
                  volume, asset_size, nav,
                  dividend_yield, payout_freq,
                  annual_return_1y, annual_return_3y, annual_return_5y,
                  pe_ratio, expense_ratio,
                  day_high, day_low,
                  fifty_two_week_high, fifty_two_week_low)
-                VALUES (%s,%s, %s,%s,%s, %s,%s,%s, %s,%s, %s,%s,%s, %s,%s, %s,%s, %s,%s)
+                VALUES (%s,%s, %s,%s,%s,%s, %s,%s,%s, %s,%s, %s,%s,%s, %s,%s, %s,%s, %s,%s) -- 多補一個 %s
             """, (
                 data['ticker'], today,
-                data['current_price'],    data['price_change'],    data['price_change_percent'],
+                data['current_price'],    data['price_change'],    data['price_change_percent'], discount_premium, -- 新增變數
                 data['volume'],           data['asset_size'],      data['nav'],
                 data['dividend_yield'],   data['payout_freq'],
                 data['annual_return_1y'], data['annual_return_3y'],data['annual_return_5y'],
