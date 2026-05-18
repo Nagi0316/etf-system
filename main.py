@@ -1513,7 +1513,6 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         pass
 
     # 🚀【回傳字典欄位防禦】確保傳出乾淨的數字，若歷史月線歷史不足則給予 0.0 保底，絕不回傳 None
-    # 🚀【美股回傳防禦】確保數值型態完全正確，防止寫入資料庫時因型態衝突變 0.00%
     return {
         'ticker': ticker, 
         'current_price': price,
@@ -1524,11 +1523,11 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         'fifty_two_week_high': wk52_high, 
         'fifty_two_week_low': wk52_low,
         'volume': quote["volume"], 
-        'asset_size': float(asset_size or 0.0), 
+        'asset_size': asset_size, 
         'nav': nav,
-        'pe_ratio': float(pe_ratio or 0.0), 
-        'expense_ratio': float(expense_ratio or 0.0),
-        'dividend_yield': float(div_yield or 0.0), 
+        'pe_ratio': pe_ratio, 
+        'expense_ratio': expense_ratio,
+        'dividend_yield': div_yield, 
         'payout_freq': payout_freq,
         'annual_return_1y': float(annual_return_1y) if (annual_return_1y and annual_return_1y == annual_return_1y) else 0.0,
         'annual_return_3y': float(annual_return_3y) if (annual_return_3y and annual_return_3y == annual_return_3y) else 0.0,
@@ -2016,78 +2015,97 @@ async def get_price_history(ticker: str, period: str = "1y"):
 
 @app.post("/api/etf/update/{ticker}")
 async def update_one_etf(ticker: str):
+    """立即更新單一 ETF（供 detail 頁面呼叫）— ✨ 20 欄位嚴格對齊無 update_time 版"""
     ticker = ticker.upper()
     try:
-        # 1. 獲取該 ETF 的市場別 (TW 或 US)
         with get_db() as (conn, cursor):
             cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
             r = cursor.fetchone()
         market = r['market'] if r else ('TW' if ticker[:4].isdigit() else 'US')
 
-        # ── 💡 完美修復：捨棄不存在的外部模組導入，直接呼叫 main.py 內建強固的 fetch_one_etf ──
-        info = await asyncio.to_thread(fetch_one_etf, ticker, market)
+        data = await asyncio.to_thread(fetch_one_etf, ticker, market)
+        if not data:
+            return safe_json({"status":"error","message":"無法取得數據，請稍後再試"}, 503)
 
-        if not info:
-            return safe_json({"status": "error", "message": "無法取得更新數據"}, 400)
+        c_price = float(data.get('current_price') or 0)
+        n_price = float(data.get('nav') or c_price)
+        price_change = float(data.get('price_change') or 0)
+        pct_change = float(data.get('price_change_percent') or 0)
+        vol = int(data.get('volume') or 0)
+        asset_size = float(data.get('asset_size') or 0)
+        payout_freq = data.get('payout_freq') or '季配'
+        
+        # 💡 防禦機制：yfinance 常常沒有美股年化報酬率，這裡強制做 float 轉換保底
+        try: dividend_yield = float(data.get('dividend_yield') or 0.0)
+        except: dividend_yield = 0.0
+        try: annual_return_1y = float(data.get('annual_return_1y') or 0.0)
+        except: annual_return_1y = 0.0
+        try: annual_return_3y = float(data.get('annual_return_3y') or 0.0)
+        except: annual_return_3y = 0.0
+        try: annual_return_5y = float(data.get('annual_return_5y') or 0.0)
+        except: annual_return_5y = 0.0
+        try: pe_ratio = float(data.get('pe_ratio') or 0.0)
+        except: pe_ratio = 0.0
+        try: expense_ratio = float(data.get('expense_ratio') or 0.0)
+        except: expense_ratio = 0.0
 
-        # 2. 確保必要的數值存在與安全轉換
-        current_price = float(info.get('current_price', 0))
-        price_change = float(info.get('price_change', 0))
-        price_change_percent = float(info.get('price_change_percent', 0))
-        nav = float(info.get('nav', current_price))
-        volume = int(info.get('volume', 0))
+        day_high = float(data.get('day_high') or c_price)
+        day_low = float(data.get('day_low') or c_price)
+        fifty_two_week_high = float(data.get('fifty_two_week_high') or c_price)
+        fifty_two_week_low = float(data.get('fifty_two_week_low') or c_price)
 
-        # 3. 儲存至資料庫
+        today_str = datetime.now().strftime('%Y-%m-%d')
+
+        discount_premium = 0.0
+        if c_price > 0 and n_price > 0:
+            discount_premium = round(((c_price - n_price) / n_price) * 100, 2)
+
+        # ─── 儲存至資料庫（嚴格數過：完美移除 update_time，對齊 20 個欄位與參數） ───
         with get_db() as (conn, cursor):
             if USE_MYSQL:
-                # 共 16 個欄位更新 + 1 個 WHERE = 17 個 %s 佔位符
-                sql = """
-                    UPDATE etf_daily_data 
-                    SET current_price=%s, price_change=%s, price_change_percent=%s, nav=%s, volume=%s,
-                        discount_premium=%s, dividend_yield=%s, annual_return_1y=%s, annual_return_3y=%s, annual_return_5y=%s,
-                        expense_ratio=%s, pe_ratio=%s, fifty_two_week_high=%s, fifty_two_week_low=%s, payout_freq=%s,
-                        asset_size=%s
-                    WHERE ticker = %s
+                sql_save = """
+                    INSERT INTO etf_daily_data (
+                        ticker, date, current_price, price_change, price_change_percent, nav, volume,
+                        discount_premium, dividend_yield, annual_return_1y, annual_return_3y, annual_return_5y,
+                        expense_ratio, pe_ratio, day_high, day_low, fifty_two_week_high, fifty_two_week_low,
+                        payout_freq, asset_size
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        current_price=VALUES(current_price), price_change=VALUES(price_change),
+                        price_change_percent=VALUES(price_change_percent), nav=VALUES(nav), volume=VALUES(volume),
+                        discount_premium=VALUES(discount_premium), dividend_yield=VALUES(dividend_yield),
+                        annual_return_1y=VALUES(annual_return_1y), annual_return_3y=VALUES(annual_return_3y),
+                        annual_return_5y=VALUES(annual_return_5y), expense_ratio=VALUES(expense_ratio),
+                        pe_ratio=VALUES(pe_ratio), day_high=VALUES(day_high), day_low=VALUES(day_low),
+                        fifty_two_week_high=VALUES(fifty_two_week_high), fifty_two_week_low=VALUES(fifty_two_week_low),
+                        payout_freq=VALUES(payout_freq), asset_size=VALUES(asset_size);
                 """
+                cursor.execute(sql_save, (
+                    ticker, today_str, c_price, price_change, pct_change, n_price, vol,
+                    discount_premium, dividend_yield, annual_return_1y, annual_return_3y, annual_return_5y,
+                    expense_ratio, pe_ratio, day_high, day_low, fifty_two_week_high, fifty_two_week_low,
+                    payout_freq, asset_size
+                ))
             else:
-                # SQLite 開發環境相容，同樣 17 個 ? 佔位符
-                sql = """
-                    UPDATE etf_daily_data 
-                    SET current_price=?, price_change=?, price_change_percent=?, nav=?, volume=?,
-                        discount_premium=?, dividend_yield=?, annual_return_1y=?, annual_return_3y=?, annual_return_5y=?,
-                        expense_ratio=?, pe_ratio=?, fifty_two_week_high=?, fifty_two_week_low=?, payout_freq=?,
-                        asset_size=?
-                    WHERE ticker = ?
+                sql_save = """
+                    REPLACE INTO etf_daily_data (
+                        ticker, date, current_price, price_change, price_change_percent, nav, volume,
+                        discount_premium, dividend_yield, annual_return_1y, annual_return_3y, annual_return_5y,
+                        expense_ratio, pe_ratio, day_high, day_low, fifty_two_week_high, fifty_two_week_low,
+                        payout_freq, asset_size
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
-
-            # ── 🎯 嚴格肉眼精準對齊：17 個欄位、17 個佔位符、17 個 Tuple 變數，絕無差錯！ ──
-            # ── 🎯 17個變數各就各位，完美刷新本益比、資產規模與殖利率 ──
-            params = (
-                current_price,                                         # 1
-                float(info.get('price_change') or 0.0),                # 2
-                float(info.get('price_change_percent') or 0.0),        # 3
-                float(info.get('nav') or current_price),               # 4
-                int(info.get('volume') or 0),                          # 5
-                float(info.get('discount_premium') or 0.0),            # 6
-                float(info.get('dividend_yield') or 0.0),              # 7
-                float(info.get('annual_return_1y') or 0.0),            # 8
-                float(info.get('annual_return_3y') or 0.0),            # 9
-                float(info.get('annual_return_5y') or 0.0),            # 10
-                float(info.get('expense_ratio') or 0.0),               # 11
-                float(info.get('pe_ratio') or 0.0),                    # 12 👈 本益比刷新！
-                float(info.get('fifty_two_week_high') or current_price),# 13
-                float(info.get('fifty_two_week_low') or current_price), # 14
-                str(info.get('payout_freq') or '-'),                   # 15
-                float(info.get('asset_size') or 0.0),                  # 16 👈 資產規模刷新！
-                ticker                                                 # 17 (WHERE)
-            )
-
-            cursor.execute(sql, params)
+                cursor.execute(sql_save, (
+                    ticker, today_str, c_price, price_change, pct_change, n_price, vol,
+                    discount_premium, dividend_yield, annual_return_1y, annual_return_3y, annual_return_5y,
+                    expense_ratio, pe_ratio, day_high, day_low, fifty_two_week_high, fifty_two_week_low,
+                    payout_freq, asset_size
+                ))
             conn.commit()
 
-        return safe_json({"status": "success", "message": f"{ticker} 全量數據對齊並強制更新成功", "data": info})
+        return safe_json({"status": "success", "message": f"{ticker} 資料全欄位已對齊並更新完成"})
     except Exception as e:
-        logger.error(f"更新 {ticker} 失敗: {str(e)}")
+        logger.error(f"update single ETF 錯誤 {ticker}: {e}")
         return safe_json({"status": "error", "message": str(e)}, 500)
 
 
