@@ -1903,27 +1903,55 @@ async def get_price_history(ticker: str, period: str = "1y"):
             r = cursor.fetchone()
             if r: market = r['market']
 
-        # 將 period 換算為 range 參數
-        range_map = {"1y": "1y", "3y": "3y", "5y": "5y", "6m": "6mo", "3m": "3mo"}
-        yf_range = range_map.get(period, "1y")
-
         if market == 'TW':
-            # 台灣證交所歷史（月均）
+            # ── 💡 終極修復：優先從我們自己的資料庫捞取歷史每日數據，並按月分組聚合 ──
+            with get_db() as (conn, cursor):
+                cursor.execute("""
+                    SELECT DATE_FORMAT(date, '%Y/%m') as ym, AVG(current_price) as avg_price
+                    FROM etf_daily_data
+                    WHERE ticker = %s AND current_price > 0
+                    GROUP BY ym
+                    ORDER BY ym DESC
+                """ if USE_MYSQL else """
+                    SELECT strftime('%Y/%m', date) as ym, AVG(current_price) as avg_price
+                    FROM etf_daily_data
+                    WHERE ticker = ? AND current_price > 0
+                    GROUP BY ym
+                    ORDER BY ym DESC
+                """, (ticker,))
+                db_rows = cursor.fetchall()
+
+            # 如果我們資料庫裡有累積這檔 ETF 的歷史資料
+            if db_rows and len(db_rows) >= 2:
+                db_rows.reverse() # 轉回由舊到新
+                
+                # 依據前端需要的 period 進行截取
+                n = {"1y":12, "3y":36, "5y":60, "6m":6, "3m":3}.get(period, 12)
+                target_rows = db_rows[-n:] if len(db_rows) > n else db_rows
+                
+                labels = [r['ym'] for r in target_rows]
+                prices = [round(float(r['avg_price']), 2) for r in target_rows]
+                return safe_json({"status":"success", "labels":labels, "prices":prices})
+
+            # ── 備援機制：如果資料庫完全沒資料，才走原本的外部抓取 ──
             closes = await asyncio.to_thread(_fetch_tw_history_twse, ticker)
-            # 根據 period 截取
             n = {"1y":12,"3y":36,"5y":60,"6m":6,"3m":3}.get(period, 12)
             closes = closes[-n:] if len(closes) > n else closes
+            
             if not closes:
                 return safe_json({"status":"error","message":"無法取得歷史價格"}, 404)
-            # 產生月份 labels
+                
             labels = []
             now = datetime.now()
             for i in range(len(closes), 0, -1):
                 dt = now - relativedelta(months=i-1)
                 labels.append(dt.strftime('%Y/%m'))
             return safe_json({"status":"success","labels":labels,"prices":closes})
+            
         else:
-            # 美股 → Query2 REST
+            # ── 美股 → 依前端 period 動態轉換為 Yahoo Finance 支援的 range 參數 ──
+            yf_range = {"1y": "1y", "3y": "3y", "5y": "5y", "6m": "6m", "3m": "3m"}.get(period, "1y")
+            
             url = (
                 f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}"
                 f"?range={yf_range}&interval=1mo&includePrePost=false"

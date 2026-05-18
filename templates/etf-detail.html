@@ -391,16 +391,17 @@ function renderData() {
         document.getElementById('asset-size').textContent = '-';
     }
 
-    // NAV & 折溢價
+    // NAV & 折溢價（優先採用後端計算好的折溢價數字）
     const nav = parseFloat(d.nav) || price;
     document.getElementById('nav').textContent = nav > 0 ? nav.toFixed(2) : '-';
-    if (nav > 0 && price > 0) {
-        const prem = (price - nav) / nav * 100;
-        const cls  = prem > 0.5 ? 'text-red-500' : prem < -0.5 ? 'text-green-600' : 'text-slate-500';
-        document.getElementById('premium').innerHTML = `<span class="${cls} font-medium">${prem>0?'+':''}${prem.toFixed(2)}%</span>`;
-    } else {
-        document.getElementById('premium').textContent = '0.00%';
-    }
+    
+    // 優先從後端資料拿 discount_premium，若無則在前端動態計算保底
+    const prem = (d.discount_premium !== undefined && d.discount_premium !== null) 
+        ? parseFloat(d.discount_premium) 
+        : (nav > 0 && price > 0 ? ((price - nav) / nav * 100) : 0);
+        
+    const cls = prem > 0.5 ? 'text-red-500' : prem < -0.5 ? 'text-green-600' : 'text-slate-500';
+    document.getElementById('premium').innerHTML = `<span class="${cls} font-bold tabular-nums">${prem >= 0 ? '+' : ''}${prem.toFixed(2)}%</span>`;
 
     // P/E
     const pe = parseFloat(d.pe_ratio) || 0;
@@ -449,12 +450,28 @@ async function loadPriceHistory(ticker, period = '1y') {
     try {
         const res  = await fetch(`/api/etf/price-history/${ticker}?period=${period}`);
         const data = await res.json();
-        if (data.status === 'success' && data.prices?.length > 0) {
-            drawChart(data.labels, data.prices.filter(p => p != null), false);
-        } else {
-            drawFallbackChart();
+        
+        // ── 💡 在這裡加入過濾與轉換邏輯 ──
+        if (data.status === 'success' && data.prices && data.prices.length > 0) {
+            // 將所有價格轉為浮點數，並排除掉不合法的 NaN 或小於等於 0 的髒資料
+            const cleanPrices = data.prices.map(p => parseFloat(p)).filter(p => !isNaN(p) && p > 0);
+            
+            // 為了讓標籤（月份）與過濾後的價格數量對齊，由後往前截取對應數量的標籤
+            const cleanLabels = data.labels.slice(data.labels.length - cleanPrices.length);
+            
+            // 確保過濾後至少還有 2 筆以上的有效價格才繪製實線圖
+            if (cleanPrices.length >= 2) {
+                drawChart(cleanLabels, cleanPrices, false);
+                return; // 成功畫圖，直接結束
+            }
         }
-    } catch(e) { drawFallbackChart(); }
+        
+        // 如果 API 失敗、無資料或過濾後資料不足，走保底虛線圖
+        drawFallbackChart();
+    } catch(e) { 
+        console.error("圖表解析失敗，切換至保底圖:", e);
+        drawFallbackChart(); 
+    }
 }
 
 function drawFallbackChart() {
