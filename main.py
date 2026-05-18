@@ -1540,8 +1540,6 @@ async def update_all_etf_data():
     updated = 0
     failed  = 0
     for i, etf in enumerate(ALL_ETFS):
-        # 台股每筆間隔 5~10s（TWSE + Yahoo 各一次請求）
-        # 美股每筆間隔 12~20s（Yahoo 連打多個 endpoint 容易被 429）
         if etf['market'] == 'TW':
             await asyncio.sleep(random.uniform(5, 10))
         else:
@@ -1555,26 +1553,34 @@ async def update_all_etf_data():
 
         if not data:
             failed += 1
-            logger.warning(f"⚠️ {etf['ticker']} 無法取得數據，本次略過（不用 mock）")
+            logger.warning(f"⚠️ {etf['ticker']} 無法取得數據，本次略過")
             continue
+
+        # 💡 【新增核心邏輯】批次更新時，即時計算折溢價
+        c_price = float(data.get('current_price') or 0)
+        n_price = float(data.get('nav') or c_price)
+        discount_premium = 0.0
+        if c_price > 0 and n_price > 0 and c_price != n_price:
+            discount_premium = round(((c_price - n_price) / n_price) * 100, 2)
 
         try:
             with get_db() as (conn, cursor):
+                # 💡 【新增】將 discount_premium 補入 SQL 欄位與對應參數中
                 cursor.execute("""
                     INSERT OR REPLACE INTO etf_daily_data
                     (ticker, date,
                      current_price, price_change, price_change_percent,
-                     volume, asset_size, nav,
+                     volume, asset_size, nav, discount_premium,
                      dividend_yield, payout_freq,
                      annual_return_1y, annual_return_3y, annual_return_5y,
                      pe_ratio, expense_ratio,
                      day_high, day_low,
                      fifty_two_week_high, fifty_two_week_low)
-                    VALUES (%s,%s, %s,%s,%s, %s,%s,%s, %s,%s, %s,%s,%s, %s,%s, %s,%s, %s,%s)
+                    VALUES (%s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s, %s,%s, %s,%s)
                 """, (
                     data['ticker'], today,
-                    data['current_price'],   data['price_change'],   data['price_change_percent'],
-                    data['volume'],          data['asset_size'],     data['nav'],
+                    c_price,                 data['price_change'],   data['price_change_percent'],
+                    data['volume'],          data['asset_size'],     n_price, discount_premium,
                     data['dividend_yield'],  data['payout_freq'],
                     data['annual_return_1y'],data['annual_return_3y'],data['annual_return_5y'],
                     data['pe_ratio'],        data['expense_ratio'],
@@ -1896,7 +1902,7 @@ async def get_etf_detail(ticker: str):
             else:
                 res_data.update({
                     "current_price": 0, "price_change": 0, "price_change_percent": 0,
-                    "nav": 0, "volume": 0, "discount_premium": 0.0, "dividend_yield": 0,
+                    "nav": 0, "volume": 0, "discount_premium": 0.0, "dividend_yield": 0,  # 💡 確保這裡有初始值
                     "annual_return_1y": 0, "payout_freq": "-", "asset_size": 1800e8 if ticker == '00878' else 0
                 })
     
