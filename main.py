@@ -1854,43 +1854,62 @@ async def get_etf_detail(ticker: str):
     ticker = ticker.upper()
     try:
         with get_db() as (conn, cursor):
-            # ✨ 修正：在 SELECT 中多撈出 COALESCE(d.discount_premium, 0) as discount_premium
-            cursor.execute("""
-                SELECT m.ticker, m.name, m.market,
-                    COALESCE(m.issuer,'') as issuer,
-                    COALESCE(m.listing_date,'') as listing_date,
-                    COALESCE(d.current_price,0) as current_price,
-                    COALESCE(d.price_change,0) as price_change,
-                    COALESCE(d.price_change_percent,0) as price_change_percent,
-                    COALESCE(d.discount_premium,0) as discount_premium, 
-                    COALESCE(d.volume,0) as volume,
-                    COALESCE(d.asset_size,0) as asset_size,
-                    COALESCE(d.nav,0) as nav,
-                    COALESCE(d.dividend_yield,0) as dividend_yield,
-                    COALESCE(d.payout_freq,'') as payout_freq,
-                    COALESCE(d.annual_return_1y,0) as annual_return_1y,
-                    COALESCE(d.annual_return_3y,0) as annual_return_3y,
-                    COALESCE(d.annual_return_5y,0) as annual_return_5y,
-                    COALESCE(d.pe_ratio,0) as pe_ratio,
-                    COALESCE(d.expense_ratio,0) as expense_ratio,
-                    COALESCE(d.day_high,0) as day_high,
-                    COALESCE(d.day_low,0) as day_low,
-                    COALESCE(d.fifty_two_week_high,0) as fifty_two_week_high,
-                    COALESCE(d.fifty_two_week_low,0) as fifty_two_week_low,
-                    d.date as data_date
-                FROM etf_master m {join}
-                WHERE m.ticker=%s
-            """.format(join=LATEST_DAILY_JOIN), (ticker,))
-            row = cursor.fetchone()
+            # 1. 撈取基本資料
+            cursor.execute("SELECT * FROM etf_master WHERE ticker = %s" if USE_MYSQL else "SELECT * FROM etf_master WHERE ticker = ?", (ticker,))
+            master = cursor.fetchone()
+            if not master:
+                return safe_json({"status": "error", "message": "找不到該 ETF"}, 404)
 
-        if not row:
-            return safe_json({"status":"error","message":"ETF 資料尚未抓取，請稍後再試"}, 404)
+            # 2. 💡 修改重點：確保所有的核心新欄位都有被 COALESCE 導出
+            sql_daily = """
+                SELECT 
+                    current_price, price_change, price_change_percent, nav, volume,
+                    COALESCE(discount_premium, 0) as discount_premium,
+                    COALESCE(dividend_yield, 0) as dividend_yield,
+                    COALESCE(annual_return_1y, 0) as annual_return_1y,
+                    COALESCE(annual_return_3y, 0) as annual_return_3y,
+                    COALESCE(annual_return_5y, 0) as annual_return_5y,
+                    COALESCE(expense_ratio, 0) as expense_ratio,
+                    COALESCE(pe_ratio, 0) as pe_ratio,
+                    COALESCE(fifty_two_week_high, 0) as fifty_two_week_high,
+                    COALESCE(fifty_two_week_low, 0) as fifty_two_week_low,
+                    payout_freq, asset_size, update_time
+                FROM etf_daily_data 
+                WHERE ticker = %s
+            """ if USE_MYSQL else """
+                SELECT 
+                    current_price, price_change, price_change_percent, nav, volume,
+                    COALESCE(discount_premium, 0) as discount_premium,
+                    COALESCE(dividend_yield, 0) as dividend_yield,
+                    COALESCE(annual_return_1y, 0) as annual_return_1y,
+                    COALESCE(annual_return_3y, 0) as annual_return_3y,
+                    COALESCE(annual_return_5y, 0) as annual_return_5y,
+                    COALESCE(expense_ratio, 0) as expense_ratio,
+                    COALESCE(pe_ratio, 0) as pe_ratio,
+                    COALESCE(fifty_two_week_high, 0) as fifty_two_week_high,
+                    COALESCE(fifty_two_week_low, 0) as fifty_two_week_low,
+                    payout_freq, asset_size, update_time
+                FROM etf_daily_data 
+                WHERE ticker = ?
+            """
+            cursor.execute(sql_daily, (ticker,))
+            daily = cursor.fetchone()
 
-        _enrich([row])
-        return safe_json({"status":"success","data":row})
+            # 合併數據傳回前端
+            res_data = dict(master)
+            if daily:
+                res_data.update(dict(daily))
+            else:
+                # 保底預設值
+                res_data.update({
+                    "current_price": 0, "price_change": 0, "price_change_percent": 0,
+                    "nav": 0, "volume": 0, "discount_premium": 0, "dividend_yield": 0,
+                    "annual_return_1y": 0, "payout_freq": "-", "asset_size": 0
+                })
+
+            return safe_json({"status": "success", "data": res_data})
     except Exception as e:
-        logger.error(f"detail API 錯誤 {ticker}: {e}")
-        return safe_json({"status":"error","message":str(e)}, 500)
+        return safe_json({"status": "error", "message": str(e)}, 500)
 
 
 @app.get("/api/etf/price-history/{ticker}")
@@ -1904,9 +1923,9 @@ async def get_price_history(ticker: str, period: str = "1y"):
             if r: market = r['market']
 
         if market == 'TW':
-            # ── 💡 終極修復：優先從我們自己的資料庫捞取歷史每日數據，並按月分組聚合 ──
+            # ── 💡 優先從本地 daily_data 資料表撈取聚合歷史 ──
             with get_db() as (conn, cursor):
-                cursor.execute("""
+                sql = """
                     SELECT DATE_FORMAT(date, '%Y/%m') as ym, AVG(current_price) as avg_price
                     FROM etf_daily_data
                     WHERE ticker = %s AND current_price > 0
@@ -1918,14 +1937,12 @@ async def get_price_history(ticker: str, period: str = "1y"):
                     WHERE ticker = ? AND current_price > 0
                     GROUP BY ym
                     ORDER BY ym DESC
-                """, (ticker,))
+                """
+                cursor.execute(sql, (ticker,))
                 db_rows = cursor.fetchall()
 
-            # 如果我們資料庫裡有累積這檔 ETF 的歷史資料
             if db_rows and len(db_rows) >= 2:
-                db_rows.reverse() # 轉回由舊到新
-                
-                # 依據前端需要的 period 進行截取
+                db_rows.reverse()
                 n = {"1y":12, "3y":36, "5y":60, "6m":6, "3m":3}.get(period, 12)
                 target_rows = db_rows[-n:] if len(db_rows) > n else db_rows
                 
@@ -1933,7 +1950,7 @@ async def get_price_history(ticker: str, period: str = "1y"):
                 prices = [round(float(r['avg_price']), 2) for r in target_rows]
                 return safe_json({"status":"success", "labels":labels, "prices":prices})
 
-            # ── 備援機制：如果資料庫完全沒資料，才走原本的外部抓取 ──
+            # 備援：走外部網路請求
             closes = await asyncio.to_thread(_fetch_tw_history_twse, ticker)
             n = {"1y":12,"3y":36,"5y":60,"6m":6,"3m":3}.get(period, 12)
             closes = closes[-n:] if len(closes) > n else closes
@@ -1949,9 +1966,8 @@ async def get_price_history(ticker: str, period: str = "1y"):
             return safe_json({"status":"success","labels":labels,"prices":closes})
             
         else:
-            # ── 美股 → 依前端 period 動態轉換為 Yahoo Finance 支援的 range 參數 ──
+            # ── 💡 美股：修正 yf_range 未定義的 NameError 錯誤 ──
             yf_range = {"1y": "1y", "3y": "3y", "5y": "5y", "6m": "6m", "3m": "3m"}.get(period, "1y")
-            
             url = (
                 f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}"
                 f"?range={yf_range}&interval=1mo&includePrePost=false"
@@ -1960,30 +1976,27 @@ async def get_price_history(ticker: str, period: str = "1y"):
                 s = _new_session()
                 s.headers["Referer"] = f"https://finance.yahoo.com/quote/{ticker}"
                 r2 = s.get(url, timeout=12)
-                if r2.status_code != 200:
-                    return None, None
+                if r2.status_code != 200: return None, None
                 j = r2.json()
                 result = j.get("chart", {}).get("result")
-                if not result:
-                    return None, None
+                if not result: return None, None
                 timestamps = result[0].get("timestamp", [])
                 quotes = result[0].get("indicators", {}).get("quote", [{}])[0]
                 closes = quotes.get("close", [])
-                labels = []
-                prices = []
+                l_arr, p_arr = [], []
                 for ts, c in zip(timestamps, closes):
                     if c is not None:
-                        labels.append(datetime.fromtimestamp(ts).strftime('%Y/%m'))
-                        prices.append(round(float(c), 2))
-                return labels, prices
+                        l_arr.append(datetime.fromtimestamp(ts).strftime('%Y/%m'))
+                        p_arr.append(round(float(c), 2))
+                return l_arr, p_arr
 
             labels, prices = await asyncio.to_thread(_get)
             if not labels:
-                return safe_json({"status":"error","message":"無法取得歷史價格"}, 404)
+                return safe_json({"status":"error","message":"無法取得美股歷史價格"}, 404)
             return safe_json({"status":"success","labels":labels,"prices":prices})
-
+            
     except Exception as e:
-        logger.error(f"price-history API 錯誤 {ticker}: {e}")
+        logger.error(f"歷史圖表 API 異常: {e}")
         return safe_json({"status":"error","message":str(e)}, 500)
 
 
@@ -2125,44 +2138,83 @@ async def update_one_etf(ticker: str):
         if not data:
             return safe_json({"status":"error","message":"無法取得數據，請稍後再試"}, 503)
 
-        today = datetime.now().date()
-        
-        # ─── 計算折溢價 ───
+        # ─── 💡 修正 3 核心：正確提取變數，防止 NameError ───
         c_price = float(data.get('current_price') or 0)
         n_price = float(data.get('nav') or c_price)
+        price_change = float(data.get('price_change') or 0)
+        pct_change = float(data.get('price_change_percent') or 0)
+        vol = int(data.get('volume') or 0)
+        asset_size = float(data.get('asset_size') or 0)
+        payout_freq = data.get('payout_freq') or '季配'
+        
+        # 提取高精度新欄位
+        dividend_yield = float(data.get('dividend_yield') or 0.0)
+        annual_return_1y = float(data.get('annual_return_1y') or 0.0)
+        annual_return_3y = float(data.get('annual_return_3y') or 0.0)
+        annual_return_5y = float(data.get('annual_return_5y') or 0.0)
+        pe_ratio = float(data.get('pe_ratio') or 0.0)
+        expense_ratio = float(data.get('expense_ratio') or 0.0)
+        day_high = float(data.get('day_high') or c_price)
+        day_low = float(data.get('day_low') or c_price)
+        fifty_two_week_high = float(data.get('fifty_two_week_high') or c_price)
+        fifty_two_week_low = float(data.get('fifty_two_week_low') or c_price)
+
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # 計算折溢價
         discount_premium = 0.0
         if c_price > 0 and n_price > 0:
             discount_premium = round(((c_price - n_price) / n_price) * 100, 2)
 
+        # ─── 儲存至資料庫（全欄位嚴格對齊版） ───
         with get_db() as (conn, cursor):
-            # ✨ 修正：將 discount_premium 真正放入對齊的 SQL 結構中
-            cursor.execute("""
-                INSERT OR REPLACE INTO etf_daily_data
-                (ticker, date,
-                 current_price, price_change, price_change_percent, discount_premium,
-                 volume, asset_size, nav,
-                 dividend_yield, payout_freq,
-                 annual_return_1y, annual_return_3y, annual_return_5y,
-                 pe_ratio, expense_ratio,
-                 day_high, day_low,
-                 fifty_two_week_high, fifty_two_week_low)
-                VALUES (%s,%s, %s,%s,%s,%s, %s,%s,%s, %s,%s, %s,%s,%s, %s,%s, %s,%s, %s,%s)
-            """, (
-                data['ticker'], today,
-                data['current_price'],    data['price_change'],    data['price_change_percent'], discount_premium,
-                data['volume'],           data['asset_size'],      data['nav'],
-                data['dividend_yield'],   data['payout_freq'],
-                data['annual_return_1y'], data['annual_return_3y'],data['annual_return_5y'],
-                data['pe_ratio'],         data['expense_ratio'],
-                data['day_high'],         data['day_low'],
-                data['fifty_two_week_high'], data['fifty_two_week_low'],
-            ))
+            if USE_MYSQL:
+                sql_save = """
+                    INSERT INTO etf_daily_data (
+                        ticker, date, current_price, price_change, price_change_percent, nav, volume,
+                        discount_premium, dividend_yield, annual_return_1y, annual_return_3y, annual_return_5y,
+                        expense_ratio, pe_ratio, day_high, day_low, fifty_two_week_high, fifty_two_week_low,
+                        payout_freq, asset_size, update_time
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        current_price=VALUES(current_price), price_change=VALUES(price_change),
+                        price_change_percent=VALUES(price_change_percent), nav=VALUES(nav), volume=VALUES(volume),
+                        discount_premium=VALUES(discount_premium), dividend_yield=VALUES(dividend_yield),
+                        annual_return_1y=VALUES(annual_return_1y), annual_return_3y=VALUES(annual_return_3y),
+                        annual_return_5y=VALUES(annual_return_5y), expense_ratio=VALUES(expense_ratio),
+                        pe_ratio=VALUES(pe_ratio), day_high=VALUES(day_high), day_low=VALUES(day_low),
+                        fifty_two_week_high=VALUES(fifty_two_week_high), fifty_two_week_low=VALUES(fifty_two_week_low),
+                        payout_freq=VALUES(payout_freq), asset_size=VALUES(asset_size), update_time=VALUES(update_time);
+                """
+                cursor.execute(sql_save, (
+                    ticker, today_str, c_price, price_change, pct_change, n_price, vol,
+                    discount_premium, dividend_yield, annual_return_1y, annual_return_3y, annual_return_5y,
+                    expense_ratio, pe_ratio, day_high, day_low, fifty_two_week_high, fifty_two_week_low,
+                    payout_freq, asset_size, now_str
+                ))
+            else:
+                # SQLite 備援環境
+                sql_save = """
+                    REPLACE INTO etf_daily_data (
+                        ticker, date, current_price, price_change, price_change_percent, nav, volume,
+                        discount_premium, dividend_yield, annual_return_1y, annual_return_3y, annual_return_5y,
+                        expense_ratio, pe_ratio, day_high, day_low, fifty_two_week_high, fifty_two_week_low,
+                        payout_freq, asset_size, update_time
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                cursor.execute(sql_save, (
+                    ticker, today_str, c_price, price_change, pct_change, n_price, vol,
+                    discount_premium, dividend_yield, annual_return_1y, annual_return_3y, annual_return_5y,
+                    expense_ratio, pe_ratio, day_high, day_low, fifty_two_week_high, fifty_two_week_low,
+                    payout_freq, asset_size, now_str
+                ))
             conn.commit()
-        return safe_json({"status":"success","message":f"{ticker} 更新完成","data":data})
-    except Exception as e:
-        logger.error(f"單一 ETF 更新錯誤 {ticker}: {e}")
-        return safe_json({"status":"error","message":str(e)}, 500)
 
+        return safe_json({"status": "success", "message": f"{ticker} 已成功強制更新最新全量欄位"})
+    except Exception as e:
+        logger.error(f"update single ETF 錯誤 {ticker}: {e}")
+        return safe_json({"status": "error", "message": str(e)}, 500)
 
 # ─────────────────────────────────────────────
 # 用戶 API
