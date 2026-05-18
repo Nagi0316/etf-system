@@ -1490,6 +1490,7 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     wk52_low  = min(last12) if last12 else quote["day_low"]
 
     # ── 【修復核心】全面改走 yfinance 安全連線通道，完美對齊美股規模、PE 與費用率 ──
+    # ── 【修復核心】全面改走 yfinance 安全連線通道，完美對齊美股規模、PE 與費用率 ──
     asset_size, pe_ratio, expense_ratio = 0.0, 0.0, 0.0
     issuer, nav = "", price
 
@@ -1506,20 +1507,32 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         yf_yield = _safe_float(info.get('yield') or info.get('dividendYield')) * 100
         if yf_yield > div_yield:
             div_yield = round(yf_yield, 4)
-            if div_yield > 0 and payout_freq == '不配息': payout_freq = '季配'
-    except Exception: pass
+            if div_yield > 0 and payout_freq == '不配息': 
+                payout_freq = '季配'
+    except Exception: 
+        pass
 
+    # 🚀【回傳字典欄位防禦】確保傳出乾淨的數字，若歷史月線歷史不足則給予 0.0 保底，絕不回傳 None
     return {
-        'ticker': ticker, 'current_price': price,
-        'price_change': quote["price_change"], 'price_change_percent': quote["price_change_percent"],
-        'day_high': quote["day_high"], 'day_low': quote["day_low"],
-        'fifty_two_week_high': wk52_high, 'fifty_two_week_low': wk52_low,
-        'volume': quote["volume"], 'asset_size': asset_size, 'nav': nav,
-        'pe_ratio': pe_ratio, 'expense_ratio': expense_ratio,
-        'dividend_yield': div_yield, 'payout_freq': payout_freq,
-        'annual_return_1y': annual_return_1y, 'annual_return_3y': annual_return_3y, 'annual_return_5y': annual_return_5y
+        'ticker': ticker, 
+        'current_price': price,
+        'price_change': quote["price_change"], 
+        'price_change_percent': quote["price_change_percent"],
+        'day_high': quote["day_high"], 
+        'day_low': quote["day_low"],
+        'fifty_two_week_high': wk52_high, 
+        'fifty_two_week_low': wk52_low,
+        'volume': quote["volume"], 
+        'asset_size': asset_size, 
+        'nav': nav,
+        'pe_ratio': pe_ratio, 
+        'expense_ratio': expense_ratio,
+        'dividend_yield': div_yield, 
+        'payout_freq': payout_freq,
+        'annual_return_1y': float(annual_return_1y) if (annual_return_1y and annual_return_1y == annual_return_1y) else 0.0,
+        'annual_return_3y': float(annual_return_3y) if (annual_return_3y and annual_return_3y == annual_return_3y) else 0.0,
+        'annual_return_5y': float(annual_return_5y) if (annual_return_5y and annual_return_5y == annual_return_5y) else 0.0
     }
-
 
 
 async def update_all_etf_data():
@@ -2001,68 +2014,100 @@ async def get_price_history(ticker: str, period: str = "1y"):
 
 
 @app.post("/api/etf/update/{ticker}")
-async def update_single_etf(ticker: str):
-    """即時抓取單一 ETF 數據並寫入 DB（前端在首次無資料時呼叫）"""
+async def update_one_etf(ticker: str):
+    """立即更新單一 ETF（供 detail 頁面呼叫）"""
     ticker = ticker.upper()
     try:
-        market = 'TW'
-        # 先確保 etf_master 有這筆
         with get_db() as (conn, cursor):
             cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
-            row = cursor.fetchone()
-            if row:
-                market = row['market']
-            else:
-                # 動態推斷市場
-                market = 'TW' if ticker[:4].isdigit() else 'US'
-                yt = _yahoo_ticker(ticker, market)
-                name = ticker
-                try:
-                    stock = yf.Ticker(yt, session=_get_yf_session())
-                    info = stock.info
-                    name = info.get('longName') or info.get('shortName') or ticker
-                    name = name[:200]
-                except Exception:
-                    pass
-                cursor.execute(
-                    "INSERT OR REPLACE INTO etf_master (ticker,name,market) VALUES (%s,%s,%s)",
-                    (ticker, name, market)
-                )
-                conn.commit()
+            r = cursor.fetchone()
+        market = r['market'] if r else ('TW' if ticker[:4].isdigit() else 'US')
 
         data = await asyncio.to_thread(fetch_one_etf, ticker, market)
         if not data:
-            return safe_json({"status":"error","message":"無法抓取此 ETF 資料"}, 404)
+            return safe_json({"status":"error","message":"無法取得數據，請稍後再試"}, 503)
 
-        today = datetime.now().date()
+        c_price = float(data.get('current_price') or 0)
+        n_price = float(data.get('nav') or c_price)
+        price_change = float(data.get('price_change') or 0)
+        pct_change = float(data.get('price_change_percent') or 0)
+        vol = int(data.get('volume') or 0)
+        asset_size = float(data.get('asset_size') or 0)
+        payout_freq = data.get('payout_freq') or '季配'
+        
+        # 💡 防禦機制：yfinance 常常沒有美股年化報酬率，這裡強制做 float 轉換保底
+        try: dividend_yield = float(data.get('dividend_yield') or 0.0)
+        except: dividend_yield = 0.0
+        try: annual_return_1y = float(data.get('annual_return_1y') or 0.0)
+        except: annual_return_1y = 0.0
+        try: annual_return_3y = float(data.get('annual_return_3y') or 0.0)
+        except: annual_return_3y = 0.0
+        try: annual_return_5y = float(data.get('annual_return_5y') or 0.0)
+        except: annual_return_5y = 0.0
+        try: pe_ratio = float(data.get('pe_ratio') or 0.0)
+        except: pe_ratio = 0.0
+        try: expense_ratio = float(data.get('expense_ratio') or 0.0)
+        except: expense_ratio = 0.0
+
+        day_high = float(data.get('day_high') or c_price)
+        day_low = float(data.get('day_low') or c_price)
+        fifty_two_week_high = float(data.get('fifty_two_week_high') or c_price)
+        fifty_two_week_low = float(data.get('fifty_two_week_low') or c_price)
+
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        discount_premium = 0.0
+        if c_price > 0 and n_price > 0:
+            discount_premium = round(((c_price - n_price) / n_price) * 100, 2)
+
+        # ─── 儲存至資料庫（嚴格數過：21欄位、21個 %s、21個Tuple變數） ───
         with get_db() as (conn, cursor):
-            cursor.execute("""
-                INSERT OR REPLACE INTO etf_daily_data
-                (ticker, date,
-                 current_price, price_change, price_change_percent,
-                 volume, asset_size, nav,
-                 dividend_yield, payout_freq,
-                 annual_return_1y, annual_return_3y, annual_return_5y,
-                 pe_ratio, expense_ratio,
-                 day_high, day_low,
-                 fifty_two_week_high, fifty_two_week_low)
-                VALUES (%s,%s, %s,%s,%s, %s,%s,%s, %s,%s, %s,%s,%s, %s,%s, %s,%s, %s,%s)
-            """, (
-                data['ticker'], today,
-                data['current_price'],   data['price_change'],   data['price_change_percent'],
-                data['volume'],          data['asset_size'],     data['nav'],
-                data['dividend_yield'],  data['payout_freq'],
-                data['annual_return_1y'],data['annual_return_3y'],data['annual_return_5y'],
-                data['pe_ratio'],        data['expense_ratio'],
-                data['day_high'],        data['day_low'],
-                data['fifty_two_week_high'], data['fifty_two_week_low'],
-            ))
+            if USE_MYSQL:
+                sql_save = """
+                    INSERT INTO etf_daily_data (
+                        ticker, date, current_price, price_change, price_change_percent, nav, volume,
+                        discount_premium, dividend_yield, annual_return_1y, annual_return_3y, annual_return_5y,
+                        expense_ratio, pe_ratio, day_high, day_low, fifty_two_week_high, fifty_two_week_low,
+                        payout_freq, asset_size, update_time
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        current_price=VALUES(current_price), price_change=VALUES(price_change),
+                        price_change_percent=VALUES(price_change_percent), nav=VALUES(nav), volume=VALUES(volume),
+                        discount_premium=VALUES(discount_premium), dividend_yield=VALUES(dividend_yield),
+                        annual_return_1y=VALUES(annual_return_1y), annual_return_3y=VALUES(annual_return_3y),
+                        annual_return_5y=VALUES(annual_return_5y), expense_ratio=VALUES(expense_ratio),
+                        pe_ratio=VALUES(pe_ratio), day_high=VALUES(day_high), day_low=VALUES(day_low),
+                        fifty_two_week_high=VALUES(fifty_two_week_high), fifty_two_week_low=VALUES(fifty_two_week_low),
+                        payout_freq=VALUES(payout_freq), asset_size=VALUES(asset_size), update_time=VALUES(update_time);
+                """
+                cursor.execute(sql_save, (
+                    ticker, today_str, c_price, price_change, pct_change, n_price, vol,
+                    discount_premium, dividend_yield, annual_return_1y, annual_return_3y, annual_return_5y,
+                    expense_ratio, pe_ratio, day_high, day_low, fifty_two_week_high, fifty_two_week_low,
+                    payout_freq, asset_size, now_str
+                ))
+            else:
+                sql_save = """
+                    REPLACE INTO etf_daily_data (
+                        ticker, date, current_price, price_change, price_change_percent, nav, volume,
+                        discount_premium, dividend_yield, annual_return_1y, annual_return_3y, annual_return_5y,
+                        expense_ratio, pe_ratio, day_high, day_low, fifty_two_week_high, fifty_two_week_low,
+                        payout_freq, asset_size, update_time
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                cursor.execute(sql_save, (
+                    ticker, today_str, c_price, price_change, pct_change, n_price, vol,
+                    discount_premium, dividend_yield, annual_return_1y, annual_return_3y, annual_return_5y,
+                    expense_ratio, pe_ratio, day_high, day_low, fifty_two_week_high, fifty_two_week_low,
+                    payout_freq, asset_size, now_str
+                ))
             conn.commit()
 
-        return safe_json({"status":"success","message":f"{ticker} 已更新"})
+        return safe_json({"status": "success", "message": f"{ticker} 資料全欄位已對齊並更新完成"})
     except Exception as e:
         logger.error(f"update single ETF 錯誤 {ticker}: {e}")
-        return safe_json({"status":"error","message":str(e)}, 500)
+        return safe_json({"status": "error", "message": str(e)}, 500)
 
 
 
