@@ -1919,7 +1919,7 @@ async def get_etf_detail(ticker: str):
                     "nav": 0, "volume": 0, "discount_premium": 0, "dividend_yield": 0,
                     "annual_return_1y": 0, "payout_freq": "-", "asset_size": 0
                 })
-
+    
             return safe_json({"status": "success", "data": res_data})
     except Exception as e:
         return safe_json({"status": "error", "message": str(e)}, 500)
