@@ -382,6 +382,10 @@ async function runBacktest(e){
     }
 
     try{
+        // 自動將年份與月份組裝成 YYYY-MM-DD 格式（預設每月 1 號扣款）
+        const startDateStr = `${startYear}-${String(startMonth).padStart(2, '0')}-01`;
+        const endDateStr = `${endYear}-${String(endMonth).padStart(2, '0')}-01`;
+
         const res = await fetch('/api/backtest',{
             method:'POST',
             headers:{'Content-Type':'application/json'},
@@ -389,10 +393,8 @@ async function runBacktest(e){
                 mode:           'accumulate',
                 ticker,
                 price_mode:     priceMode,
-                start_year:     startYear,
-                start_month:    startMonth,
-                end_year:       endYear,
-                end_month:      endMonth,
+                start_date:     startDateStr, // 修正：改傳 start_date 
+                end_date:       endDateStr,   // 修正：改傳 end_date
                 initial_amount: initialAmt,
                 monthly_amount: monthlyAmt,
             })
@@ -423,6 +425,30 @@ function resetBtn(){
 function renderResult(d, ticker){
     const up = d.total_profit >= 0;
 
+    // ---- 在 renderResult(d) 函式內，更新其他數據的地方順便加上這段 ----
+
+    // 更新 1年報酬率
+    const r1 = d.return_1y !== undefined ? d.return_1y : 0;
+    document.getElementById('return-1y').textContent = `${r1 >= 0 ? '+' : ''}${r1.toFixed(2)}%`;
+    document.getElementById('return-1y').className = `text-xl font-bold ${r1 >= 0 ? 'text-red-500' : 'text-green-600'}`;
+
+    // 更新 3年報酬率
+    if (d.return_3y && d.return_3y > 0) {
+        document.getElementById('return-3y').textContent = `+${d.return_3y.toFixed(2)}%`;
+        document.getElementById('return-3y').className = "text-xl font-bold text-red-500";
+    } else {
+        document.getElementById('return-3y').textContent = "--";
+        document.getElementById('return-3y').className = "text-xl font-bold text-slate-400";
+    }
+
+    // 更新 5年報酬率
+    if (d.return_5y && d.return_5y > 0) {
+        document.getElementById('return-5y').textContent = `+${d.return_5y.toFixed(2)}%`;
+        document.getElementById('return-5y').className = "text-xl font-bold text-red-500";
+    } else {
+        document.getElementById('return-5y').textContent = "--";
+        document.getElementById('return-5y').className = "text-xl font-bold text-slate-400";
+    }
     // 統計數字
     document.getElementById('total-invested').textContent = fmt(d.total_invested);
     document.getElementById('final-value').textContent    = fmt(d.final_value);

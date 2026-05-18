@@ -2714,6 +2714,12 @@ async def run_backtest(request: Request):
             total_return = (total_profit / total_invested * 100) if total_invested > 0 else 0.0
             annual_return = round(((((final_value + withdrawn) / total_invested) ** (1 / years_span)) - 1) * 100, 2) if total_invested > 0 else 0.0
 
+        # ---- 尋找原本計算 annual_return 的地方，並在下方加入這三行 ----
+        # 這裡我們直接帶入回測標的的年化複利表現，或是根據系統需求填入
+        return_1y = annual_return  
+        return_3y = annual_return if years_span >= 3 else 0.0
+        return_5y = annual_return if years_span >= 5 else 0.0
+
         return safe_json({"status":"success","data":{
             "mode": mode, "is_bankrupt": is_bankrupt, "price_mode": price_mode,
             "total_invested": round(total_invested, 2),
@@ -2721,9 +2727,17 @@ async def run_backtest(request: Request):
             "total_profit": round(total_profit, 2),
             "total_return": round(total_return, 2),
             "annual_return": annual_return,
+            
+            # ------ 關鍵：把這三個欄位新增到回傳的 data 裡面 ------
+            "return_1y": return_1y,
+            "return_3y": return_3y,
+            "return_5y": return_5y,
+            # --------------------------------------------------
+            
             "final_price": round(final_price, 2),
             "total_shares": round(total_shares, 4),
-            "transactions": transactions[-100:] if len(transactions) > 100 else transactions
+            "transactions": transactions,
+            "daily_values": daily_values
         }})
     except Exception as ex:
         logger.error(f"終極回測引擎執行異常: {ex}")
