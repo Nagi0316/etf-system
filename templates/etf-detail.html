@@ -403,17 +403,21 @@ function renderData() {
         }
     } 
 
-    // NAV & 折溢價（優先採用後端計算好的折溢價數字）
-    const nav = parseFloat(d.nav) || price;
-    document.getElementById('nav').textContent = nav > 0 ? nav.toFixed(2) : '-';
-    
-    // 優先從後端資料拿 discount_premium，若無則在前端動態計算保底
-    const prem = (d.discount_premium !== undefined && d.discount_premium !== null) 
-        ? parseFloat(d.discount_premium) 
-        : (nav > 0 && price > 0 ? ((price - nav) / nav * 100) : 0);
-        
-    const cls = prem > 0.5 ? 'text-red-500' : prem < -0.5 ? 'text-green-600' : 'text-slate-500';
-    document.getElementById('premium').innerHTML = `<span class="${cls} font-bold tabular-nums">${prem >= 0 ? '+' : ''}${prem.toFixed(2)}%</span>`;
+    // ─── 尋找並替換原本的 NAV & 折溢價區塊 ───
+const nav = parseFloat(d.nav) || price;
+document.getElementById('nav').textContent = nav > 0 ? nav.toFixed(2) : '-';
+
+let prem = 0;
+// 💡 修改判斷：如果現價與淨值皆正常，直接由前端依即時數據計算最精準，避免被後端緩存的 0.0 覆蓋
+if (price > 0 && nav > 0) {
+    prem = ((price - nav) / nav) * 100;
+} else if (d.discount_premium !== undefined && d.discount_premium !== null) {
+    prem = parseFloat(d.discount_premium);
+}
+
+// 根據折溢價的正負決定字體顏色（正數/溢價亮紅，負數/折價亮綠）
+const cls = prem > 0.05 ? 'text-red-500' : prem < -0.05 ? 'text-green-600' : 'text-slate-500';
+document.getElementById('premium').innerHTML = `<span class="${cls} font-bold tabular-nums">${prem >= 0 ? '+' : ''}${prem.toFixed(2)}%</span>`;
 
     // P/E
     const pe = parseFloat(d.pe_ratio) || 0;

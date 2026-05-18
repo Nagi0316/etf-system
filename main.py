@@ -2038,7 +2038,12 @@ async def update_one_etf(ticker: str):
 
         discount_premium = 0.0
         if c_price > 0 and n_price > 0:
-            discount_premium = round(((c_price - n_price) / n_price) * 100, 2)
+            # 💡 保底：如果現價與淨值完全一樣(證交所未開盤)，嘗試給予一個極小的隨機折溢價波動模擬真實市場，或維持 0.0
+            if c_price == n_price:
+                # 你也可以選擇打外部 API 抓真實淨值，若無則精確計算：
+                discount_premium = 0.0
+            else:
+                discount_premium = round(((c_price - n_price) / n_price) * 100, 2)
 
         # ─── 儲存至資料庫（嚴格數過：完美移除 update_time，對齊 20 個欄位與參數） ───
         with get_db() as (conn, cursor):
