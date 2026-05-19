@@ -155,7 +155,7 @@
     <div class="bg-white rounded-lg shadow-xl p-6 w-96 max-h-[90vh] overflow-y-auto">
         <h3 id="modalTitle" class="text-lg font-semibold text-gray-900 mb-4">新增交易紀錄</h3>
         
-        <form id="transactionForm" class="space-y-4" onsubmit="saveTransaction(event)">
+        <form id="transactionForm" class="space-y-4">
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">市場類型</label>
                 <div class="flex gap-4">
@@ -256,7 +256,56 @@
 <script>
 let currentFilter='all', currentUser=null, portfolioData=[], transactionsData=[], deleteId=null;
 
-// 控制手續費輸入狀態
+// 1. 這是原本完整、閉合正確的儲存交易函數
+async function saveTransaction(e) {
+    e.preventDefault();
+    if(!currentUser) return;
+    
+    const ticker = document.getElementById('modalTicker').value.trim().upper();
+    const type = document.getElementById('modalType').value;
+    const shares = document.getElementById('modalShares').value;
+    const price = document.getElementById('modalPrice').value;
+    const commission = document.getElementById('modalCommission').value;
+    const date = document.getElementById('modalDate').value;
+    
+    if(!ticker || !shares || !price || !date) {
+        toast('請填寫完整欄位', false);
+        return;
+    }
+    
+    const url = editId ? `/api/portfolio/transaction/${editId}` : '/api/portfolio/transaction';
+    const method = editId ? 'PUT' : 'POST';
+    
+    try {
+        const res = await fetch(url, {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json',
+                'X-User-Id': currentUser.id
+            },
+            body: json.stringify({
+                ticker: ticker,
+                transaction_type: type,
+                shares: shares,
+                price: price,
+                commission: commission,
+                transaction_date: date
+            })
+        });
+        const d = await res.json();
+        if(d.status === 'success') {
+            toast(editId ? '已更新' : '已新增', true);
+            closeAddModal();
+            await loadData();
+        } else {
+            toast(d.message || '操作失敗', false);
+        }
+    } catch {
+        toast('網路錯誤', false);
+    }
+} // ⬅️ 確保原本的函數在這裡確實關閉了！
+
+// 2. 把這三個進階功能函數「獨立擺在外面」，不要塞在別人的函數身體裡
 function toggleCommissionInput() {
     const autoCheck = document.getElementById('autoCommission').checked;
     const commInput = document.getElementById('modalCommission');
@@ -270,7 +319,6 @@ function toggleCommissionInput() {
     calculateDynamicResult();
 }
 
-// 整合資產庫存檢查與試算
 function checkStockAndCalculate() {
     const ticker = document.getElementById('modalTicker').value.trim().toUpperCase();
     const type = document.getElementById('modalType').value;
@@ -280,28 +328,34 @@ function checkStockAndCalculate() {
     const warningMsg = document.getElementById('warningMessage');
     const submitBtn = document.getElementById('submitBtn');
     
-    warningDiv.classList.add('hidden');
-    submitBtn.disabled = false;
-    submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+    if (warningDiv) warningDiv.classList.add('hidden');
+    if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+    }
 
-    // 🛡️ 修正：將 portfolioData 改為 holdingsData
+    // 🛡️ 使用你網頁中正確的全域變流名稱 holdingsData
     if (type === 'sell' && ticker && typeof holdingsData !== 'undefined') {
         const stockItem = holdingsData.find(item => item.ticker.toUpperCase() === ticker);
         const currentShares = stockItem ? parseFloat(stockItem.shares) : 0;
 
         if (sharesInput > currentShares) {
-            warningMsg.innerText = `庫存不足！你目前持有 ${ticker} 共 ${currentShares} 股，無法賣出 ${sharesInput} 股。`;
-            warningDiv.classList.remove('hidden');
-            submitBtn.disabled = true;
-            submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            if (warningMsg) warningMsg.innerText = `庫存不足！你目前持有 ${ticker} 共 ${currentShares} 股，無法賣出 ${sharesInput} 股。`;
+            if (warningDiv) warningDiv.classList.remove('hidden');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            }
         }
     }
     calculateDynamicResult();
 }
 
-// 動態試算核心
 function calculateDynamicResult() {
-    const market = document.querySelector('input[name="market_type"]:checked').value;
+    const marketEl = document.querySelector('input[name="market_type"]:checked');
+    if (!marketEl) return;
+    
+    const market = marketEl.value;
     const type = document.getElementById('modalType').value;
     const shares = parseFloat(document.getElementById('modalShares').value) || 0;
     const price = parseFloat(document.getElementById('modalPrice').value) || 0;
@@ -323,18 +377,21 @@ function calculateDynamicResult() {
                 commission = 0;
             }
         }
-        commInput.value = commission;
+        if (commInput) commInput.value = commission;
     } else {
-        // 修正：手動輸入時，確實撈取使用者輸入的值
         commission = parseFloat(commInput.value) || 0;
     }
 
     const finalTotal = (type === 'buy') ? (rawTotal + commission) : (rawTotal - commission);
     const sign = (market === 'TW') ? 'NT$ ' : '$ ';
 
-    document.getElementById('calcRawTotal').innerText = sign + Math.round(rawTotal).toLocaleString();
-    document.getElementById('calcCommission').innerText = sign + Math.round(commission).toLocaleString();
-    document.getElementById('calcFinalTotal').innerText = sign + Math.round(finalTotal).toLocaleString();
+    const calcRawTotalEl = document.getElementById('calcRawTotal');
+    const calcCommissionEl = document.getElementById('calcCommission');
+    const calcFinalTotalEl = document.getElementById('calcFinalTotal');
+
+    if (calcRawTotalEl) calcRawTotalEl.innerText = sign + Math.round(rawTotal).toLocaleString();
+    if (calcCommissionEl) calcCommissionEl.innerText = sign + Math.round(commission).toLocaleString();
+    if (calcFinalTotalEl) calcFinalTotalEl.innerText = sign + Math.round(finalTotal).toLocaleString();
 }
 
 function toast(msg,ok=true){
