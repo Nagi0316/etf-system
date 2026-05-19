@@ -151,54 +151,88 @@
 </nav>
 
 <!-- 交易 Modal -->
-<div id="tradeModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-50 p-4" style="display:none">
-    <div class="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl">
-        <div class="flex justify-between items-center mb-4">
-            <h3 class="font-bold text-slate-800" id="modal-title">新增成交</h3>
-            <button onclick="closeTradeModal()" class="text-slate-400 hover:text-slate-600"><i class="fas fa-times"></i></button>
-        </div>
-        <div class="space-y-3">
-            <div>
-                <label class="block text-xs font-semibold text-slate-600 mb-1">代號</label>
-                <input id="trade-ticker" type="text" placeholder="例：0050 或 SPY"
-                    class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 uppercase">
-            </div>
-            <div class="flex gap-4">
-                <label class="flex items-center gap-2 text-sm cursor-pointer">
-                    <input type="radio" name="trade-type" value="buy" checked class="text-indigo-600"> 買入
-                </label>
-                <label class="flex items-center gap-2 text-sm cursor-pointer">
-                    <input type="radio" name="trade-type" value="sell" class="text-indigo-600"> 賣出
-                </label>
-            </div>
-            <div>
-                <label class="block text-xs font-semibold text-slate-600 mb-1">日期</label>
-                <input id="trade-date" type="date" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-                <div>
-                    <label class="block text-xs font-semibold text-slate-600 mb-1">股數</label>
-                    <input id="trade-shares" type="number" min="1" placeholder="0"
-                        class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold text-slate-600 mb-1">每股價格</label>
-                    <input id="trade-price" type="number" min="0" step="0.01" placeholder="0.00"
-                        class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
-                </div>
-            </div>
-            <div>
-                <label class="block text-xs font-semibold text-slate-600 mb-1">手續費</label>
-                <input id="trade-commission" type="number" min="0" value="0"
-                    class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300">
-            </div>
-        </div>
-        <div class="flex gap-2 mt-4">
-            <button onclick="saveTrade(this)" class="flex-1 bg-indigo-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-indigo-700">確認成交</button>
-            <button onclick="closeTradeModal()" class="flex-1 bg-slate-100 text-slate-600 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-200">取消</button>
+<form id="transactionForm" class="space-y-4" onsubmit="saveTransaction(event)">
+    <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">市場類型</label>
+        <div class="flex gap-4">
+            <label class="inline-flex items-center cursor-pointer">
+                <input type="radio" name="market_type" value="TW" checked class="form-radio text-blue-600" onchange="calculateDynamicResult()">
+                <span class="ml-2 text-sm text-gray-700">台股 (TWD)</span>
+            </label>
+            <label class="inline-flex items-center cursor-pointer">
+                <input type="radio" name="market_type" value="US" class="form-radio text-blue-600" onchange="calculateDynamicResult()">
+                <span class="ml-2 text-sm text-gray-700">美股 (USD)</span>
+            </label>
         </div>
     </div>
-</div>
+
+    <div class="grid grid-cols-2 gap-4">
+        <div>
+            <label class="block text-sm font-medium text-gray-700">標的代碼</label>
+            <input type="text" id="modalTicker" required class="w-full border rounded p-2 text-sm" placeholder="e.g. 0050, AAPL" oninput="checkStockAndCalculate()">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700">交易類型</label>
+            <select id="modalType" class="w-full border rounded p-2 text-sm" onchange="checkStockAndCalculate()">
+                <option value="buy">買入</option>
+                <option value="sell">賣出</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+        <div>
+            <label class="block text-sm font-medium text-gray-700">股數</label>
+            <input type="number" id="modalShares" step="any" required class="w-full border rounded p-2 text-sm" oninput="checkStockAndCalculate()">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700">成交價格</label>
+            <input type="number" id="modalPrice" step="any" required class="w-full border rounded p-2 text-sm" oninput="checkStockAndCalculate()">
+        </div>
+    </div>
+
+    <div>
+        <div class="flex justify-between items-center mb-1">
+            <label class="block text-sm font-medium text-gray-700">手續費</label>
+            <label class="inline-flex items-center text-xs text-gray-500 cursor-pointer">
+                <input type="checkbox" id="autoCommission" checked class="rounded text-blue-600 mr-1" onchange="toggleCommissionInput()">
+                自動計算費率
+            </label>
+        </div>
+        <input type="number" id="modalCommission" step="any" class="w-full border rounded p-2 text-sm bg-gray-50" readonly value="0" oninput="calculateDynamicResult()">
+    </div>
+
+    <div id="stockWarning" class="hidden text-xs text-red-600 bg-red-50 p-2 rounded border border-red-200">
+        <i class="fas fa-exclamation-triangle mr-1"></i> <span id="warningMessage">庫存不足！</span>
+    </div>
+
+    <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
+        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider">動態試算結果</div>
+        <div class="flex justify-between text-xs text-gray-600">
+            <span>券商原始總價:</span>
+            <span id="calcRawTotal">$0</span>
+        </div>
+        <div class="flex justify-between text-xs text-gray-600">
+            <span>交易稅/手續費:</span>
+            <span id="calcCommission">$0</span>
+        </div>
+        <div class="border-t my-1"></div>
+        <div class="flex justify-between items-center text-sm">
+            <span class="font-medium text-gray-800">預估交割總金額:</span>
+            <span id="calcFinalTotal" class="font-bold text-blue-600 text-base">$0</span>
+        </div>
+    </div>
+
+    <div>
+        <label class="block text-sm font-medium text-gray-700">交易日期</label>
+        <input type="date" id="modalDate" required class="w-full border rounded p-2 text-sm">
+    </div>
+
+    <div class="flex justify-end gap-2 pt-2">
+        <button type="button" onclick="closeAddModal()" class="px-4 py-2 border rounded text-sm text-gray-600 hover:bg-gray-50">取消</button>
+        <button type="submit" id="submitBtn" class="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">確認送出</button>
+    </div>
+</form>
 
 <!-- 刪除確認 Modal -->
 <div id="deleteModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-50 p-4" style="display:none">
@@ -215,6 +249,90 @@
 
 <script>
 let currentFilter='all', currentUser=null, portfolioData=[], transactionsData=[], deleteId=null;
+
+// 控制手續費輸入狀態
+function toggleCommissionInput() {
+    const autoCheck = document.getElementById('autoCommission').checked;
+    const commInput = document.getElementById('modalCommission');
+    if (autoCheck) {
+        commInput.readOnly = true;
+        commInput.classList.add('bg-gray-50');
+    } else {
+        commInput.readOnly = false;
+        commInput.classList.remove('bg-gray-50');
+    }
+    calculateDynamicResult();
+}
+
+// 整合資產庫存檢查與試算
+function checkStockAndCalculate() {
+    const ticker = document.getElementById('modalTicker').value.trim().toUpperCase();
+    const type = document.getElementById('modalType').value;
+    const sharesInput = parseFloat(document.getElementById('modalShares').value) || 0;
+    
+    const warningDiv = document.getElementById('stockWarning');
+    const warningMsg = document.getElementById('warningMessage');
+    const submitBtn = document.getElementById('submitBtn');
+    
+    warningDiv.classList.add('hidden');
+    submitBtn.disabled = false;
+    submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+
+    // 對應你原始碼中的全域變數 portfolioData 進行檢查
+    if (type === 'sell' && ticker && typeof portfolioData !== 'undefined') {
+        const stockItem = portfolioData.find(item => item.ticker.toUpperCase() === ticker);
+        const currentShares = stockItem ? parseFloat(stockItem.shares) : 0;
+
+        if (sharesInput > currentShares) {
+            warningMsg.innerText = `庫存不足！你目前持有 ${ticker} 共 ${currentShares} 股，無法賣出 ${sharesInput} 股。`;
+            warningDiv.classList.remove('hidden');
+            submitBtn.disabled = true;
+            submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        }
+    }
+    calculateDynamicResult();
+}
+
+// 動態試算核心
+function calculateDynamicResult() {
+    const market = document.querySelector('input[name="market_type"]:checked').value;
+    const type = document.getElementById('modalType').value;
+    const shares = parseFloat(document.getElementById('modalShares').value) || 0;
+    const price = parseFloat(document.getElementById('modalPrice').value) || 0;
+    const autoCheck = document.getElementById('autoCommission').checked;
+    const commInput = document.getElementById('modalCommission');
+
+    const rawTotal = shares * price;
+    let commission = 0;
+
+    if (autoCheck) {
+        if (rawTotal > 0) {
+            if (market === 'TW') {
+                // 台股手續費 = 總額 * 0.001425 * 0.6 (假設券商打6折)，最低20元
+                let twFee = Math.round(rawTotal * 0.001425 * 0.6);
+                commission = Math.max(20, twFee);
+                // 賣出另外加計 0.003 (千分之三) 證交稅
+                if (type === 'sell') {
+                    commission += Math.floor(rawTotal * 0.003);
+                }
+            } else {
+                // 美股自動計算（此處預設免手續費，可依需求調整）
+                commission = 0;
+            }
+        }
+        commInput.value = commission;
+    } else {
+        commission = parseFloat(commInput.value) || 0;
+    }
+
+    // 計算最終交割款
+    const finalTotal = (type === 'buy') ? (rawTotal + commission) : (rawTotal - commission);
+    const sign = (market === 'TW') ? 'NT$ ' : '$ ';
+
+    document.getElementById('calcRawTotal').innerText = sign + Math.round(rawTotal).toLocaleString();
+    document.getElementById('calcCommission').innerText = sign + Math.round(commission).toLocaleString();
+    document.getElementById('calcFinalTotal').innerText = sign + Math.round(finalTotal).toLocaleString();
+}
 
 function toast(msg,ok=true){
     const el=document.createElement('div');el.className='toast';

@@ -1502,7 +1502,7 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
                         ret_5y = round((((current_p / p_5y) ** (1/5)) - 1) * 100, 2) if p_5y > 0 else 0.0
         except Exception as ex:
             logger.warning(f"⚠️ {ticker} 歷史報酬率自行計算失敗: {ex}")
-
+            
     # 歷史報酬月線
     history = []
     div_yield, payout_freq = 0.0, "不配息"
@@ -1570,9 +1570,9 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         'expense_ratio': expense_ratio,
         'dividend_yield': div_yield, 
         'payout_freq': payout_freq,
-        'annual_return_1y':     ret_1y, # ✨ 填入動態兜底後的精準數字
-        'annual_return_3y':     ret_3y,
-        'annual_return_5y':     ret_5y,
+        'annual_return_1y': float(annual_return_1y) if (annual_return_1y and annual_return_1y == annual_return_1y) else 0.0,
+        'annual_return_3y': float(annual_return_3y) if (annual_return_3y and annual_return_3y == annual_return_3y) else 0.0,
+        'annual_return_5y': float(annual_return_5y) if (annual_return_5y and annual_return_5y == annual_return_5y) else 0.0
     }
 
 
@@ -2508,8 +2508,31 @@ async def add_transaction(request: Request):
 
         if shares <= 0 or price <= 0:
             return safe_json({"status":"error","message":"股數和價格必須大於0"}, 400)
-
+        
+        if not ticker or t_type not in ['buy', 'sell'] or shares <= 0 or price <= 0:
+            return safe_json({"status":"error","message":"輸入欄位資料格式不正確"}, 400)
+        
         with get_db() as (conn, cursor):
+            # ─────────────────────────────────────────────────────────────
+            # 🛡️ 【後端防禦：加入對應你系統的庫存安全校驗】
+            # ─────────────────────────────────────────────────────────────
+            if t_type == 'sell':
+                cursor.execute(
+                    "SELECT shares FROM user_portfolio WHERE user_id = %s AND ticker = %s", 
+                    (uid, ticker)
+                )
+                portfolio_record = cursor.fetchone()
+                
+                # 避開 Bug 的核心：如果被刪除或查無資料，current_shares 為 0.0
+                current_shares = float(portfolio_record['shares']) if portfolio_record else 0.0
+                
+                if shares > current_shares:
+                    return safe_json({
+                        "status": "error",
+                        "message": f"後端校驗失敗：庫存不足，無法賣出！當前持有數量為 {current_shares} 股。"
+                    }, 400)
+            # ─────────────────────────────────────────────────────────────
+
             cursor.execute("SELECT ticker FROM etf_master WHERE ticker=%s", (ticker,))
             if not cursor.fetchone():
                 cursor.execute("INSERT OR REPLACE INTO etf_master (ticker,name,market) VALUES (%s,%s,%s)",
