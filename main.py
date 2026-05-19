@@ -2464,6 +2464,14 @@ async def get_portfolio(request: Request):
             r['shares']        = float(r['shares'])
             r['avg_cost']      = float(r['avg_cost'])
             r['current_price'] = float(r['current_price'])
+
+            # 💡 【核心修改】如果是美股，在計算總額前先將「均成本」與「現價」乘以匯率換算成台幣
+            if r.get('market') == 'US':
+                usd_to_twd_rate = 32.5  # 這裡可以自由設定你想要的換算匯率
+                r['avg_cost'] = round(r['avg_cost'] * usd_to_twd_rate, 2)
+                r['current_price'] = round(r['current_price'] * usd_to_twd_rate, 2)
+
+            # 接下來的計算就會自動全部帶入台幣數值
             r['cost']          = round(r['shares'] * r['avg_cost'], 2)
             r['market_value']  = round(r['shares'] * r['current_price'], 2)
             r['profit']        = round(r['market_value'] - r['cost'], 2)
@@ -2471,19 +2479,10 @@ async def get_portfolio(request: Request):
             r['price_change_percent'] = round(float(r['price_change_percent']), 2)
             r['dividend_yield']       = round(float(r['dividend_yield']), 2)
             
-            # 💡 【新增】為前端每一列提供正確的貨幣符號
-            r['currency_sign'] = '$ ' if r.get('market') == 'US' else 'NT$ '
-            
-            # 💡 【修改】計算加總時，如果是美股，則乘以匯率（暫定 32.5）換算成台幣
-            if r.get('market') == 'US':
-                usd_to_twd_rate = 32.5  # 這裡可設定為固定匯率，未來也可以改成抓 API 的動態匯率
-                total_cost  += r['cost'] * usd_to_twd_rate
-                total_value += r['market_value'] * usd_to_twd_rate
-            else:
-                total_cost  += r['cost']
-                total_value += r['market_value']
+            # 這裡的累加自然而然就會是純台幣相加，不會再有幣別混雜問題
+            total_cost  += r['cost']
+            total_value += r['market_value']
 
-        # 這裡算出來的 total_profit 與 total_return 就會是完全正確的台幣計價損益了！
         total_profit = round(total_value - total_cost, 2)
         total_return = round(total_profit / total_cost * 100 if total_cost > 0 else 0, 2)
         

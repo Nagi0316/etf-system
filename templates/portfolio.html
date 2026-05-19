@@ -464,10 +464,9 @@ async function loadData(){
             portfolioData=pr.data||[];
             if(pr.summary){
                 const s=pr.summary;
-                // 💡 【修改】總資產符號改為 NT$ 
                 document.getElementById('total-assets').textContent=`NT$ ${Math.round(s.total_value).toLocaleString()}`;
                 const profitUp=s.total_profit>=0;
-                // 💡 【修改】總損益符號改為 NT$
+                // 💡 將累積損益卡片改為 NT$
                 document.getElementById('total-profit').textContent=`${profitUp?'+':'-'} NT$ ${Math.abs(Math.round(s.total_profit)).toLocaleString()}`;
                 document.getElementById('total-profit').className=`text-xl font-bold tabular-nums ${profitUp?'text-red-500':'text-green-600'}`;
                 document.getElementById('total-return').textContent=`報酬率 ${profitUp?'+':''}${s.total_return.toFixed(1)}%`;
@@ -499,16 +498,13 @@ function renderPortfolio(){
         return;
     }
     tbody.innerHTML=rows.map(item=>{
+        tbody.innerHTML=rows.map(item=>{
         const cp=item.current_price||item.avg_cost;
         const mv=item.market_value||(item.shares*cp);
         const cost=item.cost||(item.shares*item.avg_cost);
         const profit=item.profit||(mv-cost);
         const retPct=item.return_pct||(cost>0?profit/cost*100:0);
         const up=profit>=0;
-
-        // 💡 讀取後端傳回的 item.currency_sign 欄位
-        const sign = item.currency_sign || '';
-
         return `
         <tr class="row-hover border-b border-slate-50 transition-colors">
             <td class="px-4 py-3.5">
@@ -516,10 +512,12 @@ function renderPortfolio(){
                 <div class="text-xs text-slate-400">${item.name||''}</div>
             </td>
             <td class="px-4 py-3.5 text-right text-slate-700 tabular-nums">${item.shares.toLocaleString()}</td>
-            <td class="px-4 py-3.5 text-right text-slate-600 tabular-nums">${item.avg_cost.toFixed(2)}</td>
-            <td class="px-4 py-3.5 text-right font-semibold text-slate-800 tabular-nums">${cp.toFixed(2)}</td>
-            <td class="px-4 py-3.5 text-right font-semibold text-slate-800 tabular-nums">${Math.round(mv).toLocaleString()}</td>
-            <td class="px-4 py-3.5 text-right font-semibold tabular-nums ${up?'text-red-500':'text-green-600'}">${up?'+':''}${Math.round(profit).toLocaleString()}</td>
+            
+            <td class="px-4 py-3.5 text-right text-slate-600 tabular-nums">NT$ ${item.avg_cost.toFixed(2)}</td>
+            <td class="px-4 py-3.5 text-right font-semibold text-slate-800 tabular-nums">NT$ ${cp.toFixed(2)}</td>
+            <td class="px-4 py-3.5 text-right font-semibold text-slate-800 tabular-nums">NT$ ${Math.round(mv).toLocaleString()}</td>
+            <td class="px-4 py-3.5 text-right font-semibold tabular-nums ${up?'text-red-500':'text-green-600'}">${up?'+':''}NT$ ${Math.round(profit).toLocaleString()}</td>
+            
             <td class="px-4 py-3.5 text-right font-semibold tabular-nums hidden md:table-cell ${up?'text-red-500':'text-green-600'}">${up?'+':''}${retPct.toFixed(1)}%</td>
             <td class="px-4 py-3.5 text-center">
                 <button onclick="openTradeModal('${item.ticker}','buy')" class="text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-2 py-1 rounded mr-1">買</button>
