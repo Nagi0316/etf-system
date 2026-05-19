@@ -468,6 +468,9 @@ function openTradeModal(ticker,type){
     if(ticker==='new'){document.getElementById('trade-shares').value='';document.getElementById('trade-price').value='';}
     document.getElementById('trade-commission').value='0';
     document.getElementById('tradeModal').style.display='flex';
+    document.getElementById('autoCommission').checked = false;
+    toggleCommissionInput(); // 解除輸入框唯讀
+    calculateDynamicResult(); // 觸發底部卡片動態試算
 }
 function closeTradeModal(){document.getElementById('tradeModal').style.display='none';}
 
