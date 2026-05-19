@@ -261,7 +261,8 @@ async function saveTransaction(e) {
     e.preventDefault();
     if(!currentUser) return;
     
-    const ticker = document.getElementById('modalTicker').value.trim().upper();
+    // 修正：將 .upper() 改為 .toUpperCase()
+    const ticker = document.getElementById('modalTicker').value.trim().toUpperCase();
     const type = document.getElementById('modalType').value;
     const shares = document.getElementById('modalShares').value;
     const price = document.getElementById('modalPrice').value;
@@ -283,7 +284,8 @@ async function saveTransaction(e) {
                 'Content-Type': 'application/json',
                 'X-User-Id': currentUser.id
             },
-            body: json.stringify({
+            // 修正：將 json.stringify 改為 大寫的 JSON.stringify
+            body: JSON.stringify({
                 ticker: ticker,
                 transaction_type: type,
                 shares: shares,
@@ -303,7 +305,7 @@ async function saveTransaction(e) {
     } catch {
         toast('網路錯誤', false);
     }
-} // ⬅️ 確保原本的函數在這裡確實關閉了！
+}
 
 // 2. 把這三個進階功能函數「獨立擺在外面」，不要塞在別人的函數身體裡
 function toggleCommissionInput() {
