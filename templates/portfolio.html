@@ -39,7 +39,6 @@
 </nav>
 
 <div class="max-w-7xl mx-auto px-4 py-6">
-    <!-- 頁首 -->
     <div class="flex items-center justify-between mb-5">
         <div>
             <h1 class="text-xl font-bold text-slate-800">投資庫存</h1>
@@ -51,27 +50,25 @@
         </button>
     </div>
 
-    <!-- 登入提示 -->
     <div id="login-prompt" class="hidden bg-white rounded-xl border border-slate-100 py-16 text-center mb-5">
         <i class="fas fa-lock text-3xl text-slate-300 mb-3 block"></i>
         <p class="text-slate-500 mb-4">請先登入以查看庫存</p>
         <a href="/auth" class="bg-indigo-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-indigo-700">前往登入</a>
     </div>
 
-    <!-- 概覽卡片 -->
     <div id="summary-cards" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
         <div class="bg-indigo-600 rounded-xl p-4 text-white">
             <p class="text-xs text-indigo-200 mb-1">總市值</p>
-            <p id="total-assets" class="text-xl font-bold tabular-nums">$ 0</p>
+            <p id="total-assets" class="text-xl font-bold tabular-nums">NT$ 0</p>
         </div>
         <div class="bg-white rounded-xl border border-slate-100 p-4">
             <p class="text-xs text-slate-400 mb-1">累積損益</p>
-            <p id="total-profit" class="text-xl font-bold tabular-nums text-slate-800">$ 0</p>
+            <p id="total-profit" class="text-xl font-bold tabular-nums text-slate-800">NT$ 0</p>
             <p id="total-return" class="text-xs text-slate-400 mt-0.5">報酬率 0%</p>
         </div>
         <div class="bg-white rounded-xl border border-slate-100 p-4">
             <p class="text-xs text-slate-400 mb-1">預估年領股息</p>
-            <p id="estimated-dividend" class="text-xl font-bold tabular-nums text-emerald-600">$ 0</p>
+            <p id="estimated-dividend" class="text-xl font-bold tabular-nums text-emerald-600">NT$ 0</p>
         </div>
         <div class="bg-white rounded-xl border border-slate-100 p-4">
             <p class="text-xs text-slate-400 mb-1">持有檔數</p>
@@ -79,7 +76,6 @@
         </div>
     </div>
 
-    <!-- 市場篩選 + 表格 -->
     <div class="flex items-center gap-3 mb-3">
         <div class="flex bg-slate-100 rounded-lg p-0.5">
             <button id="btn-all" onclick="filterMarket('all')" class="px-4 py-1.5 rounded-md text-sm font-semibold bg-white text-slate-800 shadow-sm transition-all">全部</button>
@@ -110,7 +106,6 @@
         </table>
     </div>
 
-    <!-- 交易明細 -->
     <div class="flex items-center justify-between mb-3">
         <h2 class="font-semibold text-slate-700 text-sm">交易明細</h2>
         <button onclick="exportTransactions()" class="text-xs text-indigo-600 hover:text-indigo-800">
@@ -139,7 +134,6 @@
     </div>
 </div>
 
-<!-- 手機底部 -->
 <nav class="fixed bottom-0 w-full bg-white border-t border-slate-100 z-50 md:hidden">
     <div class="flex justify-around py-2">
         <a href="/etf-list"  class="flex flex-col items-center gap-0.5 text-slate-400"><i class="fas fa-list text-lg"></i><span class="text-[10px]">精選</span></a>
@@ -150,7 +144,6 @@
     </div>
 </nav>
 
-<!-- 交易 Modal -->
 <div id="addModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden justify-center items-center z-50">
     <div class="bg-white rounded-lg shadow-xl p-6 w-96 max-h-[90vh] overflow-y-auto">
         <h3 id="modalTitle" class="text-lg font-semibold text-gray-900 mb-4">新增交易紀錄</h3>
@@ -244,7 +237,6 @@
     </div>
 </div>
 
-<!-- 刪除確認 Modal -->
 <div id="deleteModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-50 p-4">
     <div class="bg-white rounded-2xl w-full max-w-xs p-6 shadow-xl text-center">
         <i class="fas fa-exclamation-triangle text-3xl text-red-400 mb-3 block"></i>
@@ -346,7 +338,6 @@ function checkStockAndCalculate() {
         submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
     }
 
-    // 🛡️ 修正：將 holdingsData 改為全域變數中確實存在的 portfolioData
     if (type === 'sell' && ticker && portfolioData.length) {
         const stockItem = portfolioData.find(item => item.ticker.toUpperCase() === ticker);
         const currentShares = stockItem ? parseFloat(stockItem.shares) : 0;
@@ -375,7 +366,6 @@ function calculateDynamicResult() {
     const commInput = document.getElementById('modalCommission');
     const rateInput = document.getElementById('modalExchangeRate');
 
-    // 控制匯率欄位顯示/隱藏
     const rateGroup = document.getElementById('exchangeRateGroup');
     if (market === 'US') {
         rateGroup.classList.remove('hidden');
@@ -383,10 +373,9 @@ function calculateDynamicResult() {
         rateGroup.classList.add('hidden');
     }
 
-    let rawTotal = shares * price; // 原始總價 (台股為台幣，美股為美元)
+    let rawTotal = shares * price; 
     let commission = 0;
 
-    // 計算手續費
     if (autoCheck) {
         if (rawTotal > 0) {
             if (market === 'TW') {
@@ -394,7 +383,7 @@ function calculateDynamicResult() {
                 commission = Math.max(20, twFee);
                 if (type === 'sell') commission += Math.floor(rawTotal * 0.003);
             } else {
-                commission = 0; // 美股券商通常免手續費
+                commission = 0; 
             }
         }
         if (commInput) commInput.value = commission;
@@ -402,29 +391,23 @@ function calculateDynamicResult() {
         commission = parseFloat(commInput.value) || 0;
     }
 
-    // 計算最終金額
     let finalTotal = (type === 'buy') ? (rawTotal + commission) : (rawTotal - commission);
-    
-    // 💡 核心改動：如果是美股，將最終預估交割金額乘以匯率換算成台幣
     let displayTotal = finalTotal;
-    let sign = 'NT$ '; // 預設全部顯示台幣
     
     if (market === 'US') {
         const rate = parseFloat(rateInput.value) || 32.5;
-        displayTotal = finalTotal * rate; // 美元轉台幣
+        displayTotal = finalTotal * rate; 
     }
 
     const calcRawTotalEl = document.getElementById('calcRawTotal');
     const calcCommissionEl = document.getElementById('calcCommission');
     const calcFinalTotalEl = document.getElementById('calcFinalTotal');
 
-    // 試算結果呈現
     if (calcRawTotalEl) calcRawTotalEl.innerText = (market === 'TW' ? 'NT$ ' : '$ ') + Math.round(rawTotal).toLocaleString();
     if (calcCommissionEl) calcCommissionEl.innerText = (market === 'TW' ? 'NT$ ' : '$ ') + Math.round(commission).toLocaleString();
-    
-    // 交割總金額顯示換算後的台幣
     if (calcFinalTotalEl) calcFinalTotalEl.innerText = 'NT$ ' + Math.round(displayTotal).toLocaleString();
 }
+
 function toast(msg,ok=true){
     const el=document.createElement('div');el.className='toast';
     el.style.background=ok?'#10b981':'#ef4444';
@@ -466,12 +449,13 @@ async function loadData(){
                 const s=pr.summary;
                 document.getElementById('total-assets').textContent=`NT$ ${Math.round(s.total_value).toLocaleString()}`;
                 const profitUp=s.total_profit>=0;
-                // 💡 將累積損益卡片改為 NT$
                 document.getElementById('total-profit').textContent=`${profitUp?'+':'-'} NT$ ${Math.abs(Math.round(s.total_profit)).toLocaleString()}`;
                 document.getElementById('total-profit').className=`text-xl font-bold tabular-nums ${profitUp?'text-red-500':'text-green-600'}`;
                 document.getElementById('total-return').textContent=`報酬率 ${profitUp?'+':''}${s.total_return.toFixed(1)}%`;
+                
+                // 💡 這裡同步更新為台幣符號 NT$
                 const estDiv=portfolioData.reduce((acc,item)=>acc+(item.market_value||0)*(item.dividend_yield||0)/100,0);
-                document.getElementById('estimated-dividend').textContent=`$ ${Math.round(estDiv).toLocaleString()}`;
+                document.getElementById('estimated-dividend').textContent=`NT$ ${Math.round(estDiv).toLocaleString()}`;
                 document.getElementById('holding-count').textContent=`${portfolioData.length} 檔`;
             }
         }
@@ -489,6 +473,7 @@ function filterMarket(m){
     renderPortfolio();
 }
 
+// 💡 修正重複 map 語法錯誤的區塊
 function renderPortfolio(){
     const tbody=document.getElementById('portfolio-table-body');
     let rows=portfolioData;
@@ -497,8 +482,8 @@ function renderPortfolio(){
         tbody.innerHTML=`<tr><td colspan="8" class="px-4 py-14 text-center text-slate-400 text-sm">${portfolioData.length?'此市場無庫存':'尚無庫存記錄'}</td></tr>`;
         return;
     }
+    
     tbody.innerHTML=rows.map(item=>{
-        tbody.innerHTML=rows.map(item=>{
         const cp=item.current_price||item.avg_cost;
         const mv=item.market_value||(item.shares*cp);
         const cost=item.cost||(item.shares*item.avg_cost);
@@ -555,11 +540,9 @@ function renderTransactions(){
     }).join('');
 }
 
-// 4. 修正後的彈窗開啟函式
 function openTradeModal(ticker, type){
     if(!currentUser){toast('請先登入',false);setTimeout(()=>location.href='/auth',1000);return;}
     
-    // 統一修正為操作對應的欄位 ID 
     document.getElementById('modalTitle').textContent = ticker === 'new' ? '新增交易紀錄' : `${ticker} — ${type === 'buy' ? '買入' : '賣出'}`;
     document.getElementById('modalTicker').value = ticker === 'new' ? '' : ticker;
     document.getElementById('modalType').value = type;
@@ -574,7 +557,7 @@ function openTradeModal(ticker, type){
     }
     
     document.getElementById('modalCommission').value = '0';
-    document.getElementById('addModal').style.display = 'flex'; // 顯示彈窗
+    document.getElementById('addModal').style.display = 'flex'; 
     document.getElementById('autoCommission').checked = true;
     
     toggleCommissionInput(); 
@@ -586,8 +569,8 @@ function closeAddModal(){
     editId = null;
 }
 
-function openDeleteModal(id){deleteId=id;document.getElementById('deleteModal').style.display='flex';}
-function closeDeleteModal(){document.getElementById('deleteModal').style.display='none';deleteId=null;}
+function openDeleteModal(id){deleteId=id;document.getElementById('deleteModal').style.display = 'flex';}
+function closeDeleteModal(){document.getElementById('deleteModal').style.display = 'none';deleteId=null;}
 
 async function confirmDelete(){
     if(!deleteId||!currentUser)return;
