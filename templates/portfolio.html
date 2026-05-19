@@ -278,9 +278,9 @@ function checkStockAndCalculate() {
     submitBtn.disabled = false;
     submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
 
-    // 對應你原始碼中的全域變數 portfolioData 進行檢查
-    if (type === 'sell' && ticker && typeof portfolioData !== 'undefined') {
-        const stockItem = portfolioData.find(item => item.ticker.toUpperCase() === ticker);
+    // 🛡️ 修正：將 portfolioData 改為 holdingsData
+    if (type === 'sell' && ticker && typeof holdingsData !== 'undefined') {
+        const stockItem = holdingsData.find(item => item.ticker.toUpperCase() === ticker);
         const currentShares = stockItem ? parseFloat(stockItem.shares) : 0;
 
         if (sharesInput > currentShares) {
@@ -308,24 +308,21 @@ function calculateDynamicResult() {
     if (autoCheck) {
         if (rawTotal > 0) {
             if (market === 'TW') {
-                // 台股手續費 = 總額 * 0.001425 * 0.6 (假設券商打6折)，最低20元
                 let twFee = Math.round(rawTotal * 0.001425 * 0.6);
                 commission = Math.max(20, twFee);
-                // 賣出另外加計 0.003 (千分之三) 證交稅
                 if (type === 'sell') {
                     commission += Math.floor(rawTotal * 0.003);
                 }
             } else {
-                // 美股自動計算（此處預設免手續費，可依需求調整）
                 commission = 0;
             }
         }
         commInput.value = commission;
     } else {
+        // 修正：手動輸入時，確實撈取使用者輸入的值
         commission = parseFloat(commInput.value) || 0;
     }
 
-    // 計算最終交割款
     const finalTotal = (type === 'buy') ? (rawTotal + commission) : (rawTotal - commission);
     const sign = (market === 'TW') ? 'NT$ ' : '$ ';
 
