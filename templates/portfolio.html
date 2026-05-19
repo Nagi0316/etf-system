@@ -231,6 +231,10 @@
                     <span id="calcFinalTotal" class="font-bold text-blue-600 text-base">$0</span>
                 </div>
             </div>
+            <div id="exchangeRateGroup" class="hidden">
+                <label class="block text-sm font-medium text-gray-700">結算匯率 (USD/TWD)</label>
+                <input type="number" id="modalExchangeRate" step="any" value="32.5" class="w-full border rounded p-2 text-sm" oninput="calculateDynamicResult()">
+            </div>
 
             <div class="flex justify-end gap-2 pt-2">
                 <button type="button" onclick="closeAddModal()" class="px-4 py-2 border rounded text-sm text-gray-600 hover:bg-gray-50">取消</button>
@@ -369,20 +373,28 @@ function calculateDynamicResult() {
     const price = parseFloat(document.getElementById('modalPrice').value) || 0;
     const autoCheck = document.getElementById('autoCommission').checked;
     const commInput = document.getElementById('modalCommission');
+    const rateInput = document.getElementById('modalExchangeRate');
 
-    const rawTotal = shares * price;
+    // 控制匯率欄位顯示/隱藏
+    const rateGroup = document.getElementById('exchangeRateGroup');
+    if (market === 'US') {
+        rateGroup.classList.remove('hidden');
+    } else {
+        rateGroup.classList.add('hidden');
+    }
+
+    let rawTotal = shares * price; // 原始總價 (台股為台幣，美股為美元)
     let commission = 0;
 
+    // 計算手續費
     if (autoCheck) {
         if (rawTotal > 0) {
             if (market === 'TW') {
                 let twFee = Math.round(rawTotal * 0.001425 * 0.6);
                 commission = Math.max(20, twFee);
-                if (type === 'sell') {
-                    commission += Math.floor(rawTotal * 0.003);
-                }
+                if (type === 'sell') commission += Math.floor(rawTotal * 0.003);
             } else {
-                commission = 0;
+                commission = 0; // 美股券商通常免手續費
             }
         }
         if (commInput) commInput.value = commission;
@@ -390,18 +402,29 @@ function calculateDynamicResult() {
         commission = parseFloat(commInput.value) || 0;
     }
 
-    const finalTotal = (type === 'buy') ? (rawTotal + commission) : (rawTotal - commission);
-    const sign = (market === 'TW') ? 'NT$ ' : '$ ';
+    // 計算最終金額
+    let finalTotal = (type === 'buy') ? (rawTotal + commission) : (rawTotal - commission);
+    
+    // 💡 核心改動：如果是美股，將最終預估交割金額乘以匯率換算成台幣
+    let displayTotal = finalTotal;
+    let sign = 'NT$ '; // 預設全部顯示台幣
+    
+    if (market === 'US') {
+        const rate = parseFloat(rateInput.value) || 32.5;
+        displayTotal = finalTotal * rate; // 美元轉台幣
+    }
 
     const calcRawTotalEl = document.getElementById('calcRawTotal');
     const calcCommissionEl = document.getElementById('calcCommission');
     const calcFinalTotalEl = document.getElementById('calcFinalTotal');
 
-    if (calcRawTotalEl) calcRawTotalEl.innerText = sign + Math.round(rawTotal).toLocaleString();
-    if (calcCommissionEl) calcCommissionEl.innerText = sign + Math.round(commission).toLocaleString();
-    if (calcFinalTotalEl) calcFinalTotalEl.innerText = sign + Math.round(finalTotal).toLocaleString();
+    // 試算結果呈現
+    if (calcRawTotalEl) calcRawTotalEl.innerText = (market === 'TW' ? 'NT$ ' : '$ ') + Math.round(rawTotal).toLocaleString();
+    if (calcCommissionEl) calcCommissionEl.innerText = (market === 'TW' ? 'NT$ ' : '$ ') + Math.round(commission).toLocaleString();
+    
+    // 交割總金額顯示換算後的台幣
+    if (calcFinalTotalEl) calcFinalTotalEl.innerText = 'NT$ ' + Math.round(displayTotal).toLocaleString();
 }
-
 function toast(msg,ok=true){
     const el=document.createElement('div');el.className='toast';
     el.style.background=ok?'#10b981':'#ef4444';
