@@ -173,7 +173,7 @@
             <div class="grid grid-cols-2 gap-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700">標的代碼</label>
-                    <input type="text" id="modalTicker" required class="w-full border rounded p-2 text-sm" placeholder="e.g. 0050, AAPL" oninput="checkStockAndCalculate()">
+                    <input type="text" id="modalTicker" required class="w-full border rounded p-2 text-sm" placeholder="例：0050 或 SPY" oninput="checkStockAndCalculate()">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700">交易類型</label>
@@ -200,7 +200,7 @@
                     <label class="block text-sm font-medium text-gray-700">手續費</label>
                     <label class="inline-flex items-center text-xs text-gray-500 cursor-pointer">
                         <input type="checkbox" id="autoCommission" checked class="rounded text-blue-600 mr-1" onchange="toggleCommissionInput()">
-                        自动计算费率
+                        自動計算費率
                     </label>
                 </div>
                 <input type="number" id="modalCommission" step="any" class="w-full border rounded p-2 text-sm bg-gray-50" readonly value="0" oninput="calculateDynamicResult()">

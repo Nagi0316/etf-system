@@ -2509,14 +2509,14 @@ async def add_transaction(request: Request):
         if shares <= 0 or price <= 0:
             return safe_json({"status":"error","message":"股數和價格必須大於0"}, 400)
         
-        if not ticker or t_type not in ['buy', 'sell'] or shares <= 0 or price <= 0:
+        if not ticker or ttype not in ['buy', 'sell'] or shares <= 0 or price <= 0:
             return safe_json({"status":"error","message":"輸入欄位資料格式不正確"}, 400)
         
         with get_db() as (conn, cursor):
             # ─────────────────────────────────────────────────────────────
             # 🛡️ 【後端防禦：加入對應你系統的庫存安全校驗】
             # ─────────────────────────────────────────────────────────────
-            if t_type == 'sell':
+            if ttype == 'sell':
                 cursor.execute(
                     "SELECT shares FROM user_portfolio WHERE user_id = %s AND ticker = %s", 
                     (uid, ticker)
