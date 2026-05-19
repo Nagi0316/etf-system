@@ -153,11 +153,11 @@
                 <label class="block text-sm font-medium text-gray-700 mb-1">市場類型</label>
                 <div class="flex gap-4">
                     <label class="inline-flex items-center cursor-pointer">
-                        <input type="radio" name="market_type" value="TW" checked class="form-radio text-blue-600" onchange="calculateDynamicResult()">
+                        <input type="radio" name="market_type" value="TW" checked class="form-radio text-blue-600" onchange="checkStockAndCalculate()">
                         <span class="ml-2 text-sm text-gray-700">台股 (TWD)</span>
                     </label>
                     <label class="inline-flex items-center cursor-pointer">
-                        <input type="radio" name="market_type" value="US" class="form-radio text-blue-600" onchange="calculateDynamicResult()">
+                        <input type="radio" name="market_type" value="US" class="form-radio text-blue-600" onchange="checkStockAndCalculate()">
                         <span class="ml-2 text-sm text-gray-700">美股 (USD)</span>
                     </label>
                 </div>
@@ -268,6 +268,13 @@ async function saveTransaction(e) {
         toast('請填寫完整欄位', false);
         return;
     }
+
+    const marketEl = document.querySelector('input[name="market_type"]:checked');
+    const market = marketEl ? marketEl.value : 'TW';
+    if ((market === 'TW' && !/^\d/.test(ticker)) || (market === 'US' && !/^[A-Z]+$/.test(ticker))) {
+        toast('標的代碼與選擇的市場類型不符，無法送出！', false);
+        return;
+    }
     
     const url = editId ? `/api/portfolio/transaction/${editId}` : '/api/portfolio/transaction';
     const method = editId ? 'PUT' : 'POST';
@@ -338,6 +345,33 @@ function checkStockAndCalculate() {
         submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
     }
 
+    // 💡 1. 驗證市場類型與標的代碼格式是否相符
+    const marketEl = document.querySelector('input[name="market_type"]:checked');
+    if (marketEl && ticker) {
+        const market = marketEl.value;
+        const isNumeric = /^\d/.test(ticker);   // 台股代碼通常以數字開頭 (如 0050)
+        const isAlpha = /^[A-Z]+$/.test(ticker); // 美股代碼應為純英文字母 (如 SPY)
+        
+        if (market === 'TW' && !isNumeric) {
+            if (warningMsg) warningMsg.innerText = `市場與代碼不符！台股 ETF 代碼通常為數字（如：0050）。`;
+            if (warningDiv) warningDiv.classList.remove('hidden');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+            return;
+        } else if (market === 'US' && !isAlpha) {
+            if (warningMsg) warningMsg.innerText = `市場與代碼不符！美股 ETF 代碼通常為純英文字母（如：SPY）。`;
+            if (warningDiv) warningDiv.classList.remove('hidden');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+            return;
+        }
+    }
+
+    // 2. 庫存不足檢查 (原本的賣出邏輯)
     if (type === 'sell' && ticker && portfolioData.length) {
         const stockItem = portfolioData.find(item => item.ticker.toUpperCase() === ticker);
         const currentShares = stockItem ? parseFloat(stockItem.shares) : 0;
@@ -547,6 +581,15 @@ function openTradeModal(ticker, type){
     document.getElementById('modalTicker').value = ticker === 'new' ? '' : ticker;
     document.getElementById('modalType').value = type;
     
+    // 💡 優化：如果是從既有庫存點選「買」或「賣」，自動依據該 ETF 原本的市場切換 Radio Button
+    if (ticker !== 'new' && portfolioData.length) {
+        const stockItem = portfolioData.find(item => item.ticker.toUpperCase() === ticker.toUpperCase());
+        if (stockItem && stockItem.market) {
+            const marketRadio = document.querySelector(`input[name="market_type"][value="${stockItem.market}"]`);
+            if (marketRadio) marketRadio.checked = true;
+        }
+    }
+    
     const today = new Date().toISOString().split('T')[0];
     document.getElementById('modalDate').value = today;
     document.getElementById('modalDate').max = today;
@@ -561,7 +604,7 @@ function openTradeModal(ticker, type){
     document.getElementById('autoCommission').checked = true;
     
     toggleCommissionInput(); 
-    calculateDynamicResult(); 
+    checkStockAndCalculate(); // 💡 改為呼叫此函式，開窗時便能自動帶入完整防呆與金額試算
 }
 
 function closeAddModal(){
