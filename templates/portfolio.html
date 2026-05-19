@@ -464,9 +464,11 @@ async function loadData(){
             portfolioData=pr.data||[];
             if(pr.summary){
                 const s=pr.summary;
-                document.getElementById('total-assets').textContent=`$ ${Math.round(s.total_value).toLocaleString()}`;
+                // 💡 【修改】總資產符號改為 NT$ 
+                document.getElementById('total-assets').textContent=`NT$ ${Math.round(s.total_value).toLocaleString()}`;
                 const profitUp=s.total_profit>=0;
-                document.getElementById('total-profit').textContent=`${profitUp?'+':'-'} $ ${Math.abs(Math.round(s.total_profit)).toLocaleString()}`;
+                // 💡 【修改】總損益符號改為 NT$
+                document.getElementById('total-profit').textContent=`${profitUp?'+':'-'} NT$ ${Math.abs(Math.round(s.total_profit)).toLocaleString()}`;
                 document.getElementById('total-profit').className=`text-xl font-bold tabular-nums ${profitUp?'text-red-500':'text-green-600'}`;
                 document.getElementById('total-return').textContent=`報酬率 ${profitUp?'+':''}${s.total_return.toFixed(1)}%`;
                 const estDiv=portfolioData.reduce((acc,item)=>acc+(item.market_value||0)*(item.dividend_yield||0)/100,0);
