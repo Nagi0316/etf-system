@@ -453,7 +453,7 @@ US_ETFS = [
 ALL_ETFS = TW_ETFS + US_ETFS
 
 MOCK_DATA = {
-    '0050':   (175.50, 1520000, 3050.0e8, 5.2, '季配', 18.5, 1.2),
+    '0050':   (175.50, 1520000, 3050.0e8, 5.2, '半年配', 18.5, 1.2),
     '0056':   (38.20,  880000,  1980.0e8, 7.8, '季配', 12.3, 0.8),
     '00878':  (22.15,  1250000, 1560.0e8, 8.2, '季配', 15.6, 1.1),
     '006208': (88.30,  520000,  1250.0e8, 4.5, '季配', 19.2, 1.0),
@@ -1471,6 +1471,38 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     if not quote: return None
     price = quote["current_price"]
 
+    # === 💡 修正後：如果 Yahoo 沒給年化績效，就自動下載歷史 K 線自行計算 ===
+    ret_1y = _safe_float(info.get('oneYearByPriceReturn'))
+    ret_3y = _safe_float(info.get('threeYearAnnualizedReturn'))
+    ret_5y = _safe_float(info.get('fiveYearAnnualizedReturn'))
+
+    # 🎯 終極防禦：如果發現任何一欄不正常（等於 0 或 None），就用歷史股價即時計算
+    if ret_1y == 0.0 or ret_3y == 0.0 or ret_5y == 0.0:
+        try:
+            # 抓取過去 5 年的每月歷史收盤價歷史資料
+            hist = ticker_obj.history(period="5y", interval="1mo")
+            if not hist.empty and 'Close' in hist.columns:
+                close_prices = hist['Close'].dropna()
+                if len(close_prices) >= 2:
+                    current_p = close_prices.iloc[-1]
+                    
+                    # 1年報酬率 (12個月前)
+                    if ret_1y == 0.0 and len(close_prices) > 12:
+                        p_1y = close_prices.iloc[-13]
+                        ret_1y = round(((current_p - p_1y) / p_1y) * 100, 2) if p_1y > 0 else 0.0
+                    
+                    # 3年年化報酬率 (36個月前)
+                    if ret_3y == 0.0 and len(close_prices) > 36:
+                        p_3y = close_prices.iloc[-37]
+                        ret_3y = round((((current_p / p_3y) ** (1/3)) - 1) * 100, 2) if p_3y > 0 else 0.0
+                        
+                    # 5年年化報酬率 (60個月前)
+                    if ret_5y == 0.0 and len(close_prices) >= 60:
+                        p_5y = close_prices.iloc[0]
+                        ret_5y = round((((current_p / p_5y) ** (1/5)) - 1) * 100, 2) if p_5y > 0 else 0.0
+        except Exception as ex:
+            logger.warning(f"⚠️ {ticker} 歷史報酬率自行計算失敗: {ex}")
+
     # 歷史報酬月線
     history = []
     div_yield, payout_freq = 0.0, "不配息"
@@ -1499,7 +1531,6 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     wk52_high = max(last12) if last12 else quote["day_high"]
     wk52_low  = min(last12) if last12 else quote["day_low"]
 
-    # ── 【修復核心】全面改走 yfinance 安全連線通道，完美對齊美股規模、PE 與費用率 ──
     # ── 【修復核心】全面改走 yfinance 安全連線通道，完美對齊美股規模、PE 與費用率 ──
     asset_size, pe_ratio, expense_ratio = 0.0, 0.0, 0.0
     issuer, nav = "", price
@@ -1539,9 +1570,9 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         'expense_ratio': expense_ratio,
         'dividend_yield': div_yield, 
         'payout_freq': payout_freq,
-        'annual_return_1y': float(annual_return_1y) if (annual_return_1y and annual_return_1y == annual_return_1y) else 0.0,
-        'annual_return_3y': float(annual_return_3y) if (annual_return_3y and annual_return_3y == annual_return_3y) else 0.0,
-        'annual_return_5y': float(annual_return_5y) if (annual_return_5y and annual_return_5y == annual_return_5y) else 0.0
+        'annual_return_1y':     ret_1y, # ✨ 填入動態兜底後的精準數字
+        'annual_return_3y':     ret_3y,
+        'annual_return_5y':     ret_5y,
     }
 
 
