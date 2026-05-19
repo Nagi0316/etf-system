@@ -444,8 +444,12 @@ function renderResult(d, ticker){
     // 回測模式標籤
     document.getElementById('result-meta').style.display = 'flex';
     document.getElementById('result-ticker').textContent = ticker;
-    document.getElementById('result-range').textContent  =
-        `${d.start_date?.slice(0,7)} ～ ${d.end_date?.slice(0,7)}`;
+    const sYear = document.getElementById('start-year').value;
+    const sMonth = String(document.getElementById('start-month').value).padStart(2, '0');
+    const eYear = document.getElementById('end-year').value;
+    const eMonth = String(document.getElementById('end-month').value).padStart(2, '0');
+
+    document.getElementById('result-range').textContent = `${sYear}-${sMonth} ～ ${eYear}-${eMonth}`;
 
     const badge   = document.getElementById('result-mode-badge');
     const modeMap = { open:'📅 月初買入', low:'🟢 月最低點', high:'🔴 月最高點' };
