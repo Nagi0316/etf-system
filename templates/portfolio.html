@@ -505,6 +505,10 @@ function renderPortfolio(){
         const profit=item.profit||(mv-cost);
         const retPct=item.return_pct||(cost>0?profit/cost*100:0);
         const up=profit>=0;
+
+        // 💡 讀取後端傳回的 item.currency_sign 欄位
+        const sign = item.currency_sign || '';
+
         return `
         <tr class="row-hover border-b border-slate-50 transition-colors">
             <td class="px-4 py-3.5">
