@@ -155,7 +155,7 @@
     <div class="bg-white rounded-lg shadow-xl p-6 w-96 max-h-[90vh] overflow-y-auto">
         <h3 id="modalTitle" class="text-lg font-semibold text-gray-900 mb-4">新增交易紀錄</h3>
         
-        <form id="transactionForm" class="space-y-4">
+        <form id="transactionForm" class="space-y-4" onsubmit="saveTransaction(arguments[0])">
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">市場類型</label>
                 <div class="flex gap-4">
@@ -200,7 +200,7 @@
                     <label class="block text-sm font-medium text-gray-700">手續費</label>
                     <label class="inline-flex items-center text-xs text-gray-500 cursor-pointer">
                         <input type="checkbox" id="autoCommission" checked class="rounded text-blue-600 mr-1" onchange="toggleCommissionInput()">
-                        自動計算費率
+                        自动计算费率
                     </label>
                 </div>
                 <input type="number" id="modalCommission" step="any" class="w-full border rounded p-2 text-sm bg-gray-50" readonly value="0" oninput="calculateDynamicResult()">
@@ -237,11 +237,11 @@
                 <button type="submit" id="submitBtn" class="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">確認送出</button>
             </div>
         </form> 
-        </div>
+    </div>
 </div>
 
 <!-- 刪除確認 Modal -->
-<div id="deleteModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-50 p-4" style="display:none">
+<div id="deleteModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-50 p-4">
     <div class="bg-white rounded-2xl w-full max-w-xs p-6 shadow-xl text-center">
         <i class="fas fa-exclamation-triangle text-3xl text-red-400 mb-3 block"></i>
         <p class="font-bold text-slate-800 mb-1">確認刪除？</p>
@@ -254,14 +254,13 @@
 </div>
 
 <script>
-let currentFilter='all', currentUser=null, portfolioData=[], transactionsData=[], deleteId=null;
+let currentFilter='all', currentUser=null, portfolioData=[], transactionsData=[], deleteId=null, editId=null;
 
-// 1. 這是原本完整、閉合正確的儲存交易函數
+// 1. 儲存交易函數
 async function saveTransaction(e) {
     e.preventDefault();
     if(!currentUser) return;
     
-    // 修正：將 .upper() 改為 .toUpperCase()
     const ticker = document.getElementById('modalTicker').value.trim().toUpperCase();
     const type = document.getElementById('modalType').value;
     const shares = document.getElementById('modalShares').value;
@@ -277,6 +276,11 @@ async function saveTransaction(e) {
     const url = editId ? `/api/portfolio/transaction/${editId}` : '/api/portfolio/transaction';
     const method = editId ? 'PUT' : 'POST';
     
+    const submitBtn = document.getElementById('submitBtn');
+    const orig = submitBtn.textContent;
+    submitBtn.textContent = '處理中…';
+    submitBtn.disabled = true;
+
     try {
         const res = await fetch(url, {
             method: method,
@@ -284,13 +288,12 @@ async function saveTransaction(e) {
                 'Content-Type': 'application/json',
                 'X-User-Id': currentUser.id
             },
-            // 修正：將 json.stringify 改為 大寫的 JSON.stringify
             body: JSON.stringify({
                 ticker: ticker,
                 transaction_type: type,
-                shares: shares,
-                price: price,
-                commission: commission,
+                shares: parseFloat(shares),
+                price: parseFloat(price),
+                commission: parseFloat(commission) || 0,
                 transaction_date: date
             })
         });
@@ -304,10 +307,13 @@ async function saveTransaction(e) {
         }
     } catch {
         toast('網路錯誤', false);
+    } finally {
+        submitBtn.textContent = orig;
+        submitBtn.disabled = false;
     }
 }
 
-// 2. 把這三個進階功能函數「獨立擺在外面」，不要塞在別人的函數身體裡
+// 2. 進階功能函數
 function toggleCommissionInput() {
     const autoCheck = document.getElementById('autoCommission').checked;
     const commInput = document.getElementById('modalCommission');
@@ -336,9 +342,9 @@ function checkStockAndCalculate() {
         submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
     }
 
-    // 🛡️ 使用你網頁中正確的全域變流名稱 holdingsData
-    if (type === 'sell' && ticker && typeof holdingsData !== 'undefined') {
-        const stockItem = holdingsData.find(item => item.ticker.toUpperCase() === ticker);
+    // 🛡️ 修正：將 holdingsData 改為全域變數中確實存在的 portfolioData
+    if (type === 'sell' && ticker && portfolioData.length) {
+        const stockItem = portfolioData.find(item => item.ticker.toUpperCase() === ticker);
         const currentShares = stockItem ? parseFloat(stockItem.shares) : 0;
 
         if (sharesInput > currentShares) {
@@ -522,51 +528,40 @@ function renderTransactions(){
     }).join('');
 }
 
-function openTradeModal(ticker,type){
+// 4. 修正後的彈窗開啟函式
+function openTradeModal(ticker, type){
     if(!currentUser){toast('請先登入',false);setTimeout(()=>location.href='/auth',1000);return;}
-    document.getElementById('modal-title').textContent=ticker==='new'?'新增成交':`${ticker} — ${type==='buy'?'買入':'賣出'}`;
-    document.getElementById('trade-ticker').value=ticker==='new'?'':ticker;
-    document.querySelector(`input[name="trade-type"][value="${type}"]`).checked=true;
-    const today=new Date().toISOString().split('T')[0];
-    document.getElementById('trade-date').value=today;
-    document.getElementById('trade-date').max=today;
-    if(ticker==='new'){document.getElementById('trade-shares').value='';document.getElementById('trade-price').value='';}
-    document.getElementById('trade-commission').value='0';
-    document.getElementById('tradeModal').style.display='flex';
-    document.getElementById('autoCommission').checked = false;
-    toggleCommissionInput(); // 解除輸入框唯讀
-    calculateDynamicResult(); // 觸發底部卡片動態試算
-}
-function closeTradeModal(){document.getElementById('tradeModal').style.display='none';}
-
-async function saveTrade(btn){
-    const ticker=document.getElementById('trade-ticker').value.trim().toUpperCase();
-    const type=document.querySelector('input[name="trade-type"]:checked').value;
-    const date=document.getElementById('trade-date').value;
-    const shares=parseInt(document.getElementById('trade-shares').value);
-    const price=parseFloat(document.getElementById('trade-price').value);
-    const commission=parseFloat(document.getElementById('trade-commission').value)||0;
-    if(!ticker||!shares||shares<=0||!price||price<=0){toast('請填寫所有欄位',false);return;}
-    if(type==='sell'){
-        const h=portfolioData.find(p=>p.ticker===ticker);
-        if(!h||h.shares<shares){toast(`持股不足（持有 ${h?.shares||0} 股）`,false);return;}
+    
+    // 統一修正為操作對應的欄位 ID 
+    document.getElementById('modalTitle').textContent = ticker === 'new' ? '新增交易紀錄' : `${ticker} — ${type === 'buy' ? '買入' : '賣出'}`;
+    document.getElementById('modalTicker').value = ticker === 'new' ? '' : ticker;
+    document.getElementById('modalType').value = type;
+    
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('modalDate').value = today;
+    document.getElementById('modalDate').max = today;
+    
+    if(ticker === 'new'){
+        document.getElementById('modalShares').value = '';
+        document.getElementById('modalPrice').value = '';
     }
-    const orig=btn.textContent;btn.textContent='處理中…';btn.disabled=true;
-    try{
-        const res=await fetch('/api/portfolio/transaction',{
-            method:'POST',
-            headers:{'Content-Type':'application/json','X-User-Id':currentUser.id},
-            body:JSON.stringify({ticker,transaction_type:type,shares,price,commission,transaction_date:date})
-        });
-        const d=await res.json();
-        if(d.status==='success'){toast(`${type==='buy'?'買入':'賣出'} ${ticker} 成功`,true);closeTradeModal();await loadData();}
-        else toast(d.message||'失敗',false);
-    }catch{toast('網路錯誤',false);}
-    finally{btn.textContent=orig;btn.disabled=false;}
+    
+    document.getElementById('modalCommission').value = '0';
+    document.getElementById('addModal').style.display = 'flex'; // 顯示彈窗
+    document.getElementById('autoCommission').checked = true;
+    
+    toggleCommissionInput(); 
+    calculateDynamicResult(); 
+}
+
+function closeAddModal(){
+    document.getElementById('addModal').style.display = 'none';
+    editId = null;
 }
 
 function openDeleteModal(id){deleteId=id;document.getElementById('deleteModal').style.display='flex';}
 function closeDeleteModal(){document.getElementById('deleteModal').style.display='none';deleteId=null;}
+
 async function confirmDelete(){
     if(!deleteId||!currentUser)return;
     try{
@@ -590,8 +585,8 @@ function exportTransactions(){
 }
 
 window.onclick=e=>{
-    if(e.target===document.getElementById('tradeModal'))closeTradeModal();
-    if(e.target===document.getElementById('deleteModal'))closeDeleteModal();
+    if(e.target===document.getElementById('addModal')) closeAddModal();
+    if(e.target===document.getElementById('deleteModal')) closeDeleteModal();
 };
 document.addEventListener('DOMContentLoaded',checkLogin);
 </script>
