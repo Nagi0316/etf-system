@@ -175,13 +175,12 @@
         <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 lg:col-span-2">
             <div class="flex justify-between items-center mb-6">
                 <h3 class="text-lg font-bold text-gray-800">價格走勢</h3>
-                <div class="flex space-x-2" id="period-buttons">
-                    <button onclick="changePeriod('1mo')" class="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-lg bg-indigo-50 text-indigo-600 font-medium period-btn" data-period="1mo">1M</button>
-                    <button onclick="changePeriod('3mo')" class="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-lg text-gray-500 hover:bg-gray-50 period-btn" data-period="3mo">3M</button>
-                    <button onclick="changePeriod('6mo')" class="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-lg text-gray-500 hover:bg-gray-50 period-btn" data-period="6mo">6M</button>
-                    <button onclick="changePeriod('1y')" class="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-lg text-gray-500 hover:bg-gray-50 period-btn" data-period="1y">1Y</button>
-                    <button onclick="changePeriod('3y')" class="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-lg text-gray-500 hover:bg-gray-50 period-btn" data-period="3y">3Y</button>
-                    <button onclick="changePeriod('5y')" class="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-lg text-gray-500 hover:bg-gray-50 period-btn" data-period="5y">5Y</button>
+                <div class="flex gap-1 bg-slate-100 p-0.5 rounded-lg text-xs font-medium">
+                    <button onclick="changePeriod('1mo')" data-period="1mo" class="period-btn px-2.5 py-1 rounded-md transition-all">1M</button>
+                    <button onclick="changePeriod('3mo')" data-period="3mo" class="period-btn px-2.5 py-1 rounded-md transition-all">3M</button>
+                    <button onclick="changePeriod('6mo')" data-period="6mo" class="period-btn px-2.5 py-1 rounded-md transition-all">6M</button>
+                    <button onclick="changePeriod('1y')"  data-period="1y"  class="period-btn px-2.5 py-1 rounded-md transition-all">1Y</button>
+                    <button onclick="changePeriod('5y')"  data-period="5y"  class="period-btn px-2.5 py-1 rounded-md transition-all">5Y</button>
                 </div>
             </div>
             <div id="chart-container" class="w-full h-[380px] relative bg-[#131722] rounded-xl overflow-hidden shadow-inner">
@@ -486,46 +485,55 @@ function initTradingViewChart() {
 }
 
 // 切換時間範圍並撈取新資料
+// 切換時間範圍並撈取新資料
 async function changePeriod(period) {
     currentPeriod = period;
 
-    // 更新按鈕樣式
+    // 1. 更新按鈕 UI 樣式 (適配 Tailwind CSS 亮白/深色主題切換)
     document.querySelectorAll('.period-btn').forEach(btn => {
         if (btn.getAttribute('data-period') === period) {
-            btn.className = "px-2.5 py-1 text-xs rounded-lg period-btn bg-indigo-50 text-indigo-600 font-medium active";
+            btn.className = "period-btn px-2.5 py-1 rounded-md bg-white text-slate-900 shadow-sm font-semibold";
         } else {
-            btn.className = "px-2.5 py-1 text-xs rounded-lg period-btn text-gray-500 hover:bg-gray-50";
+            btn.className = "period-btn px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-800 transition-all";
         }
     });
 
     if (!candlestickSeries || !volumeSeries || !etfData) return;
 
     try {
-        // 打我們在 main.py 新開的通用歷史 API 
+        // 2. 呼叫後端通用歷史 API
         const res = await fetch(`/api/etf/history?ticker=${etfData.ticker}&period=${period}`);
         const result = await res.json();
 
-        if (result.status === 'success' && result.data) {
+        if (result.status === 'success' && result.data && result.data.length > 0) {
             const prices = [];
             const volumes = [];
 
             result.data.forEach(item => {
                 prices.push({
                     time: item.time,
-                    open: item.open, high: item.high, low: item.low, close: item.close
+                    open: item.open,
+                    high: item.high,
+                    low: item.low,
+                    close: item.close
                 });
+
                 volumes.push({
                     time: item.time,
                     value: item.volume,
-                    color: item.close >= item.open ? 'rgba(239, 83, 80, 0.5)' : 'rgba(38, 166, 154, 0.5)'
+                    color: item.close >= item.open ? 'rgba(239, 83, 80, 0.4)' : 'rgba(38, 166, 154, 0.4)'
                 });
             });
 
+            // 3. 更新數據到 TradingView 圖表
             candlestickSeries.setData(prices);
             volumeSeries.setData(volumes);
+
+            // 4. 自動縮放滿版視野
             tvChart.timeScale().fitContent();
         } else {
-            console.error("後端未回傳有效歷史資料");
+            console.warn("後端未回傳有效歷史資料或該時段無資料:", result.message);
+            showToast(`${etfData.ticker} 暫無該時段歷史 K 線`, false);
         }
     } catch (e) {
         console.error("載入歷史 K 線資料失敗:", e);

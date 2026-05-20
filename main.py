@@ -2850,35 +2850,44 @@ async def run_backtest(request: Request):
         return safe_json({"status":"error","message": f"回測引擎崩潰: {str(ex)}"}, 500)
 
 @app.get("/api/etf/history")
-async def get_etf_history(ticker: str = Query(...), period: str = Query("1mo")):
-    """
-    專門提供給 TradingView K線圖使用的 API
-    支援 period: 1mo, 3mo, 6mo, 1y, 3y, 5y
-    """
+async def get_etf_history(ticker: str, period: str = "1mo"):
     try:
-        # 台灣股票自動補上 .TW 尾碼
-        yf_ticker = ticker
-        if ticker.isdigit() and len(ticker) in (4, 5, 6):
-            yf_ticker = f"{ticker}.TW"
-            
-        # 使用 yfinance 下載指定範圍的歷史資料
-        df = yf.download(yf_ticker, period=period, progress=False)
+        # 1. 修正 yfinance Ticker 格式
+        yf_ticker = f"{ticker}.TW" if ticker.isdigit() or len(ticker) == 4 else ticker
+        if ticker.upper() == "006208":  # 特殊防錯
+            yf_ticker = "006208.TW"
+
+        # 2. ✨ 新增：Period 安全轉換對應表（防錯核心）
+        period_map = {
+            "1m": "1mo", "1mo": "1mo",
+            "3m": "3mo", "3mo": "3mo",
+            "6m": "6mo", "6mo": "6mo",
+            "1y": "1y",
+            "3y": "5y",   # yfinance 不直接支援 3y，通常改用 5y 下載後再由前端或後端切片，或是直接用 5y 取代
+            "5y": "5y",
+            "max": "max"
+        }
+        
+        # 取得標準 yfinance period，若找不到則預設 1mo
+        yf_period = period_map.get(period.lower(), "1mo")
+
+        logger.info(f"正在為 {yf_ticker} 下載歷史資料，原始 period: {period} -> 轉換為: {yf_period}")
+
+        # 3. 執行下載
+        df = yf.download(yf_ticker, period=yf_period, progress=False)
         if df.empty:
-            return safe_json({"status": "error", "message": "無歷史資料"})
+            return safe_json({"status": "error", "message": f"yfinance 無法取得 {yf_ticker} ({yf_period}) 的歷史資料"})
             
-        # 重設索引，把日期變回欄位
         df = df.reset_index()
         
         chart_data = []
         for _, row in df.iterrows():
-            # 處理 yfinance 可能因為多重索引產生的數值取法
             def _get_val(col):
                 val = row[col]
                 if hasattr(val, 'iloc'): 
                     return float(val.iloc[0])
                 return float(val)
 
-            # 將時間格式化為字串 'YYYY-MM-DD'
             dt_val = row['Date']
             try:
                 if hasattr(dt_val, 'date'):
@@ -2890,19 +2899,24 @@ async def get_etf_history(ticker: str = Query(...), period: str = Query("1mo")):
             except Exception:
                 date_str = str(dt_val)[:10]
 
+            # 排除成交量或收盤價異常的髒資料
+            close_val = _get_val('Close')
+            if np.isnan(close_val) or close_val <= 0:
+                continue
+
             chart_data.append({
                 "time": date_str,
                 "open": round(_get_val('Open'), 2),
                 "high": round(_get_val('High'), 2),
                 "low": round(_get_val('Low'), 2),
-                "close": round(_get_val('Close'), 2),
+                "close": round(close_val, 2),
                 "volume": int(_get_val('Volume'))
             })
             
         return safe_json({"status": "success", "data": chart_data})
     except Exception as e:
-        logger.error(f"獲取 K 線歷史失敗: {e}")
-        return safe_json({"status": "error", "message": str(e)}, status_code=500)
+        logger.error(f"K線歷史資料 API 發生異常: {str(e)}")
+        return safe_json({"status": "error", "message": str(e)})
 
 if __name__ == "__main__":
     import uvicorn
