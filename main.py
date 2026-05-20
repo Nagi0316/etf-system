@@ -2849,6 +2849,60 @@ async def run_backtest(request: Request):
         logger.error(f"終極回測引擎執行異常: {ex}")
         return safe_json({"status":"error","message": f"回測引擎崩潰: {str(ex)}"}, 500)
 
+@app.get("/api/etf/history")
+async def get_etf_history(ticker: str = Query(...), period: str = Query("1mo")):
+    """
+    專門提供給 TradingView K線圖使用的 API
+    支援 period: 1mo, 3mo, 6mo, 1y, 3y, 5y
+    """
+    try:
+        # 台灣股票自動補上 .TW 尾碼
+        yf_ticker = ticker
+        if ticker.isdigit() and len(ticker) in (4, 5, 6):
+            yf_ticker = f"{ticker}.TW"
+            
+        # 使用 yfinance 下載指定範圍的歷史資料
+        df = yf.download(yf_ticker, period=period, progress=False)
+        if df.empty:
+            return safe_json({"status": "error", "message": "無歷史資料"})
+            
+        # 重設索引，把日期變回欄位
+        df = df.reset_index()
+        
+        chart_data = []
+        for _, row in df.iterrows():
+            # 處理 yfinance 可能因為多重索引產生的數值取法
+            def _get_val(col):
+                val = row[col]
+                if hasattr(val, 'iloc'): 
+                    return float(val.iloc[0])
+                return float(val)
+
+            # 將時間格式化為字串 'YYYY-MM-DD'
+            dt_val = row['Date']
+            try:
+                if hasattr(dt_val, 'date'):
+                    date_str = dt_val.date().strftime("%Y-%m-%d")
+                elif isinstance(dt_val, (datetime, date)):
+                    date_str = dt_val.strftime("%Y-%m-%d")
+                else:
+                    date_str = str(dt_val)[:10]
+            except Exception:
+                date_str = str(dt_val)[:10]
+
+            chart_data.append({
+                "time": date_str,
+                "open": round(_get_val('Open'), 2),
+                "high": round(_get_val('High'), 2),
+                "low": round(_get_val('Low'), 2),
+                "close": round(_get_val('Close'), 2),
+                "volume": int(_get_val('Volume'))
+            })
+            
+        return safe_json({"status": "success", "data": chart_data})
+    except Exception as e:
+        logger.error(f"獲取 K 線歷史失敗: {e}")
+        return safe_json({"status": "error", "message": str(e)}, status_code=500)
 
 if __name__ == "__main__":
     import uvicorn
