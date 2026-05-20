@@ -489,7 +489,7 @@ function initTradingViewChart() {
 async function changePeriod(period) {
     currentPeriod = period;
 
-    // 動態切換按鈕的高亮樣式
+    // ✨ 修正：比對目前點擊的變數 period，不再寫死 '1mo'
     document.querySelectorAll('.period-btn').forEach(btn => {
         if (btn.getAttribute('data-period') === period) {
             btn.className = "period-btn px-2.5 py-1 rounded-md bg-white text-slate-900 shadow-sm font-semibold";
@@ -526,11 +526,11 @@ async function changePeriod(period) {
 
             candlestickSeries.setData(prices);
             volumeSeries.setData(volumes);
-            
-            // 讓 TradingView 自動縮放到合適的範圍
+
+            // 讓 TradingView 自動縮放到滿版視野
             tvChart.timeScale().fitContent();
         } else {
-            console.warn("無法載入資料:", result.message);
+            console.warn("後端未回傳有效歷史資料:", result.message);
         }
     } catch (e) {
         console.error("載入歷史 K 線資料失敗:", e);
