@@ -481,7 +481,7 @@ function initTradingViewChart() {
     });
 
     // 預設打 API 抓取 1M 資料
-    changePeriod('1mo');
+    changePeriod('1m');
 }
 
 // 切換時間範圍並撈取新資料
@@ -489,7 +489,7 @@ function initTradingViewChart() {
 async function changePeriod(period) {
     currentPeriod = period;
 
-    // 1. 更新按鈕 UI 樣式 (適配 Tailwind CSS 亮白/深色主題切換)
+    // 動態切換按鈕的高亮樣式
     document.querySelectorAll('.period-btn').forEach(btn => {
         if (btn.getAttribute('data-period') === period) {
             btn.className = "period-btn px-2.5 py-1 rounded-md bg-white text-slate-900 shadow-sm font-semibold";
@@ -501,7 +501,6 @@ async function changePeriod(period) {
     if (!candlestickSeries || !volumeSeries || !etfData) return;
 
     try {
-        // 2. 呼叫後端通用歷史 API
         const res = await fetch(`/api/etf/history?ticker=${etfData.ticker}&period=${period}`);
         const result = await res.json();
 
@@ -525,15 +524,13 @@ async function changePeriod(period) {
                 });
             });
 
-            // 3. 更新數據到 TradingView 圖表
             candlestickSeries.setData(prices);
             volumeSeries.setData(volumes);
-
-            // 4. 自動縮放滿版視野
+            
+            // 讓 TradingView 自動縮放到合適的範圍
             tvChart.timeScale().fitContent();
         } else {
-            console.warn("後端未回傳有效歷史資料或該時段無資料:", result.message);
-            showToast(`${etfData.ticker} 暫無該時段歷史 K 線`, false);
+            console.warn("無法載入資料:", result.message);
         }
     } catch (e) {
         console.error("載入歷史 K 線資料失敗:", e);
