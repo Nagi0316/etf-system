@@ -2857,7 +2857,7 @@ async def get_etf_history(ticker: str, period: str = "1mo"):
         if ticker.upper() == "006208":
             yf_ticker = "006208.TW"
 
-        # 2. 建立 Period 安全對應表（防錯核心：不論前端有沒有帶 o，都轉成 yfinance 認得的格式）
+        # 2. ✨ 新增：Period 安全對應表（防錯核心）
         period_map = {
             "1m": "1mo", "1mo": "1mo",
             "3m": "3mo", "3mo": "3mo",
@@ -2868,13 +2868,14 @@ async def get_etf_history(ticker: str, period: str = "1mo"):
             "max": "max"
         }
         
+        # 取得標準 yfinance period，若找不到則預設 1mo
         yf_period = period_map.get(period.lower(), "1mo")
         logger.info(f"正在為 {yf_ticker} 下載歷史資料，前端傳入: {period} -> 轉換為: {yf_period}")
 
-        # 3. 執行下載 (⚠️ 請注意這裡：要帶入變數 yf_period，不要寫死成 "1mo")
+        # 3. 執行下載 (使用轉換後的 yf_period 變數)
         df = yf.download(yf_ticker, period=yf_period, progress=False)
         if df.empty:
-            return safe_json({"status": "error", "message": "無歷史資料"})
+            return safe_json({"status": "error", "message": f"yfinance 無法取得 {yf_ticker} 的歷史資料"})
             
         df = df.reset_index()
         
@@ -2889,31 +2890,32 @@ async def get_etf_history(ticker: str, period: str = "1mo"):
             dt_val = row['Date']
             try:
                 if hasattr(dt_val, 'date'):
-                    date_str = dt_val.date().strftime("%Y-%m-%d")
+                    date_str = dt_val.date().strftime(\"%Y-%m-%d\")
                 elif isinstance(dt_val, (datetime, date)):
-                    date_str = dt_val.strftime("%Y-%m-%d")
+                    date_str = dt_val.strftime(\"%Y-%m-%d\")
                 else:
                     date_str = str(dt_val)[:10]
             except Exception:
                 date_str = str(dt_val)[:10]
 
+            # 排除成交量或收盤價異常的髒資料
             close_val = _get_val('Close')
             if np.isnan(close_val) or close_val <= 0:
                 continue
 
             chart_data.append({
-                "time": date_str,
-                "open": round(_get_val('Open'), 2),
-                "high": round(_get_val('High'), 2),
-                "low": round(_get_val('Low'), 2),
-                "close": round(close_val, 2),
-                "volume": int(_get_val('Volume'))
+                \"time\": date_str,
+                \"open\": round(_get_val('Open'), 2),
+                \"high\": round(_get_val('High'), 2),
+                \"low\": round(_get_val('Low'), 2),
+                \"close\": round(close_val, 2),
+                \"volume\": int(_get_val('Volume'))
             })
             
-        return safe_json({"status": "success", "data": chart_data})
+        return safe_json({\"status\": \"success\", \"data\": chart_data})
     except Exception as e:
-        logger.error(f"K線歷史資料 API 發生異常: {str(e)}")
-        return safe_json({"status": "error", "message": str(e)})
+        logger.error(f\"K線歷史資料 API 發生異常: {str(e)}\")
+        return safe_json({\"status\": \"error\", \"message\": str(e)})
 
 if __name__ == "__main__":
     import uvicorn
