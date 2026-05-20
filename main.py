@@ -2857,7 +2857,7 @@ async def get_etf_history(ticker: str, period: str = "1mo"):
         if ticker.upper() == "006208":
             yf_ticker = "006208.TW"
 
-        # 2. ✨ Period 安全對應表（將前端傳來的 1m, 3m, 6m 轉為 yfinance 認得的格式）
+        # 2. ✨ 核心關鍵：新增 Period 安全對應表
         period_map = {
             "1m": "1mo", "1mo": "1mo",
             "3m": "3mo", "3mo": "3mo",
@@ -2868,10 +2868,11 @@ async def get_etf_history(ticker: str, period: str = "1mo"):
             "max": "max"
         }
         
+        # 將前端傳入的 1m, 3m 轉為 yfinance 認得的 1mo, 3mo
         yf_period = period_map.get(period.lower(), "1mo")
         logger.info(f"正在為 {yf_ticker} 下載歷史資料，前端傳入: {period} -> 轉換為: {yf_period}")
 
-        # 3. 執行下載 (⚠️ 使用轉換後的 yf_period 變數)
+        # 3. ⚠️ 注意：這裡必須改用轉換後的 yf_period 變數！
         df = yf.download(yf_ticker, period=yf_period, progress=False)
         if df.empty:
             return safe_json({"status": "error", "message": "無歷史資料"})
