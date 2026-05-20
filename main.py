@@ -2849,6 +2849,48 @@ async def run_backtest(request: Request):
         logger.error(f"終極回測引擎執行異常: {ex}")
         return safe_json({"status":"error","message": f"回測引擎崩潰: {str(ex)}"}, 500)
 
+from datetime import datetime, timedelta
+import pandas as pd
+
+@app.get("/api/etf/history") # 請依你實際的 API 路由名稱為準
+async def get_etf_history(ticker: str, period: str = "1mo"):
+    # ── 1. 建立前端參數與 yfinance 官方參數的對照表 ──
+    period_mapping = {
+        "1M": "1mo",
+        "3M": "3mo",
+        "6M": "6mo",  # 修正：將前端的 6M 轉為 yfinance 認識的 6mo
+        "1Y": "1y",
+        "3Y": "5y",   # 💡 關鍵：yfinance 沒有 3y，我們改抓 5y 後，再用 Python 裁切
+        "5Y": "5y",
+        "MAX": "max"
+    }
+    
+    # 確保轉大寫比對，若找不到則預設 1mo
+    yf_period = period_mapping.get(period.upper(), "1mo")
+    
+    try:
+        # ── 2. 向 yfinance 請求資料 ──
+        df = yf.Ticker(ticker).history(period=yf_period)
+        
+        if df.empty:
+            return {"status": "error", "message": "無資料"}
+            
+        # ── 3. 💡 針對 3Y 做特殊裁切處理 ──
+        if period.upper() == "3Y":
+            three_years_ago = datetime.now() - timedelta(days=3*365)
+            # 過濾出最近 3 年內的資料
+            if df.index.tz is not None:
+                three_years_ago = pd.to_datetime(three_years_ago).tz_localize(df.index.tz)
+            df = df[df.index >= three_years_ago]
+            
+        # ── 4. 後續將 df 資料轉為 JSON 回傳給前端 ──
+        # (保持你原本轉成 labels 和 prices 的回傳邏輯即可)
+        labels = df.index.strftime('%Y-%m-%d').tolist()
+        prices = df['Close'].round(2).tolist()
+        return {"status": "success", "data": {"labels": labels, "prices": prices}}
+        
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
