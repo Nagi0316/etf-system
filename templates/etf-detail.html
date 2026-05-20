@@ -6,6 +6,7 @@
     <title id="page-title">ETF 詳細資料 - 投資管理系統</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -171,23 +172,22 @@
         </div>
 
         <!-- 走勢圖 -->
-        <div class="bg-white rounded-xl border border-slate-100 p-5">
-            <div class="flex items-center justify-between mb-3">
-                <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide">價格走勢</h3>
-                <div class="flex gap-1">
-                    <button onclick="changePeriod('3m')" class="period-btn px-2.5 py-1 text-xs rounded">3M</button>
-                    <button onclick="changePeriod('6m')" class="period-btn px-2.5 py-1 text-xs rounded">6M</button>
-                    <button onclick="changePeriod('1y')" class="period-btn px-2.5 py-1 text-xs rounded active">1Y</button>
-                    <button onclick="changePeriod('3y')" class="period-btn px-2.5 py-1 text-xs rounded">3Y</button>
-                    <button onclick="changePeriod('5y')" class="period-btn px-2.5 py-1 text-xs rounded">5Y</button>
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 lg:col-span-2">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-lg font-bold text-gray-800">價格走勢</h3>
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                    <div class="flex space-x-2 mb-4">
+                        <button onclick="changePeriod('1mo')" class="period-btn px-3 py-1 text-sm rounded bg-gray-100 text-gray-600 hover:bg-gray-200">1個月</button>
+                        <button onclick="changePeriod('3mo')" class="period-btn px-3 py-1 text-sm rounded bg-gray-100 text-gray-600 hover:bg-gray-200">3個月</button>
+                        <button onclick="changePeriod('1y')" class="period-btn px-3 py-1 text-sm rounded bg-indigo-600 text-white">1年</button>
+                        <button onclick="changePeriod('5y')" class="period-btn px-3 py-1 text-sm rounded bg-gray-100 text-gray-600 hover:bg-gray-200">5年</button>
+                    </div>
+                    
+                    <div id="chart-container" class="w-full h-[400px] relative">
+                        </div>
                 </div>
             </div>
-            <p id="chart-note" class="hidden text-xs text-amber-500 text-right mb-1">⚠️ 歷史資料暫時無法取得，以下為 52 週區間估算</p>
-            <canvas id="price-chart" height="160"></canvas>
-            <p id="no-chart-msg" class="hidden text-center text-slate-400 text-sm py-8">暫無歷史價格資料</p>
         </div>
-
-    </div>
 </div>
 
 <!-- 手機底部 -->
@@ -229,7 +229,7 @@
 </div>
 
 <script>
-// ── 靜態補充資料（發行商 / 成立日期 / 費用率保底）──
+// 1. 全域變數宣告（統一集中，不重複宣告）
 const STATIC_INFO = {
     '0050':   { issuer:'元大投信', listing_date:'2003-06-25', expense_ratio:0.46 },
     '0056':   { issuer:'元大投信', listing_date:'2007-12-26', expense_ratio:0.66 },
@@ -263,8 +263,201 @@ const STATIC_INFO = {
     'ARKK': { issuer:'ARK Invest',   listing_date:'2014-10-31', expense_ratio:0.75 },
 };
 
-let currentUser = null, etfData = null, priceChart = null;
-let inWatchlist = false, currentPeriod = '1y', currentTicker = '';
+let currentUser = null;
+let etfData = null;
+let currentTicker = '';
+let inWatchlist = false;
+
+// TradingView 圖表專用變數
+let tvChart = null;
+let candlestickSeries = null;
+let volumeSeries = null;
+let currentPeriod = '1mo';
+
+let klineChart = null;
+let candleSeries = null;
+
+// 2. 基礎功能與登入驗證
+
+async function renderCandlestickChart(ticker, period = '1y') {
+    const container = document.getElementById('chart-container');
+    if (!container) {
+        console.error("找不到圖表容器 #chart-container");
+        return;
+    }
+
+    // 1. 展現優雅的 Loading 狀態
+    container.innerHTML = `
+        <div class="flex items-center justify-center h-full text-gray-500">
+            <i class="fas fa-spinner fa-spin mr-2"></i> 歷史走勢圖載入中...
+        </div>
+    `;
+
+    try {
+        // 2. 請求新寫好的後端防禦性 API
+        const res = await fetch(`/api/etf/history?ticker=${encodeURIComponent(ticker)}&period=${period}`);
+        const result = await res.json();
+
+        if (result.status !== 'success' || !result.data || result.data.length === 0) {
+            container.innerHTML = `<div class="flex items-center justify-center h-full text-gray-500">暫無該週期的走勢資料</div>`;
+            return;
+        }
+
+        // 3. 獲取資料成功，清空 Loading 提示
+        container.innerHTML = '';
+
+        // 4. 【核心修復】清除殘留畫布：若已有舊圖表實例，必須先呼叫 remove() 銷毀，防範無限疊加 Bug
+        if (klineChart) {
+            klineChart.remove();
+            klineChart = null;
+        }
+
+        // 5. 實例化全新的 Lightweight Chart
+        klineChart = LightweightCharts.createChart(container, {
+            width: container.clientWidth,
+            height: container.clientHeight || 400, // 抓取容器樣式高度，防範高度塌陷
+            layout: {
+                background: { color: '#ffffff' },
+                textColor: '#333333',
+            },
+            grid: {
+                vertLines: { color: '#f3f4f6' }, // 優雅的淺灰格線
+                horzLines: { color: '#f3f4f6' },
+            },
+            crosshair: {
+                mode: LightweightCharts.CrosshairMode.Normal,
+            },
+            rightPriceScale: {
+                borderColor: '#e5e7eb',
+            },
+            timeScale: {
+                borderColor: '#e5e7eb',
+                barSpacing: 8, // 恰到好處的 K線間距
+            },
+        });
+
+        // 6. 新增 K線序列（符合台灣股市紅漲綠跌的視覺習慣）
+        candleSeries = klineChart.addCandlestickSeries({
+            upColor: '#ef4444',         // 上漲：紅
+            downColor: '#22c55e',       // 下跌：綠
+            borderUpColor: '#ef4444',
+            borderDownColor: '#22c55e',
+            wickUpColor: '#ef4444',
+            wickDownColor: '#22c55e',
+        });
+
+        // 7. 雙重保障：前端再次確保資料時間按升序排列
+        const sortedData = result.data.sort((a, b) => a.time.localeCompare(b.time));
+
+        // 8. 正式餵入精準清洗後的走勢數據
+        candleSeries.setData(sortedData);
+
+        // 9. 【核心修復】動態自適應螢幕：監聽容器大小，使圖表隨視窗縮放自動調整寬高
+        const resizeObserver = new ResizeObserver(entries => {
+            if (klineChart && container) {
+                klineChart.resize(container.clientWidth, container.clientHeight || 400);
+            }
+        });
+        resizeObserver.observe(container);
+
+    } catch (error) {
+        console.error("渲染 K 線圖發生嚴重錯誤:", error);
+        container.innerHTML = `
+            <div class="flex items-center justify-center h-full text-red-500">
+                <i class="fas fa-exclamation-triangle mr-2"></i> 圖表渲染失敗，請重新整理頁面
+            </div>
+        `;
+    }
+}async function renderCandlestickChart(ticker, period = '1y') {
+    const container = document.getElementById('chart-container');
+    if (!container) {
+        console.error("找不到圖表容器 #chart-container");
+        return;
+    }
+
+    // 1. 展現優雅的 Loading 狀態
+    container.innerHTML = `
+        <div class="flex items-center justify-center h-full text-gray-500">
+            <i class="fas fa-spinner fa-spin mr-2"></i> 歷史走勢圖載入中...
+        </div>
+    `;
+
+    try {
+        // 2. 請求新寫好的後端防禦性 API
+        const res = await fetch(`/api/etf/history?ticker=${encodeURIComponent(ticker)}&period=${period}`);
+        const result = await res.json();
+
+        if (result.status !== 'success' || !result.data || result.data.length === 0) {
+            container.innerHTML = `<div class="flex items-center justify-center h-full text-gray-500">暫無該週期的走勢資料</div>`;
+            return;
+        }
+
+        // 3. 獲取資料成功，清空 Loading 提示
+        container.innerHTML = '';
+
+        // 4. 【核心修復】清除殘留畫布：若已有舊圖表實例，必須先呼叫 remove() 銷毀，防範無限疊加 Bug
+        if (klineChart) {
+            klineChart.remove();
+            klineChart = null;
+        }
+
+        // 5. 實例化全新的 Lightweight Chart
+        klineChart = LightweightCharts.createChart(container, {
+            width: container.clientWidth,
+            height: container.clientHeight || 400, // 抓取容器樣式高度，防範高度塌陷
+            layout: {
+                background: { color: '#ffffff' },
+                textColor: '#333333',
+            },
+            grid: {
+                vertLines: { color: '#f3f4f6' }, // 優雅的淺灰格線
+                horzLines: { color: '#f3f4f6' },
+            },
+            crosshair: {
+                mode: LightweightCharts.CrosshairMode.Normal,
+            },
+            rightPriceScale: {
+                borderColor: '#e5e7eb',
+            },
+            timeScale: {
+                borderColor: '#e5e7eb',
+                barSpacing: 8, // 恰到好處的 K線間距
+            },
+        });
+
+        // 6. 新增 K線序列（符合台灣股市紅漲綠跌的視覺習慣）
+        candleSeries = klineChart.addCandlestickSeries({
+            upColor: '#ef4444',         // 上漲：紅
+            downColor: '#22c55e',       // 下跌：綠
+            borderUpColor: '#ef4444',
+            borderDownColor: '#22c55e',
+            wickUpColor: '#ef4444',
+            wickDownColor: '#22c55e',
+        });
+
+        // 7. 雙重保障：前端再次確保資料時間按升序排列
+        const sortedData = result.data.sort((a, b) => a.time.localeCompare(b.time));
+
+        // 8. 正式餵入精準清洗後的走勢數據
+        candleSeries.setData(sortedData);
+
+        // 9. 【核心修復】動態自適應螢幕：監聽容器大小，使圖表隨視窗縮放自動調整寬高
+        const resizeObserver = new ResizeObserver(entries => {
+            if (klineChart && container) {
+                klineChart.resize(container.clientWidth, container.clientHeight || 400);
+            }
+        });
+        resizeObserver.observe(container);
+
+    } catch (error) {
+        console.error("渲染 K 線圖發生嚴重錯誤:", error);
+        container.innerHTML = `
+            <div class="flex items-center justify-center h-full text-red-500">
+                <i class="fas fa-exclamation-triangle mr-2"></i> 圖表渲染失敗，請重新整理頁面
+            </div>
+        `;
+    }
+}
 
 function showToast(msg, ok = true) {
     const el = document.createElement('div');
@@ -282,13 +475,14 @@ function checkLogin() {
         currentUser = JSON.parse(u);
         document.getElementById('user-info').innerHTML = `
             <div class="flex items-center gap-2">
-                <span class="text-sm text-slate-600 hidden md:inline">${currentUser.username}</span>
+                <span class="text-sm text-slate-600 hidden md:inline">${currentUser.username || currentUser.name}</span>
                 <button onclick="logout()" class="text-slate-400 hover:text-slate-700 px-2 py-1 rounded hover:bg-slate-100 text-sm"><i class="fas fa-sign-out-alt"></i></button>
             </div>`;
     } catch(e) { localStorage.removeItem('user'); }
 }
 function logout() { localStorage.removeItem('user'); localStorage.removeItem('token'); location.reload(); }
 
+// 3. 載入資料主邏輯
 async function loadETFDetail() {
     const parts = window.location.pathname.split('/');
     currentTicker = parts[parts.length - 1].toUpperCase();
@@ -308,7 +502,10 @@ async function loadETFDetail() {
         if (result.status === 'success') {
             etfData = result.data;
             renderData();
-            loadPriceHistory(currentTicker, '1y');
+            
+            // 💡 修正點：初始化 TradingView K線圖並載入預設 1M 資料
+            initTradingViewChart();
+            
             checkWatchlistStatus(currentTicker);
             document.getElementById('loading').classList.add('hidden');
             document.getElementById('content').classList.remove('hidden');
@@ -327,13 +524,11 @@ function renderData() {
     const d = etfData;
     const stat = STATIC_INFO[d.ticker] || {};
 
-    // 標題
     document.getElementById('etf-ticker').textContent = d.ticker;
     document.getElementById('etf-name').textContent   = d.name || d.ticker;
     document.title = `${d.ticker} ${d.name || ''} - ETF投資系統`;
     document.getElementById('market-badge').textContent = d.market === 'TW' ? '台股' : '美股';
 
-    // 配息 badge
     const freq = d.payout_freq || '';
     const badgeMap = {
         '月配':'bg-blue-100 text-blue-700','季配':'bg-emerald-100 text-emerald-700',
@@ -344,13 +539,11 @@ function renderData() {
     pb.className = `px-2.5 py-0.5 rounded-full text-xs font-bold ${badgeMap[freq] || 'bg-slate-100 text-slate-500'}`;
     pb.textContent = freq;
 
-    // 發行商 & 成立日期
     const issuer  = d.issuer       || stat.issuer       || '';
     const listing = d.listing_date || stat.listing_date || '';
     if (issuer)  { document.getElementById('issuer').textContent       = issuer;  document.getElementById('issuer-row').classList.remove('hidden'); }
     if (listing) { document.getElementById('listing-date').textContent = listing; document.getElementById('listing-row').classList.remove('hidden'); }
 
-    // 現價 & 漲跌
     const price  = parseFloat(d.current_price) || 0;
     const chgAmt = parseFloat(d.price_change) || 0;
     const chgPct = parseFloat(d.price_change_percent) || 0;
@@ -360,13 +553,11 @@ function renderData() {
         ? `<span class="${up?'text-red-500':'text-green-600'} font-semibold">${up?'▲':'▼'} ${Math.abs(chgAmt).toFixed(2)} (${up?'+':''}${chgPct.toFixed(2)}%)</span>`
         : '-';
 
-    // 今日高低
     const dH = parseFloat(d.day_high) || price;
     const dL = parseFloat(d.day_low)  || price;
     document.getElementById('day-high').textContent = dH > 0 ? dH.toFixed(2) : '-';
     document.getElementById('day-low').textContent  = dL > 0 ? dL.toFixed(2) : '-';
 
-    // 成交量
     const vol = parseInt(d.volume) || 0;
     if (d.market === 'TW') {
         const lots = Math.round(vol / 1000);
@@ -377,195 +568,124 @@ function renderData() {
         document.getElementById('volume-unit').textContent = '股';
     }
 
-    // 資產規模
     const assets = parseFloat(d.asset_size) || 0;
     if (assets > 0) {
         let txt;
-        if (assets >= 1e12) {
-            txt = (assets / 1e12).toFixed(2) + ' 兆';
-        } else if (assets >= 1e11) { // ✨ 新增：精準捕捉千億級別 (如 00878 的 1800億)
-            txt = (assets / 1e8).toFixed(0) + ' 億';
-        } else if (assets >= 1e8) {
-            txt = (assets / 1e8).toFixed(1) + ' 億';
-        } else if (assets >= 1e6) {
-            txt = (assets / 1e6).toFixed(1) + ' 百萬';
-        } else {
-            txt = assets.toLocaleString();
-        }
+        if (assets >= 1e12) txt = (assets / 1e12).toFixed(2) + ' 兆';
+        else if (assets >= 1e11) txt = (assets / 1e8).toFixed(0) + ' 億';
+        else if (assets >= 1e8) txt = (assets / 1e8).toFixed(1) + ' 億';
+        else if (assets >= 1e6) txt = (assets / 1e6).toFixed(1) + ' 百萬';
+        else txt = assets.toLocaleString();
         document.getElementById('asset-size').textContent = txt;
     } else {
-        // 🔍 如果資料庫沒撈到，直接從前端靜態資訊 STATIC_INFO 撈取保底
-        const stat = STATIC_INFO[d.ticker] || {};
-        if (d.ticker === '00878') {
-            document.getElementById('asset-size').textContent = '1,800.0 億'; // 00878 直接保底
-        } else {
-            document.getElementById('asset-size').textContent = '-';
-        }
+        document.getElementById('asset-size').textContent = d.ticker === '00878' ? '1,800.0 億' : '-';
     } 
 
-    // ─── 修正後的 NAV & 折溢價動態計算與專業色彩級距 ───
     const nav = parseFloat(d.nav) || price;
     document.getElementById('nav').textContent = nav > 0 ? nav.toFixed(2) : '-';
 
     let prem = 0;
-    // 💡 終極交叉判斷：不論後端有沒有存成功，前端一律用即時的現價與淨值重新計算，確保百分之百絕對有數字！
     if (price > 0 && nav > 0 && Math.abs(price - nav) > 0.001) {
         prem = ((price - nav) / nav) * 100;
     } else if (d.discount_premium !== undefined && d.discount_premium !== null) {
         prem = parseFloat(d.discount_premium);
     }
-
-    // 💡 決定字體顏色（溢價 > 0.02% 亮紅，折價 < -0.02% 亮綠，中間微小波動保持冷色調灰色）
     const cls = prem > 0.02 ? 'text-red-500' : prem < -0.02 ? 'text-green-600' : 'text-slate-500';
-    
-    // 渲染至網頁，並自動加上正號 (+) 或是負號 (-)
-    document.getElementById('premium').innerHTML = `
-        <span class="${cls} font-bold tabular-nums">
-            ${prem > 0.02 ? '+' : ''}${prem.toFixed(2)}%
-        </span>`;
+    document.getElementById('premium').innerHTML = `<span class="${cls} font-bold tabular-nums">${prem > 0.02 ? '+' : ''}${prem.toFixed(2)}%</span>`;
 
-    // P/E
     const pe = parseFloat(d.pe_ratio) || 0;
     document.getElementById('pe-ratio').textContent = pe > 0 ? pe.toFixed(2) : '-';
 
-    // 費用率（DB 優先，沒有用靜態表）
     let er = parseFloat(d.expense_ratio) || 0;
     if (er <= 0 && stat.expense_ratio) er = stat.expense_ratio;
     if (er > 0) {
-        const erPct = er < 0.1 ? er * 100 : er;  // 0.0046 → 0.46%
+        const erPct = er < 0.1 ? er * 100 : er;
         document.getElementById('expense-ratio').textContent = erPct.toFixed(2) + '%';
     } else {
         document.getElementById('expense-ratio').textContent = '-';
     }
 
-    // 52 週
-    const h52 = parseFloat(d.fifty_two_week_high) || 0;
-    const l52 = parseFloat(d.fifty_two_week_low)  || 0;
-    document.getElementById('wk52-high').textContent = h52 > 0 ? h52.toFixed(2) : '-';
-    document.getElementById('wk52-low').textContent  = l52 > 0 ? l52.toFixed(2) : '-';
+    document.getElementById('wk52-high').textContent = (parseFloat(d.fifty_two_week_high) || 0) > 0 ? parseFloat(d.fifty_two_week_high).toFixed(2) : '-';
+    document.getElementById('wk52-low').textContent  = (parseFloat(d.fifty_two_week_low) || 0) > 0 ? parseFloat(d.fifty_two_week_low).toFixed(2) : '-';
 
-    // 報酬率
-    // ── 修正後的程式碼 ──
-    const retFmt = v => {
-        // 只有在數值完全是 null、undefined 或無法解析時才顯示橫槓
-        if (v === null || v === undefined || isNaN(v)) {
-            return '<span class="text-slate-400">-</span>';
-        }
-        // 正常數值（包含 0%）一律亮出顏色與百分比
-        return `<span class="${v >= 0 ? 'text-red-500' : 'text-green-600'} font-semibold">${v >= 0 ? '+' : ''}${v.toFixed(2)}%</span>`;
-    };
+    const retFmt = v => (v === null || v === undefined || isNaN(v)) 
+        ? '<span class="text-slate-400">-</span>'
+        : `<span class="${v >= 0 ? 'text-red-500' : 'text-green-600'} font-semibold">${v >= 0 ? '+' : ''}${v.toFixed(2)}%</span>`;
 
-    // 修正接值邏輯，保留原始數值傳入
     document.getElementById('return-1y').innerHTML = retFmt(d.annual_return_1y !== undefined ? parseFloat(d.annual_return_1y) : null);
     document.getElementById('return-3y').innerHTML = retFmt(d.annual_return_3y !== undefined ? parseFloat(d.annual_return_3y) : null);
     document.getElementById('return-5y').innerHTML = retFmt(d.annual_return_5y !== undefined ? parseFloat(d.annual_return_5y) : null);
 
-    // 配息頻率 & 殖利率
     document.getElementById('payout-freq').textContent = freq || '-';
-    const yld = parseFloat(d.dividend_yield) || 0;
-    document.getElementById('dividend-yield').textContent = yld > 0 ? yld.toFixed(2)+'%' : '-';
+    document.getElementById('dividend-yield').textContent = (parseFloat(d.dividend_yield) || 0) > 0 ? parseFloat(d.dividend_yield).toFixed(2)+'%' : '-';
 }
 
-// ── 圖表 ──
-async function loadPriceHistory(ticker, period = '1y') {
-    try {
-        const res  = await fetch(`/api/etf/price-history/${ticker}?period=${period}`);
-        const data = await res.json();
-        
-        // ── 💡 在這裡加入過濾與轉換邏輯 ──
-        if (data.status === 'success' && data.prices && data.prices.length > 0) {
-            // 將所有價格轉為浮點數，並排除掉不合法的 NaN 或小於等於 0 的髒資料
-            const cleanPrices = data.prices.map(p => parseFloat(p)).filter(p => !isNaN(p) && p > 0);
-            
-            // 為了讓標籤（月份）與過濾後的價格數量對齊，由後往前截取對應數量的標籤
-            const cleanLabels = data.labels.slice(data.labels.length - cleanPrices.length);
-            
-            // 確保過濾後至少還有 2 筆以上的有效價格才繪製實線圖
-            if (cleanPrices.length >= 2) {
-                drawChart(cleanLabels, cleanPrices, false);
-                return; // 成功畫圖，直接結束
-            }
-        }
-        
-        // 如果 API 失敗、無資料或過濾後資料不足，走保底虛線圖
-        drawFallbackChart();
-    } catch(e) { 
-        console.error("圖表解析失敗，切換至保底圖:", e);
-        drawFallbackChart(); 
-    }
-}
+// 4. ── 💡 核心修改：全新 TradingView 圖表邏輯 ──
+function initTradingViewChart() {
+    const container = document.getElementById('chart-container');
+    if (!container) return;
 
-function drawFallbackChart() {
-    if (!etfData) { showNoChart(); return; }
-    const price = parseFloat(etfData.current_price) || 0;
-    if (price <= 0) { showNoChart(); return; }
-    const h52 = parseFloat(etfData.fifty_two_week_high) || price * 1.05;
-    const l52 = parseFloat(etfData.fifty_two_week_low)  || price * 0.93;
-    const n = 13, labels = [], prices = [];
-    const now = new Date();
-    for (let i = n-1; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
-        labels.push(`${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}`);
-        const t    = (n-1-i)/(n-1);
-        const wave = (Math.sin(t * Math.PI * 1.5 - 0.5) + 1) / 2;
-        const base = l52 + (h52-l52) * wave;
-        prices.push(i === 0 ? price : Math.round((base*(1-t*0.25) + price*t*0.25)*100)/100);
-    }
-    prices[prices.length-1] = price;
-    document.getElementById('chart-note').classList.remove('hidden');
-    drawChart(labels, prices, true);
-}
+    container.innerHTML = ''; // 清空舊內容
 
-function showNoChart() {
-    document.getElementById('price-chart').classList.add('hidden');
-    document.getElementById('no-chart-msg').classList.remove('hidden');
-}
-
-function drawChart(labels, prices, isFallback = false) {
-    const canvas = document.getElementById('price-chart');
-    canvas.classList.remove('hidden');
-    document.getElementById('no-chart-msg').classList.add('hidden');
-    if (!isFallback) document.getElementById('chart-note').classList.add('hidden');
-    if (priceChart) priceChart.destroy();
-
-    const isTW  = etfData?.market === 'TW';
-    const pfx   = isTW ? 'NT$ ' : '$ ';
-
-    priceChart = new Chart(canvas.getContext('2d'), {
-        type: 'line',
-        data: {
-            labels,
-            datasets: [{
-                label: isFallback ? '估算走勢' : '收盤價',
-                data: prices,
-                borderColor: isFallback ? '#94a3b8' : '#6366f1',
-                backgroundColor: isFallback ? 'rgba(148,163,184,0.07)' : 'rgba(99,102,241,0.08)',
-                borderDash: isFallback ? [5,4] : [],
-                fill: true, tension: 0.4,
-                pointRadius: 2, pointHoverRadius: 5,
-                pointBackgroundColor: isFallback ? '#94a3b8' : '#6366f1',
-            }]
+    // 建立主圖表
+    tvChart = LightweightCharts.createChart(container, {
+        width: container.clientWidth,
+        height: 380,
+        layout: {
+            background: { color: '#131722' },
+            textColor: '#d1d4dc',
         },
-        options: {
-            responsive: true, maintainAspectRatio: true,
-            interaction: { mode:'index', intersect:false },
-            plugins: { legend:{display:false}, tooltip:{ callbacks:{ label: c => pfx+c.raw.toFixed(2) } } },
-            scales: {
-                x: { grid:{display:false}, ticks:{maxTicksLimit:8, font:{size:11}} },
-                y: { ticks:{callback: v => pfx+v.toFixed(0), font:{size:11}}, grid:{color:'#f1f5f9'} }
-            }
-        }
+        grid: {
+            vertLines: { color: 'rgba(42, 46, 57, 0.15)' },
+            horzLines: { color: 'rgba(42, 46, 57, 0.15)' },
+        },
+        rightPriceScale: { borderColor: 'rgba(197, 203, 206, 0.1)' },
+        timeScale: { borderColor: 'rgba(197, 203, 206, 0.1)', timeVisible: true },
     });
+
+    // K 線主系列
+    candlestickSeries = tvChart.addCandlestickSeries({
+        upColor: '#ef5350', downColor: '#26a69a',
+        borderUpColor: '#ef5350', borderDownColor: '#26a69a',
+        wickUpColor: '#ef5350', wickDownColor: '#26a69a',
+    });
+
+    // 成交量副系列
+    volumeSeries = tvChart.addHistogramSeries({
+        priceFormat: { type: 'volume' },
+        priceScaleId: '', 
+    });
+
+    volumeSeries.priceScale().setOptions({
+        scaleMargins: { top: 0.8, bottom: 0 },
+    });
+
+    window.addEventListener('resize', () => {
+        if (tvChart && container) tvChart.resize(container.clientWidth, 380);
+    });
+
+    // 預設打 API 抓取 1M 資料
+    changePeriod('1m');
 }
 
-function changePeriod(p) {
-    currentPeriod = p;
-    document.querySelectorAll('.period-btn').forEach(b => b.classList.toggle('active', b.textContent.toUpperCase()===p.toUpperCase()));
-    document.getElementById('chart-note').classList.add('hidden');
-    if (currentTicker) loadPriceHistory(currentTicker, p);
+// 切換時間範圍並撈取新資料
+function changePeriod(period) {
+    // 確保當前上下文能抓取到 etfData 資料
+    if (typeof etfData !== 'undefined' && etfData.ticker) {
+        // 變更點擊按鈕的樣式高亮（自由選填：提升 UI 互動感）
+        document.querySelectorAll('.period-btn').forEach(btn => {
+            btn.classList.remove('bg-indigo-600', 'text-white');
+            btn.classList.add('bg-gray-100', 'text-gray-600');
+        });
+        
+        // 重新調用載入函式
+        renderCandlestickChart(etfData.ticker, period);
+    } else {
+        console.error("無法切換週期：找不到全域的 etfData.ticker 目標股票");
+    }
 }
 
-// ── 自選股 ──
+// 5. 自選股與交易控制
 async function checkWatchlistStatus(ticker) {
     if (!currentUser) return;
     try {
@@ -576,6 +696,7 @@ async function checkWatchlistStatus(ticker) {
 }
 function updateWatchlistBtn() {
     const btn = document.getElementById('watchlist-btn');
+    if (!btn) return;
     if (inWatchlist) {
         btn.innerHTML = '<i class="fas fa-star text-yellow-400 mr-1.5"></i>已收藏';
         btn.className = 'px-3 py-2 rounded-lg text-sm font-medium bg-yellow-50 text-yellow-600 hover:bg-yellow-100 transition-all';
@@ -596,7 +717,6 @@ async function toggleWatchlist() {
     } catch(e) { showToast('網路錯誤', false); }
 }
 
-// ── 交易 Modal ──
 function openTradeModal() {
     if (!currentUser) { showToast('請先登入',false); setTimeout(()=>location.href='/auth',1000); return; }
     document.getElementById('modal-title').textContent = `${etfData.ticker} - 交易`;
@@ -628,7 +748,7 @@ async function saveTrade(btn) {
     finally { btn.innerHTML=orig; btn.disabled=false; }
 }
 
-// ── 搜尋 ──
+// 6. 搜尋欄位
 document.getElementById('search-input')?.addEventListener('keypress', async e => {
     if (e.key!=='Enter') return;
     const q = e.target.value.trim(); if (!q) return;
@@ -641,7 +761,12 @@ document.getElementById('search-input')?.addEventListener('keypress', async e =>
 });
 
 window.onclick = e => { if (e.target===document.getElementById('tradeModal')) closeTradeModal(); };
-document.addEventListener('DOMContentLoaded', () => { checkLogin(); loadETFDetail(); });
+
+// 7. 啟動入口
+document.addEventListener('DOMContentLoaded', () => { 
+    checkLogin(); 
+    loadETFDetail(); 
+});
 </script>
 </body>
 </html>
