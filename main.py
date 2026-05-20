@@ -2854,29 +2854,27 @@ async def get_etf_history(ticker: str, period: str = "1mo"):
     try:
         # 1. 修正 yfinance Ticker 格式
         yf_ticker = f"{ticker}.TW" if ticker.isdigit() or len(ticker) == 4 else ticker
-        if ticker.upper() == "006208":  # 特殊防錯
+        if ticker.upper() == "006208":
             yf_ticker = "006208.TW"
 
-        # 2. ✨ 新增：Period 安全轉換對應表（防錯核心）
+        # 2. 建立 Period 安全對應表（防錯核心：不論前端有沒有帶 o，都轉成 yfinance 認得的格式）
         period_map = {
             "1m": "1mo", "1mo": "1mo",
             "3m": "3mo", "3mo": "3mo",
             "6m": "6mo", "6mo": "6mo",
             "1y": "1y",
-            "3y": "5y",   # yfinance 不直接支援 3y，通常改用 5y 下載後再由前端或後端切片，或是直接用 5y 取代
+            "3y": "5y",   # yfinance 不直接支援 3y，通常用 5y 代替
             "5y": "5y",
             "max": "max"
         }
         
-        # 取得標準 yfinance period，若找不到則預設 1mo
         yf_period = period_map.get(period.lower(), "1mo")
+        logger.info(f"正在為 {yf_ticker} 下載歷史資料，前端傳入: {period} -> 轉換為: {yf_period}")
 
-        logger.info(f"正在為 {yf_ticker} 下載歷史資料，原始 period: {period} -> 轉換為: {yf_period}")
-
-        # 3. 執行下載
+        # 3. 執行下載 (⚠️ 請注意這裡：要帶入變數 yf_period，不要寫死成 "1mo")
         df = yf.download(yf_ticker, period=yf_period, progress=False)
         if df.empty:
-            return safe_json({"status": "error", "message": f"yfinance 無法取得 {yf_ticker} ({yf_period}) 的歷史資料"})
+            return safe_json({"status": "error", "message": "無歷史資料"})
             
         df = df.reset_index()
         
@@ -2899,7 +2897,6 @@ async def get_etf_history(ticker: str, period: str = "1mo"):
             except Exception:
                 date_str = str(dt_val)[:10]
 
-            # 排除成交量或收盤價異常的髒資料
             close_val = _get_val('Close')
             if np.isnan(close_val) or close_val <= 0:
                 continue
