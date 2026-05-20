@@ -2849,78 +2849,7 @@ async def run_backtest(request: Request):
         logger.error(f"終極回測引擎執行異常: {ex}")
         return safe_json({"status":"error","message": f"回測引擎崩潰: {str(ex)}"}, 500)
 
-@app.get("/api/etf/history")
-async def get_etf_history(ticker: str, period: str = "1mo"):
-    try:
-        # 1. 修正 yfinance Ticker 格式
-        yf_ticker = f"{ticker}.TW" if ticker.isdigit() or len(ticker) == 4 else ticker
-        if ticker.upper() == "006208":
-            yf_ticker = "006208.TW"
 
-        # 2. Period 安全對應表
-        period_map = {
-            "1m": "1mo", "1mo": "1mo",
-            "3m": "3mo", "3mo": "3mo",
-            "6m": "6mo", "6mo": "6mo",
-            "1y": "1y",
-            "3y": "5y",   # yfinance 不直接支援 3y，通常用 5y 代替
-            "5y": "5y",
-            "max": "max"
-        }
-        
-        yf_period = period_map.get(period.lower(), "1mo")
-        logger.info(f"正在為 {yf_ticker} 下載歷史資料，前端傳入: {period} -> 轉換為: {yf_period}")
-
-        # 3. 下載歷史資料
-        df = yf.download(yf_ticker, period=yf_period, progress=False)
-        if df.empty:
-            return safe_json({"status": "error", "message": "無歷史資料"})
-            
-        # ✨【核心關鍵修復】如果 yfinance 返回了多級索引 (MultiIndex)，強制將其拍扁成單層常規欄位
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-            
-        # 重設索引，此時 Date 就會變成完美的單一常規欄位
-        df = df.reset_index()
-        
-        chart_data = []
-        for _, row in df.iterrows():
-            def _get_val(col):
-                val = row[col]
-                if hasattr(val, 'iloc'): 
-                    return float(val.iloc[0])
-                return float(val)
-
-            # 此時 dt_val 將恢復成標準的 Timestamp 物件
-            dt_val = row['Date']
-            try:
-                if hasattr(dt_val, 'date'):
-                    date_str = dt_val.date().strftime("%Y-%m-%d")
-                elif isinstance(dt_val, (datetime, date)):
-                    date_str = dt_val.strftime("%Y-%m-%d")
-                else:
-                    date_str = str(dt_val)[:10]
-            except Exception:
-                date_str = str(dt_val)[:10]
-
-            # 排除成交量或收盤價異常的髒資料
-            close_val = _get_val('Close')
-            if np.isnan(close_val) or close_val <= 0:
-                continue
-
-            chart_data.append({
-                "time": date_str,
-                "open": round(_get_val('Open'), 2),
-                "high": round(_get_val('High'), 2),
-                "low": round(_get_val('Low'), 2),
-                "close": round(close_val, 2),
-                "volume": int(_get_val('Volume'))
-            })
-            
-        return safe_json({"status": "success", "data": chart_data})
-    except Exception as e:
-        logger.error(f"K線歷史資料 API 發生異常: {str(e)}")
-        return safe_json({"status": "error", "message": str(e)})
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
