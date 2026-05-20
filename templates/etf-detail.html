@@ -229,7 +229,6 @@
 </div>
 
 <script>
-// ── 靜態補充資料（發行商 / 成立日期 / 費用率保底）──
 const STATIC_INFO = {
     '0050':   { issuer:'元大投信', listing_date:'2003-06-25', expense_ratio:0.46 },
     '0056':   { issuer:'元大投信', listing_date:'2007-12-26', expense_ratio:0.66 },
@@ -316,7 +315,6 @@ async function loadETFDetail() {
             throw new Error(result.message || '無法載入資料');
         }
     } catch(err) {
-        console.error(err);
         document.getElementById('loading').classList.add('hidden');
         document.getElementById('error-message').classList.remove('hidden');
         document.getElementById('error-text').textContent = err.message || '發生錯誤，請稍後再試';
