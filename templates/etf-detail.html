@@ -229,7 +229,7 @@
 </div>
 
 <script>
-    
+
 const STATIC_INFO = {
     '0050':   { issuer:'元大投信', listing_date:'2003-06-25', expense_ratio:0.46 },
     '0056':   { issuer:'元大投信', listing_date:'2007-12-26', expense_ratio:0.66 },
@@ -527,33 +527,111 @@ function drawChart(labels, prices, isFallback = false) {
     if (!isFallback) document.getElementById('chart-note').classList.add('hidden');
     if (priceChart) priceChart.destroy();
 
+    const ctx = canvas.getContext('2d');
     const isTW  = etfData?.market === 'TW';
     const pfx   = isTW ? 'NT$ ' : '$ ';
 
-    priceChart = new Chart(canvas.getContext('2d'), {
+    // ── 1. 動態判斷漲跌來決定主題顏色 ──
+    let themeColor = '#6366f1'; // 預設藍紫色
+    if (!isFallback && prices.length >= 2) {
+        const firstPrice = prices[0];
+        const lastPrice = prices[prices.length - 1];
+        if (isTW) {
+            themeColor = lastPrice >= firstPrice ? '#ef4444' : '#22c55e'; // 台股：漲紅跌綠
+        } else {
+            themeColor = lastPrice >= firstPrice ? '#22c55e' : '#ef4444'; // 美股：漲綠跌紅
+        }
+    } else if (isFallback) {
+        themeColor = '#94a3b8'; // 保底灰色
+    }
+
+    // ── 2. 建立專業財經圖表常見的漸層背景 ──
+    const gradient = ctx.createLinearGradient(0, 0, 0, 220);
+    gradient.addColorStop(0, themeColor + '33');  // 上方：20% 透明度
+    gradient.addColorStop(0.5, themeColor + '0d'); // 中間：5% 透明度
+    gradient.addColorStop(1, themeColor + '00');   // 下方：完全透明
+
+    priceChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels,
             datasets: [{
                 label: isFallback ? '估算走勢' : '收盤價',
                 data: prices,
-                borderColor: isFallback ? '#94a3b8' : '#6366f1',
-                backgroundColor: isFallback ? 'rgba(148,163,184,0.07)' : 'rgba(99,102,241,0.08)',
+                borderColor: themeColor,
+                borderWidth: 2,
+                backgroundColor: gradient,
                 borderDash: isFallback ? [5,4] : [],
-                fill: true, tension: 0.4,
-                pointRadius: 2, pointHoverRadius: 5,
-                pointBackgroundColor: isFallback ? '#94a3b8' : '#6366f1',
+                fill: true, 
+                tension: 0.15,       // 稍微降低平滑度，讓 K 線走勢細節更具真實感
+                pointRadius: 0,      // 平常隱藏點，維持線條乾淨
+                pointHoverRadius: 6, // 滑鼠移上去時錨點放大
+                pointBackgroundColor: themeColor,
+                pointBorderColor: '#ffffff',
+                pointBorderWidth: 2,
             }]
         },
         options: {
-            responsive: true, maintainAspectRatio: true,
-            interaction: { mode:'index', intersect:false },
-            plugins: { legend:{display:false}, tooltip:{ callbacks:{ label: c => pfx+c.raw.toFixed(2) } } },
+            responsive: true, 
+            maintainAspectRatio: true,
+            interaction: { 
+                mode: 'index', 
+                intersect: false // 游標不需要精準碰到線，只要在範圍內就會自動對齊 X 軸
+            },
+            plugins: { 
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: 'rgba(15, 23, 42, 0.95)', // 現代感深色遮罩
+                    titleColor: '#94a3b8',
+                    bodyColor: '#ffffff',
+                    bodyFont: { weight: 'bold', size: 13 },
+                    padding: 10,
+                    borderRadius: 8,
+                    displayColors: false,
+                    callbacks: { 
+                        label: c => `價格: ${pfx}${c.raw.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` 
+                    }
+                }
+            },
             scales: {
-                x: { grid:{display:false}, ticks:{maxTicksLimit:8, font:{size:11}} },
-                y: { ticks:{callback: v => pfx+v.toFixed(0), font:{size:11}}, grid:{color:'#f1f5f9'} }
+                x: { 
+                    grid: { display: false }, // 隱藏直向網格線，視覺更舒適
+                    ticks: { maxTicksLimit: 6, font: { size: 11 }, color: '#94a3b8' } 
+                },
+                y: { 
+                    position: 'right', // 💡 關鍵：將 Y 軸價格移到右邊（與 TradingView 一致）
+                    ticks: { 
+                        callback: v => pfx + v.toLocaleString(), 
+                        font: { size: 11 },
+                        color: '#94a3b8'
+                    }, 
+                    grid: { color: '#f1f5f9' } // 保留極淡的水平參考線
+                }
             }
-        }
+        },
+        // ── 3. 自訂垂直十字輔助虛線外掛 (Crosshair Plugin) ──
+        plugins: [{
+            id: 'verticalLine',
+            afterDraw: (chart) => {
+                if (chart.tooltip?._active?.length) {
+                    const activePoint = chart.tooltip._active[0];
+                    const chartCtx = chart.ctx;
+                    const x = activePoint.element.x;
+                    const topY = chart.scales.y.top;
+                    const bottomY = chart.scales.y.bottom;
+
+                    chartCtx.save();
+                    chartCtx.beginPath();
+                    chartCtx.moveTo(x, topY);
+                    chartCtx.lineTo(x, bottomY);
+                    chartCtx.lineWidth = 1;
+                    chartCtx.strokeStyle = '#94a3b8'; // 輔助線顏色
+                    chartCtx.setLineDash([4, 4]);       // 設為虛線樣式
+                    chartCtx.stroke();
+                    chartCtx.restore();
+                }
+            }
+        }]
     });
 }
 
