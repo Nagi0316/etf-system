@@ -60,22 +60,8 @@ def _new_session() -> req_lib.Session:
     })
     return s
 
-def _safe_float(v) -> float:
-    """安全的數值轉換，避免 API 回傳 None 或 '-' 字串時造成系統崩潰"""
-    if v is None:
-        return 0.0
-    try:
-        s_val = str(v).replace(",", "").strip()
-        if not s_val or s_val == "-":
-            return 0.0
-        return float(s_val)
-    except Exception:
-        return 0.0
-
 # ══════════════════════════════════════════════════════════════════
 #  資料庫層 — 支援 TiDB Cloud (MySQL 8 + SSL) 與本地 SQLite 自動切換
-#
-#  TiDB Cloud 設定方式（三選一）：
 #  1. 建立 .env 檔案放在 main.py 同目錄：
 #       DB_HOST=gateway01.ap-northeast-1.prod.aws.tidbcloud.com
 #       DB_PORT=4000
@@ -1300,24 +1286,15 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
     結合證交所官方直連報價與除權息公告，輔以 Yahoo 歷史月線
     """
     import time as _time_lib  # 【動態保底】防止多執行緒下 time 模組遺失
-    #確保 price 與變動率有確實拿到數值
-    price = 0.0
-    price_change = 0.0
-    price_change_percent = 0.0
-    volume = 0
 
-    if 'msgArray' in json_data and len(json_data['msgArray']) > 0:
-        info = json_data['msgArray'][0]
-        price = _safe_float(info.get('z') or info.get('y') or 0)
-
-    simulated_nav = round(price * random.uniform(0.9985, 1.0015), 2) if price > 0 else 0.0
     # ── 步驟 1：全新的證交所官方高精度即時報價 (自動切換上市、上櫃並換算成交量單位)
     quote = _fetch_tw_realtime_perfect(ticker)
     if not quote:
         logger.warning(f"無法取得台股 {ticker} 報價")
         return None
-        
+
     price = quote["current_price"]
+    simulated_nav = round(price * random.uniform(0.9985, 1.0015), 2) if price > 0 else 0.0
 
     # ── 步驟 2：改用官方 TWT48U 數據計算殖利率與配息頻率 (完全脫離 Yahoo 缺失數據隱憂)
     div_yield, payout_freq = _fetch_tw_dividend_official(ticker, price)
@@ -1468,39 +1445,7 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     if not quote: return None
     price = quote["current_price"]
 
-    # === 💡 修正後：如果 Yahoo 沒給年化績效，就自動下載歷史 K 線自行計算 ===
-    ret_1y = _safe_float(info.get('oneYearByPriceReturn'))
-    ret_3y = _safe_float(info.get('threeYearAnnualizedReturn'))
-    ret_5y = _safe_float(info.get('fiveYearAnnualizedReturn'))
-
-    # 🎯 終極防禦：如果發現任何一欄不正常（等於 0 或 None），就用歷史股價即時計算
-    if ret_1y == 0.0 or ret_3y == 0.0 or ret_5y == 0.0:
-        try:
-            # 抓取過去 5 年的每月歷史收盤價歷史資料
-            hist = ticker_obj.history(period="5y", interval="1mo")
-            if not hist.empty and 'Close' in hist.columns:
-                close_prices = hist['Close'].dropna()
-                if len(close_prices) >= 2:
-                    current_p = close_prices.iloc[-1]
-                    
-                    # 1年報酬率 (12個月前)
-                    if ret_1y == 0.0 and len(close_prices) > 12:
-                        p_1y = close_prices.iloc[-13]
-                        ret_1y = round(((current_p - p_1y) / p_1y) * 100, 2) if p_1y > 0 else 0.0
-                    
-                    # 3年年化報酬率 (36個月前)
-                    if ret_3y == 0.0 and len(close_prices) > 36:
-                        p_3y = close_prices.iloc[-37]
-                        ret_3y = round((((current_p / p_3y) ** (1/3)) - 1) * 100, 2) if p_3y > 0 else 0.0
-                        
-                    # 5年年化報酬率 (60個月前)
-                    if ret_5y == 0.0 and len(close_prices) >= 60:
-                        p_5y = close_prices.iloc[0]
-                        ret_5y = round((((current_p / p_5y) ** (1/5)) - 1) * 100, 2) if p_5y > 0 else 0.0
-        except Exception as ex:
-            logger.warning(f"⚠️ {ticker} 歷史報酬率自行計算失敗: {ex}")
-            
-    # 歷史報酬月線
+    # 歷史報酬月線與配息
     history = []
     div_yield, payout_freq = 0.0, "不配息"
     try:
@@ -1547,6 +1492,26 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
             div_yield = round(yf_yield, 4)
             if div_yield > 0 and payout_freq == '不配息': 
                 payout_freq = '季配'
+
+        # 💡 若歷史月線不足，嘗試從 yfinance info 補充年化報酬率
+        if annual_return_1y == 0.0 or annual_return_3y == 0.0 or annual_return_5y == 0.0:
+            try:
+                hist_df = stock.history(period="5y", interval="1mo")
+                if not hist_df.empty and 'Close' in hist_df.columns:
+                    close_prices = hist_df['Close'].dropna()
+                    if len(close_prices) >= 2:
+                        current_p = float(close_prices.iloc[-1])
+                        if annual_return_1y == 0.0 and len(close_prices) > 12:
+                            p_1y = float(close_prices.iloc[-13])
+                            annual_return_1y = round(((current_p - p_1y) / p_1y) * 100, 2) if p_1y > 0 else 0.0
+                        if annual_return_3y == 0.0 and len(close_prices) > 36:
+                            p_3y = float(close_prices.iloc[-37])
+                            annual_return_3y = round((((current_p / p_3y) ** (1/3)) - 1) * 100, 2) if p_3y > 0 else 0.0
+                        if annual_return_5y == 0.0 and len(close_prices) >= 60:
+                            p_5y = float(close_prices.iloc[0])
+                            annual_return_5y = round((((current_p / p_5y) ** (1/5)) - 1) * 100, 2) if p_5y > 0 else 0.0
+            except Exception as ex:
+                logger.warning(f"⚠️ {ticker} 歷史報酬率自行計算失敗: {ex}")
     except Exception: 
         pass
 
@@ -1805,15 +1770,15 @@ async def search_etf(q: str = Query(..., min_length=1)):
     try:
         like = f"%{q.upper()}%"
         with get_db() as (conn, cursor):
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT m.ticker, m.name, m.market,
                     COALESCE(d.current_price,0) as current_price,
                     COALESCE(d.price_change_percent,0) as price_change_percent,
                     COALESCE(d.payout_freq,'季配') as payout_freq
-                FROM etf_master m {join}
+                FROM etf_master m {LATEST_DAILY_JOIN}
                 WHERE UPPER(m.ticker) LIKE %s OR m.name LIKE %s
                 ORDER BY m.ticker LIMIT 20
-            """.format(join=LATEST_DAILY_JOIN), (like, f"%{q}%"))
+            """, (like, f"%{q}%"))
             rows = cursor.fetchall()
         return safe_json({"status":"success","data":_enrich(rows)})
     except Exception as e:
@@ -1829,15 +1794,15 @@ async def dynamic_search_etf(q: str = Query(..., min_length=1)):
     try:
         like = f"%{q.upper()}%"
         with get_db() as (conn, cursor):
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT m.ticker, m.name, m.market,
                     COALESCE(d.current_price,0) as current_price,
                     COALESCE(d.price_change_percent,0) as price_change_percent,
                     COALESCE(d.payout_freq,'季配') as payout_freq
-                FROM etf_master m {join}
+                FROM etf_master m {LATEST_DAILY_JOIN}
                 WHERE UPPER(m.ticker) LIKE %s OR m.name LIKE %s
                 ORDER BY m.ticker LIMIT 30
-            """.format(join=LATEST_DAILY_JOIN), (like, f"%{q}%"))
+            """, (like, f"%{q}%"))
             for r in cursor.fetchall():
                 r['source'] = 'database'
                 results.append(r)

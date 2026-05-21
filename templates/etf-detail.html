@@ -267,59 +267,6 @@ const STATIC_INFO = {
 let currentUser = null, etfData = null, priceChart = null;
 let inWatchlist = false, currentPeriod = '1y', currentTicker = '';
 
-// 2. 將切換區間的函式改為 async 異步函式
-async function updateChartPeriod(period) {
-    try {
-        console.log(`開始獲取 ${period} 的歷史資料...`);
-        
-        // 💡 關鍵點 1：使用 await，強制程式碼「等資料完全回傳」後才往下走
-        const response = await fetch(`/api/etf/history?ticker=${etfData.ticker}&period=${period}`);
-        const result = await response.json();
-        
-        if (result.status !== 'success' || !result.data) {
-            alert("獲取歷史資料失敗: " + (result.message || "未知錯誤"));
-            return;
-        }
-        
-        const labels = result.data.labels;
-        const prices = result.data.prices;
-        
-        // 💡 關鍵點 2：檢查並銷毀舊的圖表實例（徹底解決按第二下才顯示的問題）
-        if (priceChart) {
-            priceChart.destroy();
-        }
-        
-        // 3. 重新在 Canvas 上建立新圖表
-        const ctx = document.getElementById('price-chart-canvas').getContext('2d');
-        priceChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: `${etfData.ticker} 價格走勢 (${period})`,
-                    data: prices,
-                    borderColor: '#3b82f6',
-                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                    borderWidth: 2,
-                    fill: true,
-                    tension: 0.1
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    x: { grid: { display: false } },
-                    y: { ticks: { callback: value => '$' + value } }
-                }
-            }
-        });
-        
-    } catch (error) {
-        console.error("更新圖表時發生錯誤:", error);
-    }
-}
-
 function showToast(msg, ok = true) {
     const el = document.createElement('div');
     el.className = 'toast-message';
