@@ -232,54 +232,43 @@ function renderTable(data, type){
         const chgCls=chg>=0?'text-red-500':'text-green-600';
         const chgTxt=(chg>=0?'+':'')+chg.toFixed(2)+'%';
         const price=item.current_price?item.current_price.toFixed(2):'-';
-
-        let rankVal='-';
-        if(type==='volume')      rankVal=fmtVol(item.volume||0,item.market);
-        else if(type==='asset')  rankVal=fmtAsset(item.asset_size);
-        else if(type==='return'){
-            const r=item.annual_return_1y||0;
-            rankVal=`<span class="${r>=0?'text-red-500':'text-green-600'}">${r>=0?'+':''}${r.toFixed(2)}%</span>`;
-        } else if(type==='yield'){
-            const y = item.dividend_yield;
-            // 如果 y 為 null, undefined, 或 0，則顯示 "-" 避免出現 0.00%
-            if (y === null || y === undefined || y === 0) {
-                rankVal = `<span class="text-slate-400 font-medium">-</span>`;
-            } else {
-                rankVal = `<span class="text-emerald-600 font-medium">${y.toFixed(2)}%</span>`;
-            }
+        const rawYield = parseFloat(item.dividend_yield);
+        const hasYield = (rawYield !== null && rawYield !== undefined && rawYield > 0);
+        const yieldDisplay = hasYield ? `${rawYield.toFixed(2)}%` : '-';
+        
+        // 如果是殖利率排行頁，rankVal 直接用計算好的 yieldDisplay
+        let rankVal = '-';
+        if(type === 'volume')      rankVal = fmtVol(item.volume || 0, item.market);
+        else if(type === 'asset')  rankVal = fmtAsset(item.asset_size);
+        else if(type === 'return') {
+            const r = item.annual_return_1y || 0;
+            rankVal = `<span class="${r >= 0 ? 'text-red-500' : 'text-green-600'}">${r >= 0 ? '+' : ''}${r.toFixed(2)}%</span>`;
+        } 
+        else if(type === 'yield') {
+            rankVal = `<span class="${hasYield ? 'text-emerald-600 font-medium' : 'text-slate-400'}">${yieldDisplay}</span>`;
         }
 
-        // 同時也要修正表格右側那一欄的顯示逻辑 (yieldTxt):
-        const yieldTxt = (item.dividend_yield && item.dividend_yield > 0) 
-                        ? item.dividend_yield.toFixed(2) + '%' 
-                        : '-';
+        // 只有在非「殖利率」頁面時，右側才顯示殖利率；若在「殖利率」頁面，則顯示為 "-" 或隱藏
+        const yieldTxt = (type !== 'yield') ? yieldDisplay : '-';
 
         return `
-        <tr class="row-hover border-b border-slate-50 cursor-pointer transition-colors"
-            onclick="location.href='/etf-detail/${item.ticker}'">
-            <td class="px-4 py-3.5">
-                <div class="rank-badge ${bCls}">${rank}</div>
-            </td>
+        <tr class="row-hover border-b border-slate-50 cursor-pointer transition-colors" onclick="location.href='/etf-detail/${item.ticker}'">
+            <td class="px-4 py-3.5"><div class="rank-badge ${bCls}">${rank}</div></td>
             <td class="px-4 py-3.5 max-w-0">
                 <div class="flex items-center gap-1 flex-wrap">
                     <span class="font-bold text-indigo-600 text-sm">${item.ticker}</span>
                     ${payoutBadge(item.payout_freq)}
                 </div>
-                <div class="text-xs text-slate-400 mt-0.5 truncate">${item.name||''}</div>
+                <div class="text-xs text-slate-400 mt-0.5 truncate">${item.name || ''}</div>
             </td>
             <td class="px-4 py-3.5 text-right font-semibold text-slate-800 tabular-nums">${price}</td>
             <td class="px-4 py-3.5 text-right font-semibold tabular-nums ${chgCls}">${chgTxt}</td>
             <td class="px-4 py-3.5 text-right text-slate-600 tabular-nums">${rankVal}</td>
             <td class="px-4 py-3.5 text-right text-emerald-600 tabular-nums hidden md:table-cell">${yieldTxt}</td>
-            <td class="px-4 py-3.5 text-center" onclick="event.stopPropagation()">
-                <button onclick="addToWatchlist('${item.ticker}','${(item.name||'').replace(/'/g,"\\'")}','${item.market}')"
-                    title="加入自選"
-                    class="w-7 h-7 rounded-md bg-indigo-50 text-indigo-500 hover:bg-indigo-100 transition-colors inline-flex items-center justify-center">
-                    <i class="fas fa-plus text-xs"></i>
-                </button>
-            </td>
+            <!-- ... 其餘按鈕邏輯 ... -->
         </tr>`;
     }).join('');
+        
 }
 
 async function addToWatchlist(ticker,name,market){

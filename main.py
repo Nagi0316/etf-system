@@ -304,7 +304,7 @@ def init_db():
             volume               BIGINT         DEFAULT 0,
             asset_size           DECIMAL(20,2)  DEFAULT 0,
             nav                  DECIMAL(10,2)  DEFAULT 0,
-            dividend_yield       DECIMAL(5,4)   DEFAULT 0,
+            dividend_yield       DECIMAL(5,4)   DEFAULT NULL,
             payout_freq          VARCHAR(20)    DEFAULT '季配',
             annual_return_1y     DECIMAL(7,4)   DEFAULT 0,
             annual_return_3y     DECIMAL(7,4)   DEFAULT 0,
@@ -397,6 +397,7 @@ def init_db():
 # JSON 序列化工具
 # ─────────────────────────────────────────────
 def convert_value(v):
+    if v is None:               return None
     if isinstance(v, Decimal):  return float(v)
     if isinstance(v, datetime): return v.strftime("%Y-%m-%d %H:%M:%S")
     if isinstance(v, date):     return v.strftime("%Y-%m-%d")
@@ -800,8 +801,10 @@ def _fetch_tw_asset_size(ticker: str) -> float:
 def _fetch_tw_dividend_twse(ticker: str, current_price: float) -> tuple:
     """
     台股 ETF 殖利率與配息頻率
-    優先用 Yahoo Finance（v8 chart events=dividends），失敗再試 TWSE TWT48U
+    回傳: (dividend_yield, payout_freq) 
+    若無資料則回傳 (None, None)
     """
+    
     # ── 優先：Yahoo Finance 配息記錄 ──
     try:
         yt = _yahoo_ticker(ticker, 'TW')
@@ -812,39 +815,41 @@ def _fetch_tw_dividend_twse(ticker: str, current_price: float) -> tuple:
         s = _new_session()
         s.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
         r = s.get(url, timeout=10)
+        
         if r.status_code == 200:
             j = r.json()
             result = j.get("chart", {}).get("result")
             if result:
-                # 先試從 meta 拿 dividendYield（最快）
                 meta = result[0].get("meta", {})
-                yf_yield = _safe_float(meta.get("dividendYield") or 0) * 100
-                # 再從 events 拿配息紀錄算頻率
+                # 改用 None 作為無資料標記
+                yf_yield = _safe_float(meta.get("dividendYield")) 
+                yf_yield = (yf_yield * 100) if yf_yield is not None else None
+                
                 events = result[0].get("events", {}).get("dividends", {})
                 cutoff = time.time() - 365 * 86400
                 recent = [v["amount"] for v in events.values()
                           if v.get("date", 0) >= cutoff and v.get("amount", 0) > 0]
                 n = len(recent)
+                
+                div_yield = None
+                freq = None
+
                 if n > 0:
                     total = sum(recent)
                     div_yield = round(total / current_price * 100, 4) if current_price > 0 else 0.0
-                    # 用 YF meta 殖利率補充（若 event 算出來更小）
-                    if yf_yield > div_yield:
+                    if yf_yield is not None and yf_yield > div_yield:
                         div_yield = round(yf_yield, 4)
-                elif yf_yield > 0:
+                elif yf_yield is not None:
                     div_yield = round(yf_yield, 4)
-                    n = 4  # 預設季配
-                else:
-                    div_yield = 0.0
+                    n = 4  # 預設季配邏輯
 
-                if   n >= 10: freq = "月配"
-                elif n >= 3:  freq = "季配"
-                elif n == 2:  freq = "半年配"
-                elif n == 1:  freq = "年配"
-                elif div_yield > 0: freq = "季配"
-                else:         freq = "不配息"
+                if div_yield is not None:
+                    if   n >= 10: freq = "月配"
+                    elif n >= 3:  freq = "季配"
+                    elif n == 2:  freq = "半年配"
+                    elif n == 1:  freq = "年配"
+                    else:         freq = "季配" # 預設
 
-                if div_yield > 0 or n > 0:
                     logger.debug(f"TW dividend {ticker}: YF {div_yield:.2f}%/{freq} (n={n})")
                     return div_yield, freq
     except Exception as e:
@@ -854,37 +859,31 @@ def _fetch_tw_dividend_twse(ticker: str, current_price: float) -> tuple:
     try:
         url2 = f"https://www.twse.com.tw/exchangeReport/TWT48U?response=json&stockNo={ticker}"
         s2 = _new_session()
-        s2.headers["Referer"] = "https://www.twse.com.tw/"
         r2 = s2.get(url2, timeout=10)
         d2 = r2.json()
         rows = d2.get("data", [])
+        
         if not rows:
-            return 0.0, "不配息"
+            return None, None
 
-        # TWT48U 欄位結構（以 0050 為例）：
-        # [年度, 股利合計, 現金股利, 股票股利, ...] 或類似格式
-        # 取近 12 筆（約 1 年內，若月配則 12 筆，季配則 4 筆）
         recent_rows = rows[-12:]
         total_div = 0.0
         valid_count = 0
 
         for row in recent_rows:
-            if not isinstance(row, list) or len(row) < 2:
-                continue
-            # 嘗試每個欄位找合理的配息金額（0.01 ~ 30 之間）
-            for cell in row[1:6]:   # 跳過第一欄（通常是日期/年度）
+            if not isinstance(row, list) or len(row) < 2: continue
+            for cell in row[1:6]:
                 cell_str = str(cell).replace(",", "").strip()
                 try:
                     v = float(cell_str)
-                    if 0.005 < v < 50:   # 合理配息範圍（元/股）
+                    if 0.005 < v < 50:
                         total_div += v
                         valid_count += 1
                         break
-                except (ValueError, TypeError):
-                    pass
+                except (ValueError, TypeError): continue
 
         if valid_count == 0:
-            return 0.0, "不配息"
+            return None, None
 
         div_yield2 = round(total_div / current_price * 100, 4) if current_price > 0 else 0.0
 
@@ -892,14 +891,12 @@ def _fetch_tw_dividend_twse(ticker: str, current_price: float) -> tuple:
         elif valid_count >= 3:  freq2 = "季配"
         elif valid_count == 2:  freq2 = "半年配"
         elif valid_count == 1:  freq2 = "年配"
-        else:                   freq2 = "不配息"
+        else:                   freq2 = "未知"
 
-        logger.debug(f"TW dividend TWSE {ticker}: {div_yield2:.2f}%/{freq2} (n={valid_count})")
         return div_yield2, freq2
     except Exception as e:
         logger.debug(f"TW dividend TWSE {ticker}: {e}")
-        return 0.0, "不配息"
-
+        return None, None
 
 # ────────────────────────────────────────────
 # 美股：Yahoo Finance Query2 REST API（繞過 yfinance）
