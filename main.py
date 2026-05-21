@@ -2370,23 +2370,11 @@ async def get_watchlist(request: Request):
                 WHERE w.user_id=%s ORDER BY w.added_at DESC
             """, (uid,))
             rows = cursor.fetchall()
-
-            for r in rows:
-                if r['dividend_yield'] == 0:
-                    # 使用 asyncio.create_task 非同步在背景更新，不影響當下回應速度
-                    asyncio.create_task(update_one_etf_in_background(r['ticker']))
-
         return safe_json({"status":"success","data":_enrich(rows)})
     except Exception as ex:
         logger.error(f"watchlist 錯誤: {ex}")
         return safe_json({"status":"error","message":str(ex)}, 500)
 
-async def update_one_etf_in_background(ticker):
-    try:
-        # 這裡呼叫您原本的爬蟲函數
-        await fetch_one_etf(ticker) 
-    except Exception as e:
-        logger.error(f"背景更新 {ticker} 殖利率失敗: {e}")
 
 @app.post("/api/watchlist/add")
 async def add_watchlist(request: Request):
