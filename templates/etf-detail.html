@@ -175,16 +175,16 @@
             <div class="flex items-center justify-between mb-3">
                 <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide">價格走勢</h3>
                 <div class="flex gap-1">
-                    <button onclick="updateChartPeriod('1M')" class="period-btn">1M</button>
-                    <button onclick="updateChartPeriod('3M')" class="period-btn">3M</button>
-                    <button onclick="updateChartPeriod('6M')" class="period-btn">6M</button>
-                    <button onclick="updateChartPeriod('1Y')" class="period-btn">1Y</button>
-                    <button onclick="updateChartPeriod('3Y')" class="period-btn">3Y</button>
-                    <button onclick="updateChartPeriod('5Y')" class="period-btn">5Y</button>
+                    <button onclick="changePeriod('1M')" class="period-btn">1M</button>
+                    <button onclick="changePeriod('3M')" class="period-btn">3M</button>
+                    <button onclick="changePeriod('6M')" class="period-btn">6M</button>
+                    <button onclick="changePeriod('1Y')" class="period-btn">1Y</button>
+                    <button onclick="changePeriod('3Y')" class="period-btn">3Y</button>
+                    <button onclick="changePeriod('5Y')" class="period-btn">5Y</button>
                 </div>
             </div>
             <p id="chart-note" class="hidden text-xs text-amber-500 text-right mb-1">⚠️ 歷史資料暫時無法取得，以下為 52 週區間估算</p>
-            <canvas id="price-chart" height="160"></canvas>
+            <canvas id="price-chart"></canvas>
             <p id="no-chart-msg" class="hidden text-center text-slate-400 text-sm py-8">暫無歷史價格資料</p>
         </div>
 
@@ -362,6 +362,13 @@ async function loadETFDetail() {
         if (result.status === 'success') {
             etfData = result.data;
             renderData();
+            
+            // 初始化設定為 1y 並呼叫載入
+            currentPeriod = '1y';
+            document.querySelectorAll('.period-btn').forEach(b => 
+                b.classList.toggle('active', b.textContent.toUpperCase() === '1Y')
+            );
+            
             loadPriceHistory(currentTicker, '1y');
             checkWatchlistStatus(currentTicker);
             document.getElementById('loading').classList.add('hidden');
@@ -638,11 +645,20 @@ function drawChart(labels, prices, isFallback = false) {
     });
 }
 
-function changePeriod(p) {
+async function changePeriod(p) {
     currentPeriod = p;
-    document.querySelectorAll('.period-btn').forEach(b => b.classList.toggle('active', b.textContent.toUpperCase()===p.toUpperCase()));
+    // 1. 更新按鈕樣式
+    document.querySelectorAll('.period-btn').forEach(b => 
+        b.classList.toggle('active', b.textContent.toUpperCase() === p.toUpperCase())
+    );
+    
+    // 2. 隱藏 Note
     document.getElementById('chart-note').classList.add('hidden');
-    if (currentTicker) loadPriceHistory(currentTicker, p);
+    
+    // 3. 呼叫 loadPriceHistory，它內部有處理銷毀 (destroy) 與重新繪製
+    if (currentTicker) {
+        await loadPriceHistory(currentTicker, p);
+    }
 }
 
 // ── 自選股 ──
