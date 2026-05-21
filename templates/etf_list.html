@@ -240,11 +240,19 @@ function renderTable(data, type){
             const r=item.annual_return_1y||0;
             rankVal=`<span class="${r>=0?'text-red-500':'text-green-600'}">${r>=0?'+':''}${r.toFixed(2)}%</span>`;
         } else if(type==='yield'){
-            const y=item.dividend_yield||0;
-            rankVal=`<span class="text-emerald-600 font-medium">${y.toFixed(2)}%</span>`;
+            const y = item.dividend_yield;
+            // 如果 y 為 null, undefined, 或 0，則顯示 "-" 避免出現 0.00%
+            if (y === null || y === undefined || y === 0) {
+                rankVal = `<span class="text-slate-400 font-medium">-</span>`;
+            } else {
+                rankVal = `<span class="text-emerald-600 font-medium">${y.toFixed(2)}%</span>`;
+            }
         }
 
-        const yieldTxt=item.dividend_yield?item.dividend_yield.toFixed(2)+'%':'-';
+        // 同時也要修正表格右側那一欄的顯示逻辑 (yieldTxt):
+        const yieldTxt = (item.dividend_yield && item.dividend_yield > 0) 
+                        ? item.dividend_yield.toFixed(2) + '%' 
+                        : '-';
 
         return `
         <tr class="row-hover border-b border-slate-50 cursor-pointer transition-colors"
