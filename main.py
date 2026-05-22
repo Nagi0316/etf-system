@@ -402,42 +402,177 @@ def safe_json(data, status_code=200):
 # ETF 靜態資料
 # ─────────────────────────────────────────────
 TW_ETFS = [
-    {'ticker':'0050',   'name':'元大台灣50',          'market':'TW'},
-    {'ticker':'0056',   'name':'元大高股息',           'market':'TW'},
-    {'ticker':'00878',  'name':'國泰永續高股息',        'market':'TW'},
-    {'ticker':'006208', 'name':'富邦台50',             'market':'TW'},
-    {'ticker':'00919',  'name':'群益台灣精選高息',      'market':'TW'},
-    {'ticker':'00929',  'name':'復華台灣科技優息',      'market':'TW'},
-    {'ticker':'00713',  'name':'元大台灣高息低波',      'market':'TW'},
-    {'ticker':'00940',  'name':'元大台灣價值高息',      'market':'TW'},
-    {'ticker':'00939',  'name':'統一台灣高息動能',      'market':'TW'},
-    {'ticker':'0052',   'name':'富邦科技',             'market':'TW'},
-    {'ticker':'00692',  'name':'富邦公司治理',          'market':'TW'},
-    {'ticker':'00679B', 'name':'元大美債20年',          'market':'TW'},
-    {'ticker':'00687B', 'name':'國泰20年美債',          'market':'TW'},
-    {'ticker':'00751B', 'name':'元大AAA至A公司債',     'market':'TW'},
-    {'ticker':'006205', 'name':'富邦上証',             'market':'TW'},
+    # ★ 熱門指數型
+    {'ticker':'0050',   'name':'元大台灣50',            'market':'TW', 'hot':True},
+    {'ticker':'006208', 'name':'富邦台50',               'market':'TW', 'hot':True},
+    {'ticker':'0051',   'name':'元大中型100',            'market':'TW'},
+    {'ticker':'0052',   'name':'富邦科技',               'market':'TW'},
+    {'ticker':'0053',   'name':'元大電子',               'market':'TW'},
+    {'ticker':'00692',  'name':'富邦公司治理',            'market':'TW'},
+    {'ticker':'00850',  'name':'元大臺灣ESG永續',         'market':'TW'},
+    {'ticker':'00757',  'name':'統一FANG+',              'market':'TW'},
+    # ★ 熱門高股息型
+    {'ticker':'0056',   'name':'元大高股息',              'market':'TW', 'hot':True},
+    {'ticker':'00878',  'name':'國泰永續高股息',           'market':'TW', 'hot':True},
+    {'ticker':'00919',  'name':'群益台灣精選高息',         'market':'TW', 'hot':True},
+    {'ticker':'00929',  'name':'復華台灣科技優息',         'market':'TW'},
+    {'ticker':'00713',  'name':'元大台灣高息低波',         'market':'TW'},
+    {'ticker':'00940',  'name':'元大台灣價值高息',         'market':'TW'},
+    {'ticker':'00939',  'name':'統一台灣高息動能',         'market':'TW'},
+    {'ticker':'00934',  'name':'中信成長高股息',           'market':'TW'},
+    {'ticker':'00936',  'name':'台新台灣永續高息',         'market':'TW'},
+    {'ticker':'00944',  'name':'群益半導體收益',           'market':'TW'},
+    {'ticker':'00900',  'name':'富邦特選高股息30',         'market':'TW'},
+    {'ticker':'00907',  'name':'永豐優息存股',             'market':'TW'},
+    {'ticker':'00915',  'name':'凱基優選高股息30',         'market':'TW'},
+    {'ticker':'00918',  'name':'大華優利高填息30',         'market':'TW'},
+    {'ticker':'00930',  'name':'永豐ESG低碳高息',          'market':'TW'},
+    {'ticker':'00731',  'name':'FH富時高息低波',           'market':'TW'},
+    {'ticker':'00701',  'name':'國泰股利精選30',           'market':'TW'},
+    # 科技/半導體
+    {'ticker':'00891',  'name':'中信關鍵半導體',           'market':'TW'},
+    {'ticker':'00892',  'name':'富邦台灣半導體',           'market':'TW'},
+    {'ticker':'00861',  'name':'元大全球AI',               'market':'TW'},
+    {'ticker':'00762',  'name':'富邦全球AI',               'market':'TW'},
+    # 債券型
+    {'ticker':'00679B', 'name':'元大美債20年',             'market':'TW'},
+    {'ticker':'00687B', 'name':'國泰20年美債',             'market':'TW'},
+    {'ticker':'00695B', 'name':'富邦美債20年',             'market':'TW'},
+    {'ticker':'00696B', 'name':'富邦美債7-10年',           'market':'TW'},
+    {'ticker':'00697B', 'name':'元大美債7-10年',           'market':'TW'},
+    {'ticker':'00720B', 'name':'元大投資級公司債',         'market':'TW'},
+    {'ticker':'00725B', 'name':'國泰投資級公司債',         'market':'TW'},
+    {'ticker':'00749B', 'name':'凱基美債25+',              'market':'TW'},
+    {'ticker':'00751B', 'name':'元大AAA至A公司債',         'market':'TW'},
+    {'ticker':'00793B', 'name':'群益15年IG科技債',         'market':'TW'},
+    {'ticker':'00855B', 'name':'國泰1-5年美債',            'market':'TW'},
+    {'ticker':'00865B', 'name':'中信美國公債20年+',        'market':'TW'},
+    {'ticker':'00866B', 'name':'中信US高收益債',           'market':'TW'},
+    {'ticker':'00882B', 'name':'中信高評級公司債',         'market':'TW'},
+    {'ticker':'006205', 'name':'富邦上証',                 'market':'TW'},
 ]
 
 US_ETFS = [
-    {'ticker':'SPY',  'name':'SPDR S&P 500 ETF Trust',          'market':'US'},
-    {'ticker':'QQQ',  'name':'Invesco QQQ Trust',                'market':'US'},
-    {'ticker':'VOO',  'name':'Vanguard S&P 500 ETF',             'market':'US'},
-    {'ticker':'VTI',  'name':'Vanguard Total Stock Market ETF',  'market':'US'},
-    {'ticker':'VT',   'name':'Vanguard Total World Stock ETF',   'market':'US'},
-    {'ticker':'SCHD', 'name':'Schwab U.S. Dividend Equity ETF',  'market':'US'},
-    {'ticker':'VYM',  'name':'Vanguard High Dividend Yield ETF', 'market':'US'},
-    {'ticker':'VIG',  'name':'Vanguard Dividend Appreciation ETF','market':'US'},
-    {'ticker':'TLT',  'name':'iShares 20+ Year Treasury Bond ETF','market':'US'},
-    {'ticker':'AGG',  'name':'iShares Core U.S. Aggregate Bond ETF','market':'US'},
-    {'ticker':'XLK',  'name':'Technology Select Sector SPDR',    'market':'US'},
-    {'ticker':'SMH',  'name':'VanEck Semiconductor ETF',         'market':'US'},
-    {'ticker':'IWM',  'name':'iShares Russell 2000 ETF',         'market':'US'},
-    {'ticker':'GLD',  'name':'SPDR Gold Shares',                 'market':'US'},
-    {'ticker':'ARKK', 'name':'ARK Innovation ETF',               'market':'US'},
+    # ★ 熱門大盤指數
+    {'ticker':'SPY',  'name':'SPDR S&P 500 ETF Trust',               'market':'US', 'hot':True},
+    {'ticker':'QQQ',  'name':'Invesco QQQ Trust',                     'market':'US', 'hot':True},
+    {'ticker':'VOO',  'name':'Vanguard S&P 500 ETF',                  'market':'US', 'hot':True},
+    {'ticker':'VTI',  'name':'Vanguard Total Stock Market ETF',       'market':'US', 'hot':True},
+    {'ticker':'IVV',  'name':'iShares Core S&P 500 ETF',             'market':'US'},
+    {'ticker':'IWM',  'name':'iShares Russell 2000 ETF',             'market':'US'},
+    {'ticker':'DIA',  'name':'SPDR Dow Jones Industrial Average',     'market':'US'},
+    {'ticker':'RSP',  'name':'Invesco S&P 500 Equal Weight ETF',      'market':'US'},
+    {'ticker':'VT',   'name':'Vanguard Total World Stock ETF',        'market':'US'},
+    # ★ 熱門股息/價值
+    {'ticker':'SCHD', 'name':'Schwab U.S. Dividend Equity ETF',       'market':'US', 'hot':True},
+    {'ticker':'VYM',  'name':'Vanguard High Dividend Yield ETF',      'market':'US'},
+    {'ticker':'VIG',  'name':'Vanguard Dividend Appreciation ETF',    'market':'US'},
+    {'ticker':'DVY',  'name':'iShares Select Dividend ETF',           'market':'US'},
+    {'ticker':'HDV',  'name':'iShares Core High Dividend ETF',        'market':'US'},
+    {'ticker':'NOBL', 'name':'ProShares S&P 500 Dividend Aristocrats','market':'US'},
+    {'ticker':'SDY',  'name':'SPDR S&P Dividend ETF',                 'market':'US'},
+    {'ticker':'DGRO', 'name':'iShares Core Dividend Growth ETF',      'market':'US'},
+    # 科技/成長
+    {'ticker':'XLK',  'name':'Technology Select Sector SPDR',         'market':'US'},
+    {'ticker':'SMH',  'name':'VanEck Semiconductor ETF',              'market':'US'},
+    {'ticker':'SOXX', 'name':'iShares Semiconductor ETF',             'market':'US'},
+    {'ticker':'VGT',  'name':'Vanguard Information Technology ETF',   'market':'US'},
+    {'ticker':'ARKK', 'name':'ARK Innovation ETF',                    'market':'US'},
+    {'ticker':'CIBR', 'name':'First Trust NASDAQ Cybersecurity ETF',  'market':'US'},
+    {'ticker':'BOTZ', 'name':'Global X Robotics & AI ETF',            'market':'US'},
+    {'ticker':'AIQ',  'name':'Global X Artificial Intelligence ETF',  'market':'US'},
+    # 債券
+    {'ticker':'TLT',  'name':'iShares 20+ Year Treasury Bond ETF',    'market':'US'},
+    {'ticker':'IEF',  'name':'iShares 7-10 Year Treasury Bond ETF',   'market':'US'},
+    {'ticker':'SHY',  'name':'iShares 1-3 Year Treasury Bond ETF',    'market':'US'},
+    {'ticker':'AGG',  'name':'iShares Core US Aggregate Bond ETF',    'market':'US'},
+    {'ticker':'BND',  'name':'Vanguard Total Bond Market ETF',        'market':'US'},
+    {'ticker':'HYG',  'name':'iShares iBoxx High Yield Corp Bond',    'market':'US'},
+    {'ticker':'LQD',  'name':'iShares Invest Grade Corp Bond',        'market':'US'},
+    {'ticker':'VCSH', 'name':'Vanguard Short-Term Corp Bond ETF',     'market':'US'},
+    {'ticker':'TIPS', 'name':'iShares TIPS Bond ETF',                 'market':'US'},
+    # 商品/另類
+    {'ticker':'GLD',  'name':'SPDR Gold Shares',                      'market':'US'},
+    {'ticker':'IAU',  'name':'iShares Gold Trust',                    'market':'US'},
+    {'ticker':'SLV',  'name':'iShares Silver Trust',                  'market':'US'},
+    {'ticker':'GDX',  'name':'VanEck Gold Miners ETF',                'market':'US'},
+    {'ticker':'USO',  'name':'United States Oil Fund',                'market':'US'},
+    # 房地產
+    {'ticker':'VNQ',  'name':'Vanguard Real Estate ETF',              'market':'US'},
+    {'ticker':'IYR',  'name':'iShares U.S. Real Estate ETF',         'market':'US'},
+    {'ticker':'XLRE', 'name':'Real Estate Select Sector SPDR',        'market':'US'},
+    # 國際/新興市場
+    {'ticker':'VEA',  'name':'Vanguard FTSE Developed Markets ETF',   'market':'US'},
+    {'ticker':'VWO',  'name':'Vanguard FTSE Emerging Markets ETF',    'market':'US'},
+    {'ticker':'EFA',  'name':'iShares MSCI EAFE ETF',                'market':'US'},
+    {'ticker':'EEM',  'name':'iShares MSCI Emerging Markets ETF',    'market':'US'},
+    {'ticker':'FXI',  'name':'iShares China Large-Cap ETF',          'market':'US'},
+    {'ticker':'EWJ',  'name':'iShares MSCI Japan ETF',               'market':'US'},
+    # 板塊型
+    {'ticker':'XLF',  'name':'Financial Select Sector SPDR',          'market':'US'},
+    {'ticker':'XLE',  'name':'Energy Select Sector SPDR',             'market':'US'},
+    {'ticker':'XLV',  'name':'Health Care Select Sector SPDR',        'market':'US'},
+    {'ticker':'XLI',  'name':'Industrial Select Sector SPDR',         'market':'US'},
+    {'ticker':'XLU',  'name':'Utilities Select Sector SPDR',          'market':'US'},
+    {'ticker':'XLC',  'name':'Communication Services SPDR',           'market':'US'},
+    {'ticker':'XLP',  'name':'Consumer Staples Select Sector SPDR',   'market':'US'},
+    {'ticker':'XLY',  'name':'Consumer Discretionary Select Sector',  'market':'US'},
+    {'ticker':'XLB',  'name':'Materials Select Sector SPDR',          'market':'US'},
 ]
 
 ALL_ETFS = TW_ETFS + US_ETFS
+# 去重
+_seen = set()
+_deduped = []
+for _e in ALL_ETFS:
+    if _e['ticker'] not in _seen:
+        _seen.add(_e['ticker']); _deduped.append(_e)
+ALL_ETFS = _deduped
+
+# 熱門 ETF（啟動時優先抓取，快速顯示排行）
+HOT_ETFS = [e for e in ALL_ETFS if e.get('hot')]
+logger.info(f"ETF 清單：TW={len(TW_ETFS)}, US={len(US_ETFS)}, 共{len(ALL_ETFS)}檔，熱門{len(HOT_ETFS)}檔")
+
+# ══════════════════════════════════════════════
+# ★ 記憶體快取（替代 Redis，零依賴，執行緒安全）
+# ══════════════════════════════════════════════
+import threading as _threading
+
+class _Cache:
+    def __init__(self):
+        self._d = {}
+        self._lk = _threading.RLock()
+
+    def get(self, k):
+        with self._lk:
+            e = self._d.get(k)
+            if not e: return None
+            if time.time() > e[1]: del self._d[k]; return None
+            return e[0]
+
+    def set(self, k, v, ttl=180):
+        with self._lk:
+            self._d[k] = (v, time.time() + ttl)
+
+    def delete(self, k):
+        with self._lk: self._d.pop(k, None)
+
+    def delete_prefix(self, p):
+        with self._lk:
+            for k in [k for k in self._d if k.startswith(p)]:
+                del self._d[k]
+
+    def evict(self):
+        now = time.time()
+        with self._lk:
+            for k in [k for k, v in self._d.items() if now > v[1]]:
+                del self._d[k]
+
+_cache = _Cache()
+_CACHE_TTL_RANK   = 180   # 排行榜 3 分鐘
+_CACHE_TTL_DETAIL = 600   # 詳情 10 分鐘
+_CACHE_TTL_SEARCH = 60    # 搜尋 1 分鐘
+
 
 MOCK_DATA = {
     '0050':   (175.50, 1520000, 3050.0e8, 5.2, '半年配', 18.5, 1.2),
@@ -499,8 +634,10 @@ def get_mock_row(ticker):
 
 
 def insert_mock_data():
-    """只確保 etf_master 有基礎清單，不塞假的每日數據"""
+    """插入全量 etf_master + 熱門 ETF mock 行情（讓排行榜啟動即有數字）"""
+    today = date.today().isoformat()
     with get_db() as (conn, cursor):
+        # 全量 master
         for etf in ALL_ETFS:
             cursor.execute(
                 """INSERT INTO etf_master (ticker, name, market)
@@ -509,7 +646,37 @@ def insert_mock_data():
                 (etf['ticker'], etf['name'], etf['market'])
             )
         conn.commit()
-    logger.info("✅ etf_master 基礎清單已確認")
+
+        # 熱門 ETF mock 行情（只在沒有當日資料時才插入）
+        for etf in HOT_ETFS:
+            ticker = etf['ticker']
+            cursor.execute(
+                "SELECT COUNT(*) as cnt FROM etf_daily_data WHERE ticker=%s AND date=%s",
+                (ticker, today)
+            )
+            row = cursor.fetchone()
+            if (row['cnt'] if row else 0) > 0:
+                continue
+            m = get_mock_row(ticker)
+            if not m:
+                continue
+            try:
+                cursor.execute("""
+                    INSERT IGNORE INTO etf_daily_data
+                    (ticker,date,current_price,price_change,price_change_percent,
+                     volume,asset_size,nav,dividend_yield,payout_freq,annual_return_1y)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (
+                    ticker, today,
+                    m['current_price'], m['price_change'], m['price_change_percent'],
+                    m['volume'], m['asset_size'], m['current_price'],
+                    m['dividend_yield'] / 100 if m['dividend_yield'] else 0,
+                    m['payout_freq'], m['annual_return_1y']
+                ))
+            except Exception:
+                pass
+        conn.commit()
+    logger.info(f"✅ etf_master 基礎清單已確認，熱門 {len(HOT_ETFS)} 檔 mock 已預填")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1538,65 +1705,120 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     }
 
 
+def _save_etf_data(data: dict):
+    """將爬取結果存入 DB 並清除相關快取"""
+    today = datetime.now().date()
+    ticker = data.get('ticker', '')
+    c_price = float(data.get('current_price') or 0)
+    n_price = float(data.get('nav') or c_price)
+    discount_premium = 0.0
+    if c_price > 0 and n_price > 0 and c_price != n_price:
+        discount_premium = round(((c_price - n_price) / n_price) * 100, 2)
+    with get_db() as (conn, cursor):
+        cursor.execute("""
+            INSERT INTO etf_daily_data
+            (ticker, date,
+             current_price, price_change, price_change_percent,
+             volume, asset_size, nav, discount_premium,
+             dividend_yield, payout_freq,
+             annual_return_1y, annual_return_3y, annual_return_5y,
+             pe_ratio, expense_ratio,
+             day_high, day_low,
+             fifty_two_week_high, fifty_two_week_low)
+            VALUES (%s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s, %s,%s, %s,%s)
+            ON DUPLICATE KEY UPDATE
+              current_price=VALUES(current_price), price_change=VALUES(price_change),
+              price_change_percent=VALUES(price_change_percent),
+              volume=VALUES(volume), asset_size=VALUES(asset_size),
+              nav=VALUES(nav), discount_premium=VALUES(discount_premium),
+              dividend_yield=VALUES(dividend_yield), payout_freq=VALUES(payout_freq),
+              annual_return_1y=VALUES(annual_return_1y),
+              annual_return_3y=VALUES(annual_return_3y),
+              annual_return_5y=VALUES(annual_return_5y),
+              pe_ratio=VALUES(pe_ratio), expense_ratio=VALUES(expense_ratio),
+              day_high=VALUES(day_high), day_low=VALUES(day_low),
+              fifty_two_week_high=VALUES(fifty_two_week_high),
+              fifty_two_week_low=VALUES(fifty_two_week_low)
+        """, (
+            ticker, today,
+            c_price, data.get('price_change', 0), data.get('price_change_percent', 0),
+            data.get('volume', 0), data.get('asset_size', 0), n_price, discount_premium,
+            data.get('dividend_yield'), data.get('payout_freq', '季配'),
+            data.get('annual_return_1y', 0), data.get('annual_return_3y', 0),
+            data.get('annual_return_5y', 0), data.get('pe_ratio', 0),
+            data.get('expense_ratio', 0), data.get('day_high', 0),
+            data.get('day_low', 0), data.get('fifty_two_week_high', 0),
+            data.get('fifty_two_week_low', 0),
+        ))
+        conn.commit()
+    _cache.delete(f'detail:{ticker}')
+    _cache.delete_prefix('rank:')
+
+
+async def _update_hot_etfs():
+    """★ 熱門 ETF 優先更新（啟動序列第一步，約 1-3 分鐘完成）"""
+    logger.info(f"★ 開始更新熱門 {len(HOT_ETFS)} 檔 ETF...")
+    updated = 0
+    for etf in HOT_ETFS:
+        try:
+            data = await asyncio.to_thread(fetch_one_etf, etf['ticker'], etf['market'])
+            if data:
+                data['ticker'] = etf['ticker']
+                _save_etf_data(data)
+                updated += 1
+                logger.info(f"  ✓ {etf['ticker']} 更新完成")
+        except Exception as e:
+            logger.warning(f"  ✗ {etf['ticker']} 失敗: {e}")
+        # TW 5-8s, US 8-12s，避免被封
+        delay = random.uniform(5, 8) if etf['market'] == 'TW' else random.uniform(8, 12)
+        await asyncio.sleep(delay)
+    _cache.delete_prefix('rank:')
+    logger.info(f"✅ 熱門 ETF 更新完成 ({updated}/{len(HOT_ETFS)})")
+
+
 async def update_all_etf_data():
+    """★ 全量更新：熱門先跑，其餘批次並行（5檔/批）"""
     today = datetime.now().date()
     updated = 0
     failed  = 0
-    for i, etf in enumerate(ALL_ETFS):
-        if etf['market'] == 'TW':
-            await asyncio.sleep(random.uniform(5, 10))
-        else:
-            await asyncio.sleep(random.uniform(12, 20))
 
-        try:
-            data = await asyncio.to_thread(fetch_one_etf, etf['ticker'], etf['market'])
-        except Exception as e:
-            logger.warning(f"⚠️ {etf['ticker']} 抓取例外: {e}")
-            data = None
+    # 先更新熱門（若已在本函數之前跑過可跳過，但排程呼叫時直接跑完整版）
+    hot_tickers = {e['ticker'] for e in HOT_ETFS}
+    non_hot = [e for e in ALL_ETFS if e['ticker'] not in hot_tickers]
 
-        if not data:
-            failed += 1
-            logger.warning(f"⚠️ {etf['ticker']} 無法取得數據，本次略過")
-            continue
+    # 熱門依序跑（速率控制）
+    await _update_hot_etfs()
 
-        # 💡 【新增核心邏輯】批次更新時，即時計算折溢價
-        c_price = float(data.get('current_price') or 0)
-        n_price = float(data.get('nav') or c_price)
-        discount_premium = 0.0
-        if c_price > 0 and n_price > 0 and c_price != n_price:
-            discount_premium = round(((c_price - n_price) / n_price) * 100, 2)
+    # 其餘批次並行（每批 4 檔，批次間休息 3 秒）
+    BATCH = 4
+    logger.info(f"▶ 開始更新其餘 {len(non_hot)} 檔 ETF（批次={BATCH}）...")
+    for i in range(0, len(non_hot), BATCH):
+        batch = non_hot[i:i+BATCH]
+        results = await asyncio.gather(
+            *[asyncio.to_thread(fetch_one_etf, e['ticker'], e['market']) for e in batch],
+            return_exceptions=True
+        )
+        for etf, result in zip(batch, results):
+            if isinstance(result, Exception):
+                logger.debug(f"{etf['ticker']}: {result}")
+                failed += 1
+                continue
+            if result:
+                try:
+                    result['ticker'] = etf['ticker']
+                    _save_etf_data(result)
+                    updated += 1
+                except Exception as ex:
+                    logger.error(f"儲存 {etf['ticker']}: {ex}")
+                    failed += 1
+            else:
+                failed += 1
+        logger.info(f"  進度 {min(i+BATCH, len(non_hot))}/{len(non_hot)}")
+        if i + BATCH < len(non_hot):
+            await asyncio.sleep(3)
 
-        try:
-            with get_db() as (conn, cursor):
-                # 💡 【新增】將 discount_premium 補入 SQL 欄位與對應參數中
-                cursor.execute("""
-                    INSERT OR REPLACE INTO etf_daily_data
-                    (ticker, date,
-                     current_price, price_change, price_change_percent,
-                     volume, asset_size, nav, discount_premium,
-                     dividend_yield, payout_freq,
-                     annual_return_1y, annual_return_3y, annual_return_5y,
-                     pe_ratio, expense_ratio,
-                     day_high, day_low,
-                     fifty_two_week_high, fifty_two_week_low)
-                    VALUES (%s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s, %s,%s, %s,%s)
-                """, (
-                    data['ticker'], today,
-                    c_price,                 data['price_change'],   data['price_change_percent'],
-                    data['volume'],          data['asset_size'],     n_price, discount_premium,
-                    data['dividend_yield'],  data['payout_freq'],
-                    data['annual_return_1y'],data['annual_return_3y'],data['annual_return_5y'],
-                    data['pe_ratio'],        data['expense_ratio'],
-                    data['day_high'],        data['day_low'],
-                    data['fifty_two_week_high'], data['fifty_two_week_low'],
-                ))
-                conn.commit()
-                updated += 1
-        except Exception as e:
-            logger.error(f"❌ 儲存 {etf['ticker']} 失敗: {e}")
-            failed += 1
-
-    logger.info(f"✅ 更新完成：成功 {updated} 檔，失敗/略過 {failed} 檔")
+    _cache.delete_prefix('rank:')
+    logger.info(f"✅ 全量更新完成：成功 {updated} 檔，失敗/略過 {failed} 檔")
 
 
 # ─────────────────────────────────────────────
@@ -1622,27 +1844,48 @@ async def lifespan(app: FastAPI):
     global MAIN_LOOP
     MAIN_LOOP = asyncio.get_running_loop()
     init_db()
-    insert_mock_data()
+    insert_mock_data()   # 熱門 ETF mock 資料 → 排行榜啟動即有數字
     start_scheduler()
-    asyncio.create_task(_delayed_update())
+    asyncio.create_task(_startup_sequence())
     yield
 
+async def _startup_sequence():
+    """啟動序列：熱門優先(快) → 全量背景(慢)"""
+    await asyncio.sleep(3)
+    logger.info("▶ 啟動序列：優先更新熱門 ETF...")
+    await _update_hot_etfs()
+    logger.info("▶ 啟動序列：背景更新全量 ETF（不阻塞前端）...")
+    asyncio.create_task(_update_all_non_hot())
+
+async def _update_all_non_hot():
+    """全量非熱門 ETF 背景更新"""
+    hot_tickers = {e['ticker'] for e in HOT_ETFS}
+    non_hot = [e for e in ALL_ETFS if e['ticker'] not in hot_tickers]
+    BATCH = 4
+    updated, failed = 0, 0
+    logger.info(f"▶ 開始更新其餘 {len(non_hot)} 檔 ETF...")
+    for i in range(0, len(non_hot), BATCH):
+        batch = non_hot[i:i+BATCH]
+        results = await asyncio.gather(
+            *[asyncio.to_thread(fetch_one_etf, e['ticker'], e['market']) for e in batch],
+            return_exceptions=True
+        )
+        for etf, result in zip(batch, results):
+            if isinstance(result, Exception):
+                failed += 1; continue
+            if result:
+                try: result['ticker'] = etf['ticker']; _save_etf_data(result); updated += 1
+                except: failed += 1
+            else:
+                failed += 1
+        if i + BATCH < len(non_hot):
+            await asyncio.sleep(3)
+    _cache.delete_prefix('rank:')
+    logger.info(f"✅ 非熱門 ETF 更新完成 {updated}/{len(non_hot)}")
+
 async def _delayed_update():
-    await asyncio.sleep(5)
-
-    # 清掉 dividend_yield=0 且 asset_size=0 的舊資料，強制重抓
-    try:
-        with get_db() as (conn, cursor):
-            cursor.execute("""
-                DELETE FROM etf_daily_data
-                WHERE dividend_yield = 0 AND asset_size = 0
-            """)
-            conn.commit()
-            logger.info("✅ 已清除殘留的零值資料，將重新抓取")
-    except Exception as e:
-        logger.warning(f"清除零值資料失敗: {e}")
-
-    await update_all_etf_data()
+    # 保留相容，實際由 _startup_sequence 取代
+    pass
 
 def _schedule_update():
     if MAIN_LOOP and MAIN_LOOP.is_running():
@@ -1742,6 +1985,11 @@ async def get_etf_rankings(rank_type: str):
     }
     if rank_type not in ORDER:
         return safe_json({"status":"error","message":"無效類型"}, 400)
+    # ★ 快取命中直接回傳
+    cache_key = f"rank:{rank_type}"
+    cached = _cache.get(cache_key)
+    if cached:
+        return JSONResponse(content=cached)
     try:
         with get_db() as (conn, cursor):
             cursor.execute(f"""
@@ -1758,8 +2006,10 @@ async def get_etf_rankings(rank_type: str):
                 ORDER BY {ORDER[rank_type]} LIMIT 30
             """)
             rows = cursor.fetchall()
-        return safe_json({"status":"success","data":_enrich(rows),
-                          "update_time": datetime.now().strftime("%Y-%m-%d %H:%M")})
+        result = convert_decimal({"status":"success","data":_enrich(rows),
+                                   "update_time": datetime.now().strftime("%Y-%m-%d %H:%M")})
+        _cache.set(cache_key, result, _CACHE_TTL_RANK)
+        return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"排名 API 錯誤: {e}")
         return safe_json({"status":"error","message":str(e)}, 500)
@@ -1767,6 +2017,9 @@ async def get_etf_rankings(rank_type: str):
 
 @app.get("/api/etf/search")
 async def search_etf(q: str = Query(..., min_length=1)):
+    ck = f"search:{q}"
+    cached = _cache.get(ck)
+    if cached: return JSONResponse(content=cached)
     try:
         like = f"%{q.upper()}%"
         with get_db() as (conn, cursor):
@@ -1780,7 +2033,9 @@ async def search_etf(q: str = Query(..., min_length=1)):
                 ORDER BY m.ticker LIMIT 20
             """, (like, f"%{q}%"))
             rows = cursor.fetchall()
-        return safe_json({"status":"success","data":_enrich(rows)})
+        result = convert_decimal({"status":"success","data":_enrich(rows)})
+        _cache.set(ck, result, _CACHE_TTL_SEARCH)
+        return JSONResponse(content=result)
     except Exception as e:
         return safe_json({"status":"error","message":str(e)}, 500)
 
@@ -1874,6 +2129,11 @@ async def add_etf_to_master(request: Request):
 @app.get("/api/etf/detail/{ticker}")
 async def get_etf_detail(ticker: str):
     ticker = ticker.upper()
+    # ★ 快取命中
+    ck = f"detail:{ticker}"
+    cached = _cache.get(ck)
+    if cached:
+        return JSONResponse(content=cached)
     try:
         with get_db() as (conn, cursor):
             cursor.execute("SELECT * FROM etf_master WHERE ticker = %s" if USE_MYSQL else "SELECT * FROM etf_master WHERE ticker = ?", (ticker,))
@@ -1920,7 +2180,9 @@ async def get_etf_detail(ticker: str):
                     "annual_return_1y": 0, "payout_freq": "-", "asset_size": 1800e8 if ticker == '00878' else 0
                 })
     
-            return safe_json({"status": "success", "data": res_data})
+            result = convert_decimal({"status": "success", "data": res_data})
+        _cache.set(ck, result, _CACHE_TTL_DETAIL)
+        return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"取得詳細資料失敗: {e}")
         return safe_json({"status": "error", "message": str(e)}, 500)
