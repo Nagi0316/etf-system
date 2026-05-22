@@ -426,28 +426,8 @@ async function loadPriceHistory(ticker, period = '1y') {
       const cleanLabels = data.labels.slice(data.labels.length - cleanPrices.length);
       if (cleanPrices.length >= 2) { drawChart(cleanLabels, cleanPrices, false); return; }
     }
-    drawFallbackChart();
-  } catch(e) { drawFallbackChart(); }
-}
-
-function drawFallbackChart() {
-  if (!etfData) { showNoChart(); return; }
-  const price = parseFloat(etfData.current_price) || 0;
-  if (price <= 0) { showNoChart(); return; }
-  const h52 = parseFloat(etfData.fifty_two_week_high) || price * 1.05;
-  const l52 = parseFloat(etfData.fifty_two_week_low)  || price * 0.93;
-  const n = 13, labels = [], prices = [];
-  const now = new Date();
-  for (let i = n-1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
-    labels.push(`${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}`);
-    const t = (n-1-i)/(n-1);
-    const wave = (Math.sin(t * Math.PI * 1.5 - 0.5) + 1) / 2;
-    prices.push(i===0 ? price : Math.round((l52 + (h52-l52)*wave*(1-t*0.25) + price*t*0.25)*100)/100);
-  }
-  prices[prices.length-1] = price;
-  document.getElementById('chart-note').classList.remove('hidden');
-  drawChart(labels, prices, true);
+    showNoChart();
+  } catch(e) { showNoChart(); }
 }
 
 function showNoChart() {
