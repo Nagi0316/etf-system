@@ -36,7 +36,7 @@ async def get_portfolio(current_user: dict = Depends(get_current_user)):
                 p.shares, p.avg_cost,
                 COALESCE(d.current_price, p.avg_cost) as current_price,
                 COALESCE(d.dividend_yield, 0) as dividend_yield,
-                COALESCE(d.payout_freq, '季配') as payout_freq,
+                COALESCE(d.payout_freq, '不配息') as payout_freq,
                 COALESCE(d.price_change_percent, 0) as price_change_percent
             FROM user_portfolio p
             JOIN etf_master m ON p.ticker = m.ticker

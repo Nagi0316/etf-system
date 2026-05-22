@@ -77,7 +77,9 @@ async def notifications_page(request: Request):
 
 @router.get("/api/etf-rankings/{rank_type}")
 async def get_etf_rankings(rank_type: str, market: str = ""):
-    market = market.upper() if market in ("TW", "US", "tw", "us") else ""
+    market = market.upper().strip() if market else ""
+    if market not in ("TW", "US"):
+        market = ""
     cache_key = f"rank:{rank_type}:{market}"
     cached = cache.get(cache_key)
     if cached:
@@ -280,7 +282,7 @@ async def get_etf_detail(ticker: str):
                     COALESCE(d.nav,0) as nav,
                     COALESCE(d.discount_premium,0) as discount_premium,
                     COALESCE(d.dividend_yield,0) as dividend_yield,
-                    COALESCE(d.payout_freq,'') as payout_freq,
+                    COALESCE(d.payout_freq,'不配息') as payout_freq,
                     COALESCE(d.annual_return_1y,0) as annual_return_1y,
                     COALESCE(d.annual_return_3y,0) as annual_return_3y,
                     COALESCE(d.annual_return_5y,0) as annual_return_5y,
@@ -311,12 +313,17 @@ async def get_etf_detail(ticker: str):
 
 
 _refresh_in_progress: set = set()
+_refresh_last_ts: dict = {}      # ticker → last refresh timestamp
+_REFRESH_COOLDOWN = 300          # 同一 ticker 5 分鐘內最多觸發一次
 
 def _maybe_background_refresh(ticker: str, row: dict):
     """若資料超過 1 天或關鍵欄位缺失，在背景靜默重抓一次。"""
     import asyncio
     from datetime import date as _date
     if ticker in _refresh_in_progress:
+        return
+    # 冷卻：同 ticker 5 分鐘內不重複觸發
+    if time.time() - _refresh_last_ts.get(ticker, 0) < _REFRESH_COOLDOWN:
         return
     data_date = row.get("data_date")
     try:
@@ -332,6 +339,7 @@ def _maybe_background_refresh(ticker: str, row: dict):
 
     async def _do():
         _refresh_in_progress.add(ticker)
+        _refresh_last_ts[ticker] = time.time()
         try:
             market = row.get("market") or ("TW" if ticker[:4].isdigit() else "US")
             data = await asyncio.to_thread(fetch_one_etf, ticker, market)
@@ -497,6 +505,7 @@ async def update_one_etf(ticker: str):
         return safe_json({"status": "error", "message": f"無法取得 {ticker} 資料，請確認代碼是否正確"}, 400)
 
     data["ticker"] = ticker
+    data["market"] = market
     # 確認有效資料後才 INSERT（INSERT IGNORE 確保已存在時不覆蓋）
     if not row:
         with get_db() as (conn, cursor):
@@ -507,7 +516,6 @@ async def update_one_etf(ticker: str):
             conn.commit()
 
     cache.delete(f"detail:{ticker}")
-    cache.delete_prefix("rank:")
     save_etf_data(data)
     return safe_json({"status": "success", "message": f"{ticker} 已更新", "data": data})
 

@@ -367,9 +367,9 @@ function renderData() {
   document.getElementById('dividend-yield').textContent = yld > 0 ? yld.toFixed(2)+'%' : '-';
 
   // USD→TWD (美股)
-  if (d.market === 'US' && d.twd_price) {
+  if (d.market === 'US' && d.price_twd) {
     const twdEl = document.getElementById('twd-price');
-    twdEl.textContent = `NT$ ${Math.round(d.twd_price).toLocaleString()}`;
+    twdEl.textContent = `NT$ ${Math.round(d.price_twd).toLocaleString()}`;
     twdEl.closest('div').classList.remove('hidden');
   }
 }
@@ -551,7 +551,8 @@ document.getElementById('search-input')?.addEventListener('keypress', async e =>
   else showToast('找不到相關 ETF', false);
 });
 
-window.onclick = e => { if (e.target === document.getElementById('tradeModal')) closeTradeModal(); };
+document.getElementById('tradeModal').addEventListener('click', e => { if (e.target === e.currentTarget) closeTradeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTradeModal(); });
 document.addEventListener('DOMContentLoaded', () => { loadUserInfo('user-area'); loadETFDetail(); });
 </script>
 </body>

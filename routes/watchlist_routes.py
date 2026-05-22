@@ -31,7 +31,7 @@ async def get_watchlist(current_user: dict = Depends(get_current_user)):
                 COALESCE(d.current_price,0) as current_price,
                 COALESCE(d.price_change,0) as price_change,
                 COALESCE(d.price_change_percent,0) as price_change_percent,
-                COALESCE(d.payout_freq,'季配') as payout_freq,
+                COALESCE(d.payout_freq,'不配息') as payout_freq,
                 COALESCE(d.volume,0) as volume,
                 COALESCE(d.day_high,0) as day_high,
                 COALESCE(d.day_low,0) as day_low,

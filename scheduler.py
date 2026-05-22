@@ -71,7 +71,8 @@ async def _update_active():
 
     logger.info(f"★ 排程更新：{len(pool)} 檔活躍 ETF")
 
-    BATCH = 5
+    # 並發數降為 3 避免 Yahoo Finance 429 限速（每 ETF 需發 4-6 次請求）
+    BATCH = 3
     for i in range(0, len(pool), BATCH):
         batch = pool[i:i + BATCH]
         results = await asyncio.gather(
@@ -85,21 +86,21 @@ async def _update_active():
                 continue
             result["ticker"] = etf["ticker"]
             result["market"] = etf["market"]
-            ticker       = etf["ticker"]
+            ticker        = etf["ticker"]
             current_price = float(result.get("current_price", 0))
             try:
                 save_etf_data(result)
+                logger.info(f"  ✓ {ticker} {current_price}")
             except Exception as e:
                 logger.warning(f"  save {ticker} 失敗: {e}")
                 continue
-            # 存入 DB 後立即檢查此 ETF 的到價提醒，縮短觸發延遲
             try:
                 from routes.notification_routes import check_price_alerts
                 check_price_alerts(ticker, current_price)
             except Exception as e:
                 logger.debug(f"  price alert {ticker}: {e}")
 
-        await asyncio.sleep(random.uniform(3, 6))
+        await asyncio.sleep(random.uniform(5, 9))
 
     logger.info("✅ 排程更新完成")
 
@@ -137,11 +138,18 @@ async def _check_price_alerts():
         logger.warning(f"_check_price_alerts 失敗: {e}")
 
 
+def _evict_cache():
+    from cache import cache
+    cache.evict()
+
+
 def start_scheduler() -> BackgroundScheduler:
     sch = BackgroundScheduler(timezone="Asia/Taipei")
     sch.add_job(lambda: schedule_twse_sync(), CronTrigger(hour=8,  minute=0),  max_instances=1)
     sch.add_job(lambda: schedule_update(),    CronTrigger(hour=14, minute=30), max_instances=1)
     sch.add_job(lambda: schedule_update(),    CronTrigger(hour=21, minute=0),  max_instances=1)
+    # 每 30 分鐘清除過期快取，防止記憶體無限增長
+    sch.add_job(_evict_cache, "interval", minutes=30, max_instances=1)
     sch.start()
-    logger.info("✅ 排程器已啟動（08:00 TWSE 同步 / 14:30 / 21:00 更新）")
+    logger.info("✅ 排程器已啟動（08:00 TWSE 同步 / 14:30 / 21:00 更新 / 每 30 分清快取）")
     return sch

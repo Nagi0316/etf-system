@@ -223,7 +223,8 @@ function renderTable(data, type) {
       <td class="px-4 py-3.5 text-right text-slate-600 dark:text-slate-300 tabular-nums">${rankVal}</td>
       <td class="px-4 py-3.5 text-right text-emerald-600 dark:text-emerald-400 tabular-nums hide-mobile">${type!=='yield'?yldTxt:'-'}</td>
       <td class="px-4 py-3.5 text-center hide-mobile" onclick="event.stopPropagation()">
-        <button onclick="addWatchlist('${item.ticker}','${(item.name||'').replace(/'/g,'&apos;')}','${item.market}')"
+        <button data-ticker="${item.ticker}" data-name="${(item.name||'').replace(/"/g,'&quot;')}" data-market="${item.market}"
+          onclick="addWatchlist(this.dataset.ticker,this.dataset.name,this.dataset.market)"
           class="w-7 h-7 rounded-md text-slate-300 dark:text-slate-600 hover:bg-yellow-50 dark:hover:bg-yellow-900/30 hover:text-yellow-500 transition-colors inline-flex items-center justify-center" title="加入自選">
           <i class="fas fa-star text-xs"></i>
         </button>
@@ -272,7 +273,8 @@ document.getElementById('search-input')?.addEventListener('input', e => {
   }, 350);
 });
 
-window.onclick = e => { const m = document.getElementById('search-modal'); if (e.target === m) m.style.display='none'; };
+document.getElementById('search-modal')?.addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.style.display='none'; });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { document.getElementById('search-modal').style.display='none'; } });
 
 document.addEventListener('DOMContentLoaded', () => {
   loadUserInfo('user-area');

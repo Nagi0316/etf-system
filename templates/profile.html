@@ -313,12 +313,12 @@ async function handleAvatarUpload(input) {
   } else showToast(data?.message || '上傳失敗', false);
 }
 
-window.onclick = e => {
-  ['editModal','securityModal'].forEach(id => {
-    const m = document.getElementById(id);
-    if (e.target === m) m.style.display = 'none';
-  });
-};
+['editModal','securityModal'].forEach(id => {
+  document.getElementById(id)?.addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.style.display='none'; });
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') ['editModal','securityModal'].forEach(id => { const m = document.getElementById(id); if (m) m.style.display='none'; });
+});
 
 document.addEventListener('DOMContentLoaded', loadProfile);
 </script>

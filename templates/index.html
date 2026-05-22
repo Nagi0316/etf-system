@@ -167,7 +167,7 @@ async function doSearch(q) {
         <span class="font-bold text-slate-800 dark:text-white mr-2">${e.ticker}</span>
         <span class="text-slate-500 dark:text-slate-400 text-xs">${e.name}</span>
       </div>
-      <span class="${e.price_change_percent >= 0 ? 'text-green-600' : 'text-red-500'} text-xs font-medium">${fmtPct(e.price_change_percent)}</span>
+      <span class="${e.price_change_percent >= 0 ? 'text-red-500' : 'text-green-500'} text-xs font-medium">${fmtPct(e.price_change_percent)}</span>
     </a>`).join('');
 }
 </script>
