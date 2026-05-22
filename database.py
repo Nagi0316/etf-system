@@ -73,6 +73,8 @@ class DbCursor:
                 idx = up.index("ON DUPLICATE KEY UPDATE")
                 sql = sql[:idx].strip().rstrip(",")
                 sql = sql.replace("INSERT INTO", "INSERT OR REPLACE INTO", 1)
+            elif up.startswith("INSERT IGNORE INTO"):
+                sql = sql.replace("INSERT IGNORE INTO", "INSERT OR IGNORE INTO", 1)
             elif up.startswith("INSERT INTO"):
                 sql = sql.replace("INSERT INTO", "INSERT OR IGNORE INTO", 1)
             elif up.startswith("REPLACE INTO"):
@@ -203,7 +205,7 @@ def init_db():
             volume               BIGINT         DEFAULT 0,
             asset_size           DECIMAL(20,2)  DEFAULT 0,
             nav                  DECIMAL(10,2)  DEFAULT 0,
-            dividend_yield       DECIMAL(5,4)   DEFAULT NULL,
+            dividend_yield       DECIMAL(10,4)  DEFAULT NULL,
             payout_freq          VARCHAR(20)    DEFAULT '季配',
             annual_return_1y     DECIMAL(7,4)   DEFAULT 0,
             annual_return_3y     DECIMAL(7,4)   DEFAULT 0,
@@ -309,6 +311,18 @@ def init_db():
         conn.commit()
 
     # 平滑升級舊資料庫（新增欄位，若已存在則略過）
+    # MySQL only: 修正 dividend_yield 欄位精度（DECIMAL(5,4) 無法存入 >9.9999% 的殖利率）
+    if USE_MYSQL:
+        with get_db() as (conn, cursor):
+            try:
+                cursor.execute(
+                    "ALTER TABLE etf_daily_data MODIFY COLUMN dividend_yield DECIMAL(10,4) DEFAULT NULL"
+                )
+                conn.commit()
+                logger.info("✅ dividend_yield 欄位精度升級為 DECIMAL(10,4)")
+            except Exception:
+                pass
+
     new_cols = [
         ("etf_daily_data", "discount_premium",   "DECIMAL(10,2) DEFAULT 0"),
         ("etf_daily_data", "annual_return_3y",   "DECIMAL(7,4)  DEFAULT 0"),

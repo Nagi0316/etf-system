@@ -152,6 +152,18 @@ async def import_csv(
     imported, failed = 0, []
     for tx in rows:
         try:
+            # 防止重複匯入：同一使用者相同代碼/日期/股數/價格視為重複
+            with get_db() as (conn, cursor):
+                cursor.execute(
+                    "SELECT id FROM user_transactions WHERE user_id=%s AND ticker=%s "
+                    "AND transaction_date=%s AND shares=%s AND price=%s",
+                    (uid, tx["ticker"], tx["transaction_date"],
+                     tx["shares"], tx["price"])
+                )
+                if cursor.fetchone():
+                    failed.append(f"重複略過: {tx['ticker']} {tx['transaction_date']} "
+                                  f"{tx['shares']}股@{tx['price']}")
+                    continue
             _insert_transaction(uid, tx)
             imported += 1
         except Exception as e:
@@ -195,12 +207,12 @@ def _insert_transaction(uid: int, data: dict):
                 (ticker, ticker, market)
             )
 
-        # 賣出前檢查庫存
+        # 賣出前檢查庫存（容許浮點誤差 1e-6，避免 99.999999 != 100.0 的誤判）
         if tx_type == "sell":
             cursor.execute("SELECT shares FROM user_portfolio WHERE user_id=%s AND ticker=%s", (uid, ticker))
             row = cursor.fetchone()
             held = float(row["shares"]) if row else 0.0
-            if held < shares:
+            if held < shares - 1e-6:
                 raise ValueError(f"庫存不足：持有 {held:.4f}，欲賣 {shares:.4f}")
 
         cursor.execute(

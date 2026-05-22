@@ -143,7 +143,9 @@ def build_google_login_url(redirect_after: str = "/") -> str:
 
 async def exchange_google_code(code: str, state: str) -> dict:
     """用 code 換取 Google user info"""
-    _ = _oauth_states.pop(state, None)  # 防止 CSRF，用完即丟
+    expected_redirect = _oauth_states.pop(state, None)
+    if not expected_redirect:
+        raise HTTPException(status_code=400, detail="無效或過期的 OAuth State，請重新登入")
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(GOOGLE_TOKEN_URL, data={
             "code": code,

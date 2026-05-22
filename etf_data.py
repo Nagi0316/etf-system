@@ -178,20 +178,23 @@ def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
             d = items[0]
             z_val = d.get("z", "-")
             y_val = d.get("y", "0")
-            price = safe_float(z_val) if z_val not in ("-", "") else safe_float(y_val)
+            is_after_hours = z_val in ("-", "")
+            price = safe_float(z_val) if not is_after_hours else safe_float(y_val)
             if price <= 0:
                 continue
             prev  = safe_float(y_val) if y_val not in ("-", "") else price
             high  = safe_float(d.get("h", "0")) or price
             low   = safe_float(d.get("l", "0")) or price
             vol_k = safe_float(d.get("v", "0"))
-            chg   = round(price - prev, 4)
-            chg_pct = round(chg / prev * 100, 4) if prev > 0 else 0.0
+            # 盤後時段 z 為空，盤中價 == 昨收，強制設 0 而非算出假的 0 差
+            chg     = 0.0 if is_after_hours else round(price - prev, 4)
+            chg_pct = 0.0 if is_after_hours else (round(chg / prev * 100, 4) if prev > 0 else 0.0)
             return {
                 "current_price": price, "price_change": chg,
                 "price_change_percent": chg_pct,
                 "day_high": high, "day_low": low,
                 "volume": int(vol_k * 1000),
+                "is_after_hours": is_after_hours,
             }
         except Exception as e:
             logger.debug(f"TW realtime {prefix} {ticker}: {e}")
@@ -202,31 +205,34 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
     """取得台股 ETF 配息資料。
 
     策略：
-    1. Yahoo Finance dividend events（上市與上櫃通用，最穩定）
+    1. Yahoo Finance dividend events（上市與上櫃通用，最穩定；自動嘗試 .TW / .TWO 兩種後綴）
     2. TWSE TWT48U 公告（僅限上市 ETF，末位為數字的代碼）
     """
-    yt = _yahoo_ticker(ticker, "TW")
+    # 自動嘗試 .TW 與 .TWO 後綴，修正非 B 結尾上櫃 ETF 查錯代碼問題
+    primary = _yahoo_ticker(ticker, "TW")
+    alt     = f"{ticker}.TWO" if primary.endswith(".TW") else f"{ticker}.TW"
 
     # 1. Yahoo Finance events（適用所有台股 ETF，含上櫃/債券/槓桿/反向）
-    try:
-        url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
-               f"?range=2y&interval=1mo&events=dividends")
-        r = _new_session().get(url, timeout=10)
-        if r.status_code == 200:
-            result = r.json().get("chart", {}).get("result")
-            if result:
-                events = result[0].get("events", {}).get("dividends", {})
-                cutoff = time.time() - 365 * 86400
-                recent = [v["amount"] for v in events.values()
-                          if v.get("date", 0) >= cutoff and safe_float(v.get("amount", 0)) > 0]
-                if recent and current_price > 0:
-                    dy = round(sum(recent) / current_price * 100, 4)
-                    n  = len(recent)
-                    freq = ("月配" if n >= 10 else "季配" if n >= 3
-                            else "半年配" if n == 2 else "年配")
-                    return dy, freq
-    except Exception as e:
-        logger.debug(f"TW dividend Yahoo {ticker}: {e}")
+    for yt in (primary, alt):
+        try:
+            url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
+                   f"?range=2y&interval=1mo&events=dividends")
+            r = _new_session().get(url, timeout=10)
+            if r.status_code == 200:
+                result = r.json().get("chart", {}).get("result")
+                if result:
+                    events = result[0].get("events", {}).get("dividends", {})
+                    cutoff = time.time() - 365 * 86400
+                    recent = [v["amount"] for v in events.values()
+                              if v.get("date", 0) >= cutoff and safe_float(v.get("amount", 0)) > 0]
+                    if recent and current_price > 0:
+                        dy = round(sum(recent) / current_price * 100, 4)
+                        n  = len(recent)
+                        freq = ("月配" if n >= 10 else "季配" if n >= 3
+                                else "半年配" if n == 2 else "年配")
+                        return dy, freq
+        except Exception as e:
+            logger.debug(f"TW dividend Yahoo {yt}: {e}")
 
     # 2. TWSE TWT48U（只對末位為數字的上市 ETF 有效）
     if ticker[-1].isdigit():
@@ -257,24 +263,26 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
         except Exception as e:
             logger.debug(f"TW dividend TWSE {ticker}: {e}")
 
-    return 0.0, "季配"
+    return 0.0, "不配息"
 
 
 def _fetch_tw_history(ticker: str) -> list:
-    """取得 5 年月線收盤價（Yahoo 優先）"""
-    yt = _yahoo_ticker(ticker, "TW")
-    try:
-        url = f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}?range=5y&interval=1mo"
-        s = _new_session(); s.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
-        r = s.get(url, timeout=12)
-        if r.status_code == 200:
-            result = r.json().get("chart", {}).get("result")
-            if result:
-                closes = [safe_float(c) for c in (result[0].get("indicators", {}).get("quote", [{}])[0].get("close") or []) if c is not None]
-                if len(closes) >= 6:
-                    return closes
-    except Exception as e:
-        logger.debug(f"TW history Yahoo {ticker}: {e}")
+    """取得 5 年月線收盤價（Yahoo 優先，自動嘗試 .TW / .TWO 兩種後綴）"""
+    primary = _yahoo_ticker(ticker, "TW")
+    alt     = f"{ticker}.TWO" if primary.endswith(".TW") else f"{ticker}.TW"
+    for yt in (primary, alt):
+        try:
+            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}?range=5y&interval=1mo"
+            s = _new_session(); s.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
+            r = s.get(url, timeout=12)
+            if r.status_code == 200:
+                result = r.json().get("chart", {}).get("result")
+                if result:
+                    closes = [safe_float(c) for c in (result[0].get("indicators", {}).get("quote", [{}])[0].get("close") or []) if c is not None]
+                    if len(closes) >= 6:
+                        return closes
+        except Exception as e:
+            logger.debug(f"TW history Yahoo {yt}: {e}")
     return []
 
 
@@ -284,20 +292,25 @@ def _fetch_tw_detail(ticker: str) -> dict:
     絕不使用寫死的靜態數值。
     """
     result = {"asset_size": 0.0, "pe_ratio": 0.0, "expense_ratio": 0.0}
-    try:
-        yt = f"{ticker}.TWO" if ticker.upper().endswith('B') else f"{ticker}.TW"
-        info = yf.Ticker(yt, session=_new_session()).info or {}
-        pe = safe_float(info.get("trailingPE") or info.get("forwardPE"))
-        if pe > 0:
-            result["pe_ratio"] = pe
-        fee = safe_float(info.get("expenseRatio") or info.get("annualReportExpenseRatio"))
-        if fee > 0:
-            result["expense_ratio"] = fee
-        assets = safe_float(info.get("totalAssets") or info.get("netAssets"))
-        if assets > 0:
-            result["asset_size"] = assets
-    except Exception as e:
-        logger.debug(f"TW detail {ticker}: {e}")
+    primary = _yahoo_ticker(ticker, "TW")
+    alt     = f"{ticker}.TWO" if primary.endswith(".TW") else f"{ticker}.TW"
+    for yt in (primary, alt):
+        try:
+            info = yf.Ticker(yt, session=_new_session()).info or {}
+            if not info.get("regularMarketPrice") and not info.get("totalAssets"):
+                continue  # 空資料，嘗試另一後綴
+            pe = safe_float(info.get("trailingPE") or info.get("forwardPE"))
+            if pe > 0:
+                result["pe_ratio"] = pe
+            fee = safe_float(info.get("expenseRatio") or info.get("annualReportExpenseRatio"))
+            if fee > 0:
+                result["expense_ratio"] = fee
+            assets = safe_float(info.get("totalAssets") or info.get("netAssets"))
+            if assets > 0:
+                result["asset_size"] = assets
+            break  # 成功取得資料，不需嘗試 alt
+        except Exception as e:
+            logger.debug(f"TW detail {yt}: {e}")
     return result
 
 
@@ -366,8 +379,9 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
     div_yield, payout_freq = _fetch_tw_dividend(ticker, price)
     history_closes = _fetch_tw_history(ticker)
 
-    cutoff_1y = len(history_closes) - 12 if len(history_closes) >= 12 else 0
-    cutoff_3y = len(history_closes) - 36 if len(history_closes) >= 36 else 0
+    # 計算年化報酬需要「起點 + N 個月」共 N+1 筆，故 cutoff 用 -(N+1)
+    cutoff_1y = len(history_closes) - 13 if len(history_closes) >= 13 else 0
+    cutoff_3y = len(history_closes) - 37 if len(history_closes) >= 37 else 0
     ann_1y = _annualized_return(history_closes[cutoff_1y:], 1.0)
     ann_3y = _annualized_return(history_closes[cutoff_3y:], 3.0)
     ann_5y = _annualized_return(history_closes, 5.0)
@@ -377,19 +391,37 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
 
     detail = _fetch_tw_detail(ticker)
 
+    # 盤後時段：price_change / price_change_percent 為 0，嘗試從 DB 補上最後一個交易日的值
+    price_change     = quote["price_change"]
+    price_change_pct = quote["price_change_percent"]
+    if quote.get("is_after_hours") and price_change == 0:
+        try:
+            with get_db() as (conn, cursor):
+                cursor.execute(
+                    "SELECT price_change, price_change_percent FROM etf_daily_data "
+                    "WHERE ticker=%s ORDER BY date DESC LIMIT 1",
+                    (ticker,)
+                )
+                prev_row = cursor.fetchone()
+            if prev_row and prev_row.get("price_change") is not None:
+                price_change     = float(prev_row["price_change"] or 0)
+                price_change_pct = float(prev_row["price_change_percent"] or 0)
+        except Exception as e:
+            logger.debug(f"TW after-hours change DB fallback {ticker}: {e}")
+
     return {
         'ticker': ticker, 'current_price': price,
-        'price_change': quote["price_change"],
-        'price_change_percent': quote["price_change_percent"],
+        'price_change': price_change,
+        'price_change_percent': price_change_pct,
         'day_high': quote["day_high"], 'day_low': quote["day_low"],
         'fifty_two_week_high': wk52_h, 'fifty_two_week_low': wk52_l,
         'volume': quote["volume"],
         'asset_size': detail.get("asset_size", 0),
-        'nav': 0,   # 台股 NAV 由資產管理公司每日公告，不在即時報價中
+        'nav': None,  # 台股 NAV 由資產管理公司每日公告，無即時來源；None 存入 DB 讓前端顯示「暫無資料」
         'pe_ratio': detail.get("pe_ratio", 0),
         'expense_ratio': detail.get("expense_ratio", 0),
         'dividend_yield': div_yield,
-        'payout_freq': payout_freq or "季配",
+        'payout_freq': payout_freq or "不配息",
         'annual_return_1y': ann_1y,
         'annual_return_3y': ann_3y,
         'annual_return_5y': ann_5y,
@@ -435,8 +467,9 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     except Exception as e:
         logger.debug(f"US history/dividend {ticker}: {e}")
 
-    cutoff_1y = len(history) - 12 if len(history) >= 12 else 0
-    cutoff_3y = len(history) - 36 if len(history) >= 36 else 0
+    # 計算年化報酬需要「起點 + N 個月」共 N+1 筆，故 cutoff 用 -(N+1)
+    cutoff_1y = len(history) - 13 if len(history) >= 13 else 0
+    cutoff_3y = len(history) - 37 if len(history) >= 37 else 0
     ann_1y = _annualized_return(history[cutoff_1y:], 1.0)
     ann_3y = _annualized_return(history[cutoff_3y:], 3.0)
     ann_5y = _annualized_return(history, 5.0)
@@ -480,10 +513,15 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
 
 def save_etf_data(data: dict):
     today  = datetime.now().date()
-    ticker = data.get("ticker", "")
-    cp     = safe_float(data.get("current_price"))
-    nav    = safe_float(data.get("nav") or cp)
-    dp     = round((cp - nav) / nav * 100, 2) if nav > 0 and cp != nav else 0.0
+    ticker  = data.get("ticker", "")
+    cp      = safe_float(data.get("current_price"))
+    nav_raw = data.get("nav")
+    if nav_raw is None:
+        nav = None
+        dp  = 0.0
+    else:
+        nav = safe_float(nav_raw) or cp
+        dp  = round((cp - nav) / nav * 100, 2) if nav > 0 and cp != nav else 0.0
 
     with get_db() as (conn, cursor):
         cursor.execute("""
@@ -516,7 +554,7 @@ def save_etf_data(data: dict):
             safe_float(data.get("price_change_percent")),
             safe_float(data.get("volume")), safe_float(data.get("asset_size")),
             nav, dp,
-            data.get("dividend_yield"), data.get("payout_freq", "季配"),
+            data.get("dividend_yield"), data.get("payout_freq", "不配息"),
             safe_float(data.get("annual_return_1y")),
             safe_float(data.get("annual_return_3y")),
             safe_float(data.get("annual_return_5y")),

@@ -84,14 +84,22 @@ async def _update_active():
                     logger.warning(f"  ✗ {etf['ticker']}: {result}")
                 continue
             result["ticker"] = etf["ticker"]
+            ticker       = etf["ticker"]
+            current_price = float(result.get("current_price", 0))
             try:
                 save_etf_data(result)
             except Exception as e:
-                logger.warning(f"  save {etf['ticker']} 失敗: {e}")
+                logger.warning(f"  save {ticker} 失敗: {e}")
+                continue
+            # 存入 DB 後立即檢查此 ETF 的到價提醒，縮短觸發延遲
+            try:
+                from routes.notification_routes import check_price_alerts
+                check_price_alerts(ticker, current_price)
+            except Exception as e:
+                logger.debug(f"  price alert {ticker}: {e}")
 
         await asyncio.sleep(random.uniform(3, 6))
 
-    await _check_price_alerts()
     logger.info("✅ 排程更新完成")
 
 
@@ -130,9 +138,9 @@ async def _check_price_alerts():
 
 def start_scheduler() -> BackgroundScheduler:
     sch = BackgroundScheduler(timezone="Asia/Taipei")
-    sch.add_job(lambda: schedule_twse_sync(), CronTrigger(hour=8,  minute=0))
-    sch.add_job(lambda: schedule_update(),    CronTrigger(hour=14, minute=30))
-    sch.add_job(lambda: schedule_update(),    CronTrigger(hour=21, minute=0))
+    sch.add_job(lambda: schedule_twse_sync(), CronTrigger(hour=8,  minute=0),  max_instances=1)
+    sch.add_job(lambda: schedule_update(),    CronTrigger(hour=14, minute=30), max_instances=1)
+    sch.add_job(lambda: schedule_update(),    CronTrigger(hour=21, minute=0),  max_instances=1)
     sch.start()
     logger.info("✅ 排程器已啟動（08:00 TWSE 同步 / 14:30 / 21:00 更新）")
     return sch

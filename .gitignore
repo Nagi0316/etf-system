@@ -1,0 +1,35 @@
+# 環境變數（含密碼，絕對不能上傳）
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+env/
+.venv/
+
+# SQLite 本地資料庫
+*.db
+*.sqlite3
+
+# 上傳檔案
+static/uploads/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# macOS
+.DS_Store
+
+# Log
+*.log
+logs/

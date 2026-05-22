@@ -2,7 +2,7 @@
 routes/auth_routes.py — 登入 / 登出 / Google OAuth / 密碼變更
 所有 API 回傳 JSON；前端頁面以 template 回傳
 """
-import logging
+import logging, os
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -28,15 +28,17 @@ def _set_auth_cookies(response, token: str):
     """統一設定 HttpOnly JWT cookie 與非敏感 session 標記 cookie。
     access_token: HttpOnly + SameSite=Lax → JS 無法讀取，防 XSS 竊取
     etf_session:  非 HttpOnly → JS 僅用來判斷是否已登入，無法取得真正 token
+    secure 旗標：正式環境 (ENV=production) 才開啟，防止 token 在 HTTP 明文傳送
     """
+    is_prod = os.getenv("ENV") == "production"
     response.set_cookie(
         "access_token", token,
-        httponly=True, samesite="lax", secure=False,
+        httponly=True, samesite="lax", secure=is_prod,
         max_age=_COOKIE_MAX_AGE, path="/",
     )
     response.set_cookie(
         "etf_session", "1",
-        httponly=False, samesite="lax", secure=False,
+        httponly=False, samesite="lax", secure=is_prod,
         max_age=_COOKIE_MAX_AGE, path="/",
     )
 
@@ -187,7 +189,13 @@ async def change_password(body: ChangePasswordIn, current_user: dict = Depends(g
             if not verify_password(body.current_password, row["password_hash"]):
                 return safe_json({"status": "error", "message": "目前密碼錯誤"}, 401)
             cursor.execute("UPDATE users SET password_hash=%s WHERE id=%s", (hash_password(body.new_password), uid))
+            # 踢下其他所有裝置（保留當前 session，其餘全部撤銷）
+            current_jti = current_user.get("jti", "")
+            cursor.execute(
+                "UPDATE user_sessions SET is_revoked=1 WHERE user_id=%s AND jti != %s",
+                (uid, current_jti)
+            )
             conn.commit()
-        return safe_json({"status": "success", "message": "密碼已更新"})
+        return safe_json({"status": "success", "message": "密碼已更新，其他裝置已自動登出"})
     except Exception as ex:
         return safe_json({"status": "error", "message": str(ex)}, 500)

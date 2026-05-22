@@ -1,7 +1,8 @@
 """
 routes/etf_routes.py — ETF 清單、詳情、搜尋、排行榜、歷史
 """
-import asyncio, logging
+import asyncio, logging, time
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Request, Query
@@ -25,6 +26,11 @@ from services.exchange_rate import get_usd_twd
 logger = logging.getLogger(__name__)
 router = APIRouter()
 templates: Jinja2Templates | None = None
+
+# 動態爬蟲 rate limiter：同一 IP 每 60 秒最多觸發 3 次，防止 Yahoo Finance 封鎖
+_on_demand_rate: dict[str, list[float]] = defaultdict(list)
+_RATE_WINDOW  = 60
+_RATE_MAX     = 3
 
 LATEST_DAILY_JOIN = """
 LEFT JOIN (
@@ -114,7 +120,7 @@ async def get_etf_rankings(rank_type: str):
 # ── 搜尋 ──
 
 @router.get("/api/etf/search")
-async def search_etf(q: str = Query(..., min_length=1)):
+async def search_etf(request: Request, q: str = Query(..., min_length=1)):
     q_up = q.upper().strip()
     cache_key = f"search:{q_up}"
     cached = cache.get(cache_key)
@@ -127,7 +133,7 @@ async def search_etf(q: str = Query(..., min_length=1)):
                 COALESCE(d.current_price,0) as current_price,
                 COALESCE(d.price_change_percent,0) as price_change_percent,
                 COALESCE(d.dividend_yield,0) as dividend_yield,
-                COALESCE(d.payout_freq,'季配') as payout_freq,
+                COALESCE(d.payout_freq,'不配息') as payout_freq,
                 COALESCE(d.annual_return_1y,0) as annual_return_1y
             FROM etf_master m
             {LATEST_DAILY_JOIN}
@@ -140,7 +146,8 @@ async def search_etf(q: str = Query(..., min_length=1)):
 
     # ── 隨需探索：資料庫找不到且輸入看起來像代碼 ──
     if not rows and _looks_like_ticker(q_up):
-        discovered = await _on_demand_fetch(q_up)
+        client_ip  = request.client.host if request.client else "unknown"
+        discovered = await _on_demand_fetch(q_up, client_ip)
         if discovered:
             rows = [discovered]
 
@@ -156,8 +163,19 @@ def _looks_like_ticker(s: str) -> bool:
     return bool(re.match(r'^[A-Z0-9.]+$', s))
 
 
-async def _on_demand_fetch(ticker: str) -> Optional[dict]:
-    """即時向 Yahoo Finance 探索未知代碼，確認後寫入 etf_master。"""
+async def _on_demand_fetch(ticker: str, client_ip: str = "") -> Optional[dict]:
+    """即時向 Yahoo Finance 探索未知代碼，確認後寫入 etf_master。
+    rate limit：同一 IP 60 秒內最多觸發 3 次，防止 Yahoo Finance 封鎖主機 IP。
+    """
+    if client_ip:
+        now = time.time()
+        timestamps = _on_demand_rate[client_ip]
+        _on_demand_rate[client_ip] = [t for t in timestamps if now - t < _RATE_WINDOW]
+        if len(_on_demand_rate[client_ip]) >= _RATE_MAX:
+            logger.warning(f"動態爬蟲 rate limit 已觸發 for {client_ip}")
+            return None
+        _on_demand_rate[client_ip].append(now)
+
     market = "TW" if ticker[:4].isdigit() else "US"
 
     def _do():
@@ -194,8 +212,8 @@ async def _on_demand_fetch(ticker: str) -> Optional[dict]:
 
 
 @router.get("/api/etf/search/dynamic")
-async def dynamic_search(q: str = Query(..., min_length=1)):
-    return await search_etf(q)
+async def dynamic_search(request: Request, q: str = Query(..., min_length=1)):
+    return await search_etf(request, q)
 
 
 # ── ETF 詳情 ──

@@ -11,8 +11,8 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-COMMISSION_RATE = 0.001425 * 0.28  # 28折
-MIN_COMMISSION  = 1.0
+COMMISSION_RATE = 0.001425 * 0.28  # 28折（台灣券商慣用）
+MIN_COMMISSION  = 20.0              # 台股低消 20 元（原值 1.0 遠低於市場行情）
 
 
 def _calc_shares(price: float, budget: float) -> tuple[float, float]:

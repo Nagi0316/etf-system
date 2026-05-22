@@ -88,11 +88,17 @@ def sync_tw_etfs() -> int:
     2. 對「auto_discovered=1 但今日不在交易所清單」的代碼標記 is_delisted=1
     回傳新增筆數。
     """
-    etf_list = _fetch_twse() + _fetch_tpex()
+    twse_list = _fetch_twse()
+    tpex_list = _fetch_tpex()
 
-    if not etf_list:
-        logger.warning("sync_tw_etfs: 未取得任何 ETF 資料，跳過本次同步")
+    if not twse_list or not tpex_list:
+        logger.error(
+            f"上市或上櫃 API 抓取失敗（TWSE:{len(twse_list)} / TPEX:{len(tpex_list)}），"
+            "跳過下市判斷以保護資料庫"
+        )
         return 0
+
+    etf_list = twse_list + tpex_list
 
     # 去重
     seen: set[str] = set()
