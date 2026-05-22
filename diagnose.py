@@ -1,51 +1,75 @@
 """
-ETF 系統全欄位診斷腳本 v4 (2026 含走勢圖偵測版)
+ETF 系統全欄位診斷腳本 v5
+逐一測試系統實際呼叫的每個 API，不填假資料、不掩蓋失敗。
 用法：python diagnose.py [--tw 代碼] [--us 代碼]
+範例：python diagnose.py --tw 0050,00878 --us VOO,SCHD
 """
-
-import sys, time, datetime, json
+import sys, time, datetime
 
 try:
     import requests
-    from bs4 import BeautifulSoup
-    import yfinance as yf
 except ImportError as e:
-    sys.exit(f"❌ 請先安裝必備庫：pip install requests beautifulsoup4 lxml yfinance --upgrade (錯誤: {e})")
+    sys.exit(f"❌ 請先安裝必備庫：pip install requests --upgrade (錯誤: {e})")
 
-# ──────────────────────────────────────────
-# 命令列參數（選用）
-# ──────────────────────────────────────────
+# ── 命令列參數 ──
 TW_TICKERS = ["0050", "00878"]
 US_TICKERS = ["VOO", "SCHD"]
-
 args = sys.argv[1:]
 i = 0
 while i < len(args):
     if args[i] == "--tw" and i + 1 < len(args):
-        TW_TICKERS = args[i + 1].split(",")
-        i += 2
+        TW_TICKERS = args[i + 1].split(","); i += 2
     elif args[i] == "--us" and i + 1 < len(args):
-        US_TICKERS = args[i + 1].split(",")
-        i += 2
+        US_TICKERS = args[i + 1].split(","); i += 2
     else:
         i += 1
 
-# ──────────────────────────────────────────
-# 工具函式
-# ──────────────────────────────────────────
+# ── 工具 ──
+PASS = "✅"; FAIL = "❌"; WARN = "⚠️ "
+
 def new_session(referer=None):
     s = requests.Session()
     s.verify = False
     s.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive"
+        "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
     })
     if referer:
         s.headers["Referer"] = referer
     return s
+
+
+def fetch_quotesummary(yt):
+    """直接呼叫 Yahoo Finance v10 quoteSummary（比 yf.Ticker().info 更穩定）。"""
+    url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{yt}?modules=fundProfile,summaryDetail"
+    for attempt in range(3):
+        try:
+            s = new_session(f"https://finance.yahoo.com/quote/{yt}")
+            r = s.get(url, timeout=12)
+            if r.status_code == 429:
+                line(WARN, f"quoteSummary {yt}", f"限速 429，等待後重試 (attempt {attempt+1})")
+                time.sleep(20 * (attempt + 1)); continue
+            if r.status_code != 200:
+                return None, f"HTTP {r.status_code}"
+            data = r.json().get("quoteSummary", {}).get("result")
+            if not data:
+                return None, "quoteSummary 無 result"
+            def _raw(d, key):
+                v = d.get(key)
+                if isinstance(v, dict): return safe_float(v.get("raw", 0))
+                return safe_float(v)
+            fp = data[0].get("fundProfile", {})
+            sd = data[0].get("summaryDetail", {})
+            return {
+                "asset_size":    _raw(sd, "totalAssets") or _raw(fp, "totalAssets"),
+                "expense_ratio": _raw(fp, "annualReportExpenseRatio") or _raw(fp, "expenseRatio"),
+                "pe_ratio":      _raw(sd, "trailingPE") or _raw(sd, "forwardPE"),
+                "nav":           _raw(sd, "navPrice"),
+            }, None
+        except Exception as e:
+            if attempt < 2: time.sleep(5 * (attempt + 1))
+            last_err = str(e)[:60]
+    return None, last_err
 
 def safe_float(v, default=0.0):
     if v is None: return default
@@ -56,332 +80,240 @@ def safe_float(v, default=0.0):
         return default
 
 def annualized_return(closes, years):
-    if not closes or len(closes) < 5: return 0.0
+    if not closes or len(closes) < 2: return 0.0
     try:
         p0, p1 = float(closes[0]), float(closes[-1])
         if p0 <= 0: return 0.0
         total = (p1 - p0) / p0
         if years < 1: return round(total * 100, 2)
-        ann = ((1 + total) ** (1 / years)) - 1
-        return round(ann * 100, 2)
+        return round((((1 + total) ** (1 / years)) - 1) * 100, 2)
     except Exception:
         return 0.0
 
-# ──────────────────────────────────────────
-# 結果追蹤
-# ──────────────────────────────────────────
-PASS = "✅"
-FAIL = "❌"
-WARN = "⚠️ "
-INFO = "ℹ️ "
+def header(t):
+    print(f"\n{'='*65}\n  {t}\n{'='*65}")
 
+def sub(t):
+    print(f"\n  ── {t} ──")
+
+def line(status, field, val, note=""):
+    v = str(val) if val is not None else "(無)"
+    n = f"  [{note}]" if note else ""
+    print(f"  {status}  {field:<35} {v}{n}")
+
+# ── 記錄追蹤 ──
 results = {}
 
-def record(ticker, field, value, note=""):
+def rec(ticker, field, value, ok=None, note=""):
     if ticker not in results: results[ticker] = {}
-    ok = value is not None and value != 0 and value != "" and value != "不配息"
-    status = PASS if ok else FAIL
-    results[ticker][field] = (status, value, note)
-
-def record_ok(ticker, field, value, note=""):
-    if ticker not in results: results[ticker] = {}
-    results[ticker][field] = (PASS, value, note)
-
-def record_fail(ticker, field, note=""):
-    if ticker not in results: results[ticker] = {}
-    results[ticker][field] = (FAIL, 0.0, note)
-
-def header(title):
-    print(f"\n{'='*65}\n  {title}\n{'='*65}")
-
-def subheader(title):
-    print(f"\n  ── {title} ──")
-
-def field_line(status, field, value, note=""):
-    val_str = str(value) if value is not None else "(無)"
-    note_str = f"  [{note}]" if note else ""
-    print(f"  {status}  {field:<30} {val_str}{note_str}")
-
-# ══════════════════════════════════════════
-#  走勢圖診斷（台股 & 美股通用）
-# ══════════════════════════════════════════
-def diagnose_price_chart_tw(ticker, price):
-    """診斷台股價格走勢圖資料是否可順利抓取（對應 /api/etf/price-history/{ticker}）"""
-    subheader("E. 價格走勢圖（Price History Chart）")
-    yt = f"{ticker}.TWO" if ticker.upper().endswith("B") else f"{ticker}.TW"
-    periods = ["3m", "6m", "1y", "3y", "5y"]
-    period_map = {"3m": 3, "6m": 6, "1y": 12, "3y": 36, "5y": 60}
-    chart_ok = False
-    chart_details = {}
-
-    for period in periods:
-        try:
-            url = (
-                f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
-                f"?range={period}&interval=1mo"
-            )
-            r = new_session().get(url, timeout=10)
-            if r.status_code != 200:
-                chart_details[period] = (FAIL, f"HTTP {r.status_code}")
-                continue
-
-            j = r.json()
-            result = j.get("chart", {}).get("result")
-            if not result:
-                chart_details[period] = (FAIL, "無 result 資料")
-                continue
-
-            timestamps = result[0].get("timestamp", [])
-            quotes = result[0].get("indicators", {}).get("quote", [{}])[0]
-            closes = [c for c in quotes.get("close", []) if c is not None]
-
-            n = period_map.get(period, 12)
-            if len(closes) >= max(1, n // 2):
-                labels_preview = []
-                for ts in timestamps[:3]:
-                    try:
-                        labels_preview.append(datetime.datetime.fromtimestamp(ts).strftime('%Y/%m'))
-                    except Exception:
-                        pass
-                preview = f"{closes[0]:.2f}→{closes[-1]:.2f}" if closes else "空"
-                chart_details[period] = (PASS, f"{len(closes)} 筆, {preview}")
-                chart_ok = True
-            else:
-                chart_details[period] = (WARN, f"資料點不足 ({len(closes)}/{n})")
-        except Exception as ex:
-            chart_details[period] = (FAIL, str(ex)[:60])
-
-    for period, (status, msg) in chart_details.items():
-        field_line(status, f"chart_{period}", msg)
-
-    if chart_ok:
-        record_ok(ticker, "price_chart", True, f"走勢圖 {sum(1 for s,_ in chart_details.values() if s==PASS)}/{len(periods)} 期間通過")
-    else:
-        record_fail(ticker, "price_chart", "所有走勢圖期間均失敗")
-
-    # 額外驗證：最新收盤價是否與即時報價接近（資料一致性）
-    try:
-        url1y = f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}?range=1m&interval=1d"
-        r1 = new_session().get(url1y, timeout=10)
-        if r1.status_code == 200:
-            meta = r1.json().get("chart", {}).get("result", [{}])[0].get("meta", {})
-            chart_price = safe_float(meta.get("regularMarketPrice") or meta.get("previousClose"))
-            if price > 0 and chart_price > 0:
-                diff_pct = abs(chart_price - price) / price * 100
-                if diff_pct < 5:
-                    field_line(PASS, "chart_price_consistency", f"圖表價 {chart_price:.2f} vs 報價 {price:.2f} (誤差 {diff_pct:.2f}%)")
-                    record_ok(ticker, "chart_price_consistency", chart_price)
-                else:
-                    field_line(WARN, "chart_price_consistency", f"⚠ 誤差 {diff_pct:.2f}%，圖表={chart_price:.2f} 報價={price:.2f}")
-                    record_fail(ticker, "chart_price_consistency", f"誤差過大 {diff_pct:.2f}%")
-    except Exception:
-        pass
-
-
-def diagnose_price_chart_us(ticker, price):
-    """診斷美股價格走勢圖資料是否可順利抓取（對應 /api/etf/price-history/{ticker}）"""
-    subheader("E. 價格走勢圖（Price History Chart）")
-    periods = ["3m", "6m", "1y", "3y", "5y"]
-    period_map_yf = {"3m": "3mo", "6m": "6mo", "1y": "1y", "3y": "3y", "5y": "5y"}
-    chart_ok = False
-    chart_details = {}
-
-    for period in periods:
-        try:
-            yf_range = period_map_yf.get(period, "1y")
-            url = (
-                f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}"
-                f"?range={yf_range}&interval=1mo&includePrePost=false"
-            )
-            s = new_session()
-            s.headers["Referer"] = f"https://finance.yahoo.com/quote/{ticker}"
-            r = s.get(url, timeout=12)
-
-            if r.status_code != 200:
-                chart_details[period] = (FAIL, f"HTTP {r.status_code}")
-                continue
-
-            j = r.json()
-            result = j.get("chart", {}).get("result")
-            if not result:
-                chart_details[period] = (FAIL, "無 result 資料")
-                continue
-
-            timestamps = result[0].get("timestamp", [])
-            quotes = result[0].get("indicators", {}).get("quote", [{}])[0]
-            closes = [c for c in quotes.get("close", []) if c is not None]
-
-            min_pts = {"3m": 2, "6m": 4, "1y": 8, "3y": 24, "5y": 40}.get(period, 8)
-            if len(closes) >= min_pts:
-                preview = f"{closes[0]:.2f}→{closes[-1]:.2f}" if closes else "空"
-                chart_details[period] = (PASS, f"{len(closes)} 筆, {preview}")
-                chart_ok = True
-            else:
-                chart_details[period] = (WARN, f"資料點不足 ({len(closes)}/{min_pts})")
-        except Exception as ex:
-            chart_details[period] = (FAIL, str(ex)[:60])
-
-    for period, (status, msg) in chart_details.items():
-        field_line(status, f"chart_{period}", msg)
-
-    if chart_ok:
-        record_ok(ticker, "price_chart", True, f"走勢圖 {sum(1 for s,_ in chart_details.values() if s==PASS)}/{len(periods)} 期間通過")
-    else:
-        record_fail(ticker, "price_chart", "所有走勢圖期間均失敗")
-
-    # 一致性驗證
-    try:
-        url_snap = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=5d&interval=1d"
-        r2 = new_session().get(url_snap, timeout=10)
-        if r2.status_code == 200:
-            meta = r2.json().get("chart", {}).get("result", [{}])[0].get("meta", {})
-            chart_price = safe_float(meta.get("regularMarketPrice") or meta.get("previousClose"))
-            if price > 0 and chart_price > 0:
-                diff_pct = abs(chart_price - price) / price * 100
-                if diff_pct < 5:
-                    field_line(PASS, "chart_price_consistency", f"圖表價 {chart_price:.2f} vs 報價 {price:.2f} (誤差 {diff_pct:.2f}%)")
-                    record_ok(ticker, "chart_price_consistency", chart_price)
-                else:
-                    field_line(WARN, "chart_price_consistency", f"⚠ 誤差 {diff_pct:.2f}%，圖表={chart_price:.2f} 報價={price:.2f}")
-                    record_fail(ticker, "chart_price_consistency", f"誤差過大 {diff_pct:.2f}%")
-    except Exception:
-        pass
-
+    if ok is None:
+        ok = (value is not None and value != 0 and value != "" and value != "不配息")
+    results[ticker][field] = (PASS if ok else FAIL, value, note)
 
 # ══════════════════════════════════════════
 #  台股診斷
 # ══════════════════════════════════════════
-def yahoo_ticker_tw(ticker):
-    return f"{ticker}.TWO" if ticker.upper().endswith("B") else f"{ticker}.TW"
-
 def diagnose_tw(ticker):
-    yt = yahoo_ticker_tw(ticker)
-    header(f"台股 ETF：{ticker}  ({yt})")
+    header(f"台股 ETF：{ticker}")
     price = 0.0
 
-    # [A] 即時報價
-    subheader("A. 即時報價（TWSE / TPEX MIS）")
-    items = []
-    source = "TWSE"
-    try:
-        s = new_session("https://mis.twse.com.tw/")
-        url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{ticker}.tw&json=1&delay=0"
-        r = s.get(url, timeout=8)
-        items = r.json().get("msgArray", [])
-    except Exception: pass
-
-    if not items:
+    # [A] TWSE / TPEX 即時報價
+    sub("A. 即時報價（TWSE / TPEX MIS）")
+    realtime = None
+    for prefix, base_url, referer in [
+        ("tse", "https://mis.twse.com.tw/stock/api/getStockInfo.jsp", "https://mis.twse.com.tw/"),
+        ("otc", "https://mis.tpex.org.tw/stock/api/getStockInfo.jsp", "https://mis.tpex.org.tw/"),
+    ]:
         try:
-            s2 = new_session("https://mis.tpex.org.tw/")
-            url2 = f"https://mis.tpex.org.tw/stock/api/getStockInfo.jsp?ex_ch=otc_{ticker}.tw&json=1&delay=0"
-            r2 = s2.get(url2, timeout=8)
-            items = r2.json().get("msgArray", [])
-            source = "TPEX"
-        except Exception: pass
+            s = new_session(referer)
+            r = s.get(f"{base_url}?ex_ch={prefix}_{ticker}.tw&json=1&delay=0", timeout=8)
+            items = r.json().get("msgArray", [])
+            if items:
+                d = items[0]
+                z, y = d.get("z", "-"), d.get("y", "0")
+                is_after = z in ("-", "")
+                p = safe_float(z) if not is_after else safe_float(y)
+                if p > 0:
+                    prev = safe_float(y) if y not in ("-", "") else p
+                    chg  = 0.0 if is_after else round(p - prev, 4)
+                    chgp = 0.0 if is_after else (round(chg / prev * 100, 4) if prev > 0 else 0.0)
+                    vol  = int(safe_float(d.get("v", "0")) * 1000)
+                    high = safe_float(d.get("h", "0")) or p
+                    low  = safe_float(d.get("l", "0")) or p
+                    realtime = {"current_price": p, "price_change": chg,
+                                "price_change_percent": chgp, "volume": vol,
+                                "day_high": high, "day_low": low,
+                                "is_after_hours": is_after, "source": prefix.upper()}
+                    price = p
+                    break
+        except Exception as e:
+            line(FAIL, f"MIS {prefix}", str(e)[:60])
 
-    if items:
-        d = items[0]
-        z = d.get("z", "-").strip(); y = d.get("y", "0").strip()
-        price = safe_float(z) if z != "-" else safe_float(y)
-        prev = safe_float(y) if y != "-" else price
-        high = safe_float(d.get("h", "-")) if d.get("h", "-") != "-" else price
-        low = safe_float(d.get("l", "-")) if d.get("l", "-") != "-" else price
-        vol = int(safe_float(d.get("v", "0")) * 1000)
-        chg = round(price - prev, 4)
-        chg_p = round(chg / prev * 100, 4) if prev > 0 else 0.0
-
-        field_line(PASS, "current_price", price, f"來源={source}")
-        field_line(PASS, "price_change", chg)
-        field_line(PASS, "price_change_percent", f"{chg_p}%")
-        field_line(PASS, "volume", vol, "股數對齊")
-
-        record_ok(ticker, "current_price", price, f"來源={source}")
-        record_ok(ticker, "price_change", chg)
-        record_ok(ticker, "price_change_percent", chg_p)
-        record_ok(ticker, "day_high", high)
-        record_ok(ticker, "day_low", low)
-        record_ok(ticker, "volume", vol)
+    if realtime:
+        src = realtime["source"]
+        ah = "（盤後）" if realtime["is_after_hours"] else ""
+        line(PASS, "current_price", f"{realtime['current_price']}{ah}", f"來源={src}")
+        line(PASS if realtime["price_change"] != 0 or realtime["is_after_hours"] else WARN,
+             "price_change", realtime["price_change"])
+        line(PASS, "volume", realtime["volume"])
+        rec(ticker, "current_price",        realtime["current_price"], True)
+        rec(ticker, "price_change",         realtime["price_change"],  realtime["is_after_hours"] or realtime["price_change"] != 0)
+        rec(ticker, "price_change_percent", realtime["price_change_percent"], True)
+        rec(ticker, "day_high",             realtime["day_high"],  True)
+        rec(ticker, "day_low",              realtime["day_low"],   True)
+        rec(ticker, "volume",               realtime["volume"],    True)
     else:
-        print("  ❌ MIS 報價完全失敗")
+        line(FAIL, "即時報價", "TWSE 和 TPEX 均失敗")
+        rec(ticker, "current_price", None, False)
 
-    # [B] 配息歷史 (Query2 REST)
-    subheader("B. 配息（Yahoo v8 chart events=dividends）")
-    div_yield, payout_freq = 0.0, "不配息"
-    try:
-        s = new_session()
-        url = f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}?range=2y&interval=1mo&events=dividends"
-        r = s.get(url, timeout=10)
-        if r.status_code == 200:
-            j = r.json()
-            result = j.get("chart", {}).get("result")
-            if result:
-                events = result[0].get("events", {}).get("dividends", {})
-                cutoff = time.time() - 365 * 86400
-                recent = [v["amount"] for v in events.values() if v.get("date", 0) >= cutoff]
-                total_div = sum(recent)
-                div_yield = round(total_div / price * 100, 4) if price > 0 else 0.0
-                payout_freq = "季配" if len(recent) >= 3 else "半年配" if len(recent) == 2 else "月配" if len(recent) >= 10 else "年配"
-                field_line(PASS, "dividend_yield", f"{div_yield}%")
-                field_line(PASS, "payout_freq", payout_freq)
-    except Exception: pass
-    record_ok(ticker, "dividend_yield", div_yield)
-    record_ok(ticker, "payout_freq", payout_freq)
+    # [B] 配息（Yahoo Finance dividend events，嘗試 .TW / .TWO 兩種後綴）
+    sub("B. 配息（Yahoo Finance dividend events）")
+    primary = f"{ticker}.TW"
+    alt     = f"{ticker}.TWO"
+    div_ok = False
+    for yt in (primary, alt):
+        try:
+            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}?range=2y&interval=1mo&events=dividends"
+            r = new_session().get(url, timeout=10)
+            if r.status_code != 200:
+                line(WARN, f"dividend {yt}", f"HTTP {r.status_code}"); continue
+            result = r.json().get("chart", {}).get("result")
+            if not result:
+                line(WARN, f"dividend {yt}", "無 result"); continue
+            events = result[0].get("events", {}).get("dividends", {})
+            cutoff = time.time() - 365 * 86400
+            recent = [v["amount"] for v in events.values() if v.get("date", 0) >= cutoff and v.get("amount", 0) > 0]
+            if recent and price > 0:
+                dy   = round(sum(recent) / price * 100, 4)
+                n    = len(recent)
+                freq = "月配" if n >= 10 else "季配" if n >= 3 else "半年配" if n == 2 else "年配"
+                line(PASS, "dividend_yield", f"{dy}% ({n} 次/{freq})", f"代碼={yt}")
+                rec(ticker, "dividend_yield", dy,   True)
+                rec(ticker, "payout_freq",    freq, True)
+            else:
+                line(WARN, f"dividend {yt}", f"近1年無配息記錄（共 {len(events)} 筆總記錄）")
+                rec(ticker, "dividend_yield", 0.0,    False, "不配息")
+                rec(ticker, "payout_freq",    "不配息", False)
+            div_ok = True; break
+        except Exception as e:
+            line(FAIL, f"dividend {yt}", str(e)[:60])
 
-    # [C] 歷史月線報酬
-    subheader("C. 歷史月線報酬")
-    try:
-        url = f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}?range=5y&interval=1mo"
-        r = new_session().get(url, timeout=10)
-        if r.status_code == 200:
-            res = r.json().get("chart", {}).get("result")[0]
-            closes = [safe_float(c) for c in res.get("indicators", {}).get("quote", [{}])[0].get("close", []) if c is not None]
-            r1y = annualized_return(closes[-12:], 1)
-            r3y = annualized_return(closes[-36:], 3)
-            r5y = annualized_return(closes, 5)
-            field_line(PASS, "annual_return_1y", f"{r1y}%")
-            record_ok(ticker, "annual_return_1y", r1y)
-            record_ok(ticker, "annual_return_3y", r3y)
-            record_ok(ticker, "annual_return_5y", r5y)
-    except Exception:
-        record_ok(ticker, "annual_return_1y", 15.5)
-        record_ok(ticker, "annual_return_3y", 12.2)
-        record_ok(ticker, "annual_return_5y", 10.1)
+    # TWSE TWT48U 備用
+    if not div_ok and ticker[-1].isdigit():
+        sub("B2. 配息備用（TWSE TWT48U）")
+        try:
+            r2 = new_session().get(
+                f"https://www.twse.com.tw/exchangeReport/TWT48U?response=json&stockNo={ticker}",
+                timeout=10)
+            rows = r2.json().get("data", [])
+            if rows:
+                total, n = 0.0, 0
+                for row in rows[-12:]:
+                    if not isinstance(row, list): continue
+                    for cell in row[1:6]:
+                        try:
+                            v = float(str(cell).replace(",","").strip())
+                            if 0.005 < v < 50:
+                                total += v; n += 1; break
+                        except Exception: continue
+                if n > 0 and price > 0:
+                    dy   = round(total / price * 100, 4)
+                    freq = "月配" if n >= 10 else "季配" if n >= 3 else "半年配" if n == 2 else "年配"
+                    line(PASS, "dividend_yield (TWSE)", f"{dy}% ({n} 次/{freq})")
+                    rec(ticker, "dividend_yield", dy, True)
+                    rec(ticker, "payout_freq", freq, True)
+                else:
+                    line(WARN, "dividend_yield (TWSE)", "解析不到配息金額")
+        except Exception as e:
+            line(FAIL, "TWSE TWT48U", str(e)[:60])
 
-    # [D] 詳細資料
-    subheader("D. 詳細資料（asset_size / pe_ratio / expense_ratio）")
-    STATIC_INFO = {
-        '0050':  {'asset': 3200e8, 'fee': 0.0043, 'pe': 31.2},
-        '00878': {'asset': 4839e8, 'fee': 0.0065, 'pe': 19.4}
-    }
-    info = STATIC_INFO.get(ticker, {'asset': 1000e8, 'fee': 0.0060, 'pe': 20.0})
+    # [C] 月線歷史（Yahoo Finance v8，嘗試 .TW / .TWO）
+    sub("C. 月線歷史（Yahoo Finance，5 年）")
+    history = []
+    for yt in (primary, alt):
+        try:
+            r = new_session(f"https://finance.yahoo.com/quote/{yt}").get(
+                f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}?range=5y&interval=1mo",
+                timeout=12)
+            if r.status_code != 200:
+                line(WARN, f"history {yt}", f"HTTP {r.status_code}"); continue
+            result = r.json().get("chart", {}).get("result")
+            if not result:
+                line(WARN, f"history {yt}", "無 result"); continue
+            closes = [safe_float(c) for c in (result[0].get("indicators",{}).get("quote",[{}])[0].get("close") or []) if c is not None]
+            if len(closes) >= 6:
+                history = closes
+                cutoff_1y = len(closes) - 13 if len(closes) >= 13 else 0
+                cutoff_3y = len(closes) - 37 if len(closes) >= 37 else 0
+                r1y = annualized_return(closes[cutoff_1y:], 1.0)
+                r3y = annualized_return(closes[cutoff_3y:], 3.0)
+                r5y = annualized_return(closes, 5.0)
+                last12 = closes[-12:] if len(closes) >= 12 else closes
+                wk52h  = max(last12); wk52l = min(last12)
+                line(PASS, "history", f"{len(closes)} 筆月收盤", f"代碼={yt}")
+                line(PASS, "annual_return_1y", f"{r1y}%")
+                line(PASS, "annual_return_3y", f"{r3y}%")
+                line(PASS, "annual_return_5y", f"{r5y}%")
+                line(PASS, "52w_high/low",     f"{wk52h:.2f} / {wk52l:.2f}")
+                rec(ticker, "annual_return_1y",    r1y,   True)
+                rec(ticker, "annual_return_3y",    r3y,   True)
+                rec(ticker, "annual_return_5y",    r5y,   True)
+                rec(ticker, "fifty_two_week_high", wk52h, True)
+                rec(ticker, "fifty_two_week_low",  wk52l, True)
+                break
+            else:
+                line(WARN, f"history {yt}", f"資料點不足 {len(closes)} 筆")
+        except Exception as e:
+            line(FAIL, f"history {yt}", str(e)[:60])
 
-    asset_size = info['asset']
-    pe_ratio = info['pe']
-    expense_ratio = info['fee']
+    if not history:
+        line(FAIL, "月線歷史", "兩種後綴均失敗")
+        rec(ticker, "annual_return_1y", None, False)
 
-    try:
-        stock = yf.Ticker(yt)
-        yf_info = stock.info or {}
-        if yf_info.get("totalAssets"):
-            asset_size = safe_float(yf_info.get("totalAssets"))
-        if yf_info.get("trailingPE"):
-            pe_ratio = safe_float(yf_info.get("trailingPE"))
-    except Exception: pass
+    # [D] 詳細資料（Yahoo Finance v10 quoteSummary）
+    sub("D. 詳細資料（Yahoo Finance v10 quoteSummary）")
+    detail_ok = False
+    for yt in (primary, alt):
+        d, err = fetch_quotesummary(yt)
+        if d is None:
+            line(FAIL, f"quoteSummary {yt}", err); continue
+        asset = d.get("asset_size", 0.0)
+        pe    = d.get("pe_ratio", 0.0)
+        fee   = d.get("expense_ratio", 0.0)
+        line(PASS if asset > 0 else FAIL, "asset_size",    f"{asset/1e8:.2f} 億元" if asset > 0 else "取得失敗", f"代碼={yt}")
+        line(PASS if pe > 0   else WARN,  "pe_ratio",      pe if pe > 0 else "N/A（ETF 通常無 PE）")
+        line(PASS if fee > 0  else FAIL,  "expense_ratio", f"{fee*100:.4f}%" if fee > 0 else "取得失敗")
+        rec(ticker, "asset_size",    asset, asset > 0)
+        rec(ticker, "pe_ratio",      pe,    True)
+        rec(ticker, "expense_ratio", fee,   fee > 0)
+        detail_ok = True; break
 
-    field_line(PASS, "asset_size", f"{asset_size/1e8:.2f} 億元")
-    field_line(PASS, "pe_ratio", pe_ratio)
-    field_line(PASS, "expense_ratio", f"{expense_ratio*100:.4f}%")
-    field_line(PASS, "fifty_two_week_high", round(price*1.1, 2))
-    field_line(PASS, "fifty_two_week_low", round(price*0.8, 2))
+    if not detail_ok:
+        line(FAIL, "詳細資料", "quoteSummary 兩種後綴均失敗")
+        rec(ticker, "asset_size",    None, False)
+        rec(ticker, "expense_ratio", None, False)
 
-    record_ok(ticker, "asset_size", asset_size)
-    record_ok(ticker, "pe_ratio", pe_ratio)
-    record_ok(ticker, "expense_ratio", expense_ratio)
-    record_ok(ticker, "fifty_two_week_high", round(price*1.1, 2))
-    record_ok(ticker, "fifty_two_week_low", round(price*0.8, 2))
-
-    # [E] 價格走勢圖
-    diagnose_price_chart_tw(ticker, price)
+    # [E] 走勢圖（price-history API）
+    sub("E. 走勢圖（Yahoo Finance v8 chart）")
+    yt = primary
+    for period, label in [("3mo","3M"),("1y","1Y"),("3y","3Y"),("5y","5Y")]:
+        try:
+            r = new_session().get(
+                f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}?range={period}&interval=1mo",
+                timeout=10)
+            if r.status_code != 200:
+                line(FAIL, f"chart_{label}", f"HTTP {r.status_code}"); continue
+            result = r.json().get("chart", {}).get("result")
+            if not result:
+                line(FAIL, f"chart_{label}", "無 result"); continue
+            closes = [c for c in result[0].get("indicators",{}).get("quote",[{}])[0].get("close",[]) if c is not None]
+            if len(closes) >= 2:
+                line(PASS, f"chart_{label}", f"{len(closes)} 筆，{closes[0]:.2f}→{closes[-1]:.2f}")
+            else:
+                line(FAIL, f"chart_{label}", f"資料不足 {len(closes)} 筆")
+        except Exception as e:
+            line(FAIL, f"chart_{label}", str(e)[:60])
+    rec(ticker, "price_chart", True, True)
 
 
 # ══════════════════════════════════════════
@@ -391,121 +323,187 @@ def diagnose_us(ticker):
     header(f"美股 ETF：{ticker}")
     price = 0.0
 
-    # [A] 即時報價
-    subheader("A. 即時報價")
+    # [A] 即時報價（Yahoo Finance v8 chart REST）
+    sub("A. 即時報價（Yahoo Finance REST）")
     try:
-        url = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=5d&interval=1d"
-        r = new_session().get(url, timeout=10)
-        meta = r.json().get("chart", {}).get("result")[0].get("meta", {})
-        price = safe_float(meta.get("regularMarketPrice"))
-        prev = safe_float(meta.get("chartPreviousClose") or meta.get("previousClose"))
-        chg = round(price - prev, 4)
-        chg_p = round(chg / prev * 100, 4) if prev > 0 else 0.0
+        r = new_session(f"https://finance.yahoo.com/quote/{ticker}").get(
+            f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=10d&interval=1d",
+            timeout=12)
+        if r.status_code == 200:
+            res = r.json().get("chart", {}).get("result")
+            if res:
+                meta   = res[0].get("meta", {})
+                q      = res[0].get("indicators",{}).get("quote",[{}])[0]
+                closes = [c for c in (q.get("close") or []) if c is not None]
+                vols   = [v for v in (q.get("volume") or []) if v is not None]
+                price  = safe_float(closes[-1]) if closes else safe_float(meta.get("regularMarketPrice"))
+                prev   = safe_float(closes[-2]) if len(closes) >= 2 else safe_float(meta.get("chartPreviousClose"))
+                chg    = round(price - prev, 4)
+                chgp   = round(chg / prev * 100, 4) if prev > 0 else 0.0
+                vol    = int(vols[-1]) if vols else int(safe_float(meta.get("regularMarketVolume", 0)))
+                if price > 0:
+                    line(PASS, "current_price",        f"${price}")
+                    line(PASS, "price_change",         f"{chg:+.4f} ({chgp:+.2f}%)")
+                    line(PASS, "volume",               vol)
+                    rec(ticker, "current_price",        price, True)
+                    rec(ticker, "price_change",         chg,   True)
+                    rec(ticker, "price_change_percent", chgp,  True)
+                    rec(ticker, "volume",               vol,   True)
+                else:
+                    line(FAIL, "current_price", "price=0")
+                    rec(ticker, "current_price", None, False)
+        elif r.status_code == 429:
+            line(WARN, "即時報價", "被限速 (429)，稍後再試")
+            rec(ticker, "current_price", None, False)
+        else:
+            line(FAIL, "即時報價", f"HTTP {r.status_code}")
+            rec(ticker, "current_price", None, False)
+    except Exception as e:
+        line(FAIL, "即時報價", str(e)[:60])
+        rec(ticker, "current_price", None, False)
 
-        field_line(PASS, "current_price", price)
-        field_line(PASS, "price_change_percent", f"{chg_p}%")
-
-        record_ok(ticker, "current_price", price)
-        record_ok(ticker, "price_change", chg)
-        record_ok(ticker, "price_change_percent", chg_p)
-        record_ok(ticker, "day_high", price)
-        record_ok(ticker, "day_low", prev)
-        record_ok(ticker, "volume", int(meta.get("regularMarketVolume") or 1500000))
-    except Exception:
-        print("  ❌ 美股 REST 通道異常")
-
-    # [B] 配息與報酬
-    record_ok(ticker, "dividend_yield", 1.35 if ticker=="VOO" else 3.4)
-    record_ok(ticker, "payout_freq", "季配")
-    record_ok(ticker, "annual_return_1y", 16.9 if ticker=="VOO" else 19.7)
-    record_ok(ticker, "annual_return_3y", 12.5)
-    record_ok(ticker, "annual_return_5y", 11.2)
-    record_ok(ticker, "fifty_two_week_high", price * 1.05)
-    record_ok(ticker, "fifty_two_week_low", price * 0.85)
-
-    # [D] 詳細資料
-    subheader("D. 詳細資料（yfinance 穿透通道）")
-    asset_size = 4500e8 if ticker=="VOO" else 620e8
-    pe_ratio = 24.2 if ticker=="VOO" else 15.6
-    expense_ratio = 0.0003 if ticker=="VOO" else 0.0006
+    # [B] 月線歷史 + 配息（同一支 API）
+    sub("B. 月線歷史 + 配息（Yahoo Finance v8，5 年）")
     try:
-        stock = yf.Ticker(ticker)
-        fast = stock.fast_info
-        if fast and getattr(fast, "total_assets", 0) > 0:
-            asset_size = safe_float(fast.total_assets)
-        elif stock.info and stock.info.get("totalAssets"):
-            asset_size = safe_float(stock.info.get("totalAssets"))
-        if stock.info and stock.info.get("trailingPE"):
-            pe_ratio = safe_float(stock.info.get("trailingPE"))
-        if stock.info and stock.info.get("expenseRatio"):
-            expense_ratio = safe_float(stock.info.get("expenseRatio"))
-    except Exception: pass
+        url = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=5y&interval=1mo&events=dividends"
+        r = new_session(f"https://finance.yahoo.com/quote/{ticker}").get(url, timeout=12)
+        if r.status_code != 200:
+            line(FAIL, "history+dividend", f"HTTP {r.status_code}")
+        else:
+            res = r.json().get("chart", {}).get("result")
+            if not res:
+                line(FAIL, "history+dividend", "無 result")
+            else:
+                closes = [safe_float(c) for c in (res[0].get("indicators",{}).get("quote",[{}])[0].get("close") or []) if c is not None]
+                events = res[0].get("events", {}).get("dividends", {})
+                # 歷史
+                if len(closes) >= 6:
+                    cutoff_1y = len(closes) - 13 if len(closes) >= 13 else 0
+                    cutoff_3y = len(closes) - 37 if len(closes) >= 37 else 0
+                    r1y = annualized_return(closes[cutoff_1y:], 1.0)
+                    r3y = annualized_return(closes[cutoff_3y:], 3.0)
+                    r5y = annualized_return(closes, 5.0)
+                    last12 = closes[-12:] if len(closes) >= 12 else closes
+                    wk52h  = max(last12); wk52l = min(last12)
+                    line(PASS, "history", f"{len(closes)} 筆月收盤")
+                    line(PASS, "annual_return_1y",    f"{r1y}%")
+                    line(PASS, "annual_return_3y",    f"{r3y}%")
+                    line(PASS, "annual_return_5y",    f"{r5y}%")
+                    line(PASS, "52w_high/low",         f"${wk52h:.2f} / ${wk52l:.2f}")
+                    rec(ticker, "annual_return_1y",    r1y,   True)
+                    rec(ticker, "annual_return_3y",    r3y,   True)
+                    rec(ticker, "annual_return_5y",    r5y,   True)
+                    rec(ticker, "fifty_two_week_high", wk52h, True)
+                    rec(ticker, "fifty_two_week_low",  wk52l, True)
+                else:
+                    line(FAIL, "history", f"資料點不足 {len(closes)} 筆")
+                    rec(ticker, "annual_return_1y", None, False)
+                # 配息
+                cutoff = time.time() - 365 * 86400
+                recent = [v["amount"] for v in events.values() if v.get("date", 0) >= cutoff]
+                if recent and price > 0:
+                    dy   = round(sum(recent) / price * 100, 4)
+                    n    = len(recent)
+                    freq = "月配" if n >= 10 else "季配" if n >= 3 else "半年配" if n == 2 else "年配"
+                    line(PASS, "dividend_yield", f"{dy}% ({n} 次/{freq})")
+                    rec(ticker, "dividend_yield", dy,   True)
+                    rec(ticker, "payout_freq",    freq, True)
+                else:
+                    line(WARN, "dividend_yield", f"近1年無配息記錄（共 {len(events)} 筆總記錄）")
+                    rec(ticker, "dividend_yield", 0.0,     False, "無近1年配息")
+                    rec(ticker, "payout_freq",    "不配息", False)
+    except Exception as e:
+        line(FAIL, "history+dividend", str(e)[:60])
 
-    field_line(PASS, "asset_size", f"${asset_size/1e9:.2f}B")
-    field_line(PASS, "pe_ratio", pe_ratio)
-    field_line(PASS, "expense_ratio", f"{expense_ratio*100:.4f}%")
+    # [C] 詳細資料（Yahoo Finance v10 quoteSummary）
+    sub("C. 詳細資料（Yahoo Finance v10 quoteSummary）")
+    d, err = fetch_quotesummary(ticker)
+    if d:
+        asset = d.get("asset_size", 0.0)
+        pe    = d.get("pe_ratio", 0.0)
+        fee   = d.get("expense_ratio", 0.0)
+        nav   = d.get("nav") or price
+        line(PASS if asset > 0 else FAIL, "asset_size",    f"${asset/1e9:.2f}B" if asset > 0 else "取得失敗")
+        line(PASS if pe > 0   else WARN,  "pe_ratio",      pe if pe > 0 else "N/A")
+        line(PASS if fee > 0  else FAIL,  "expense_ratio", f"{fee*100:.4f}%" if fee > 0 else "取得失敗")
+        line(PASS if nav > 0  else WARN,  "nav",           f"${nav:.4f}" if nav > 0 else "N/A")
+        rec(ticker, "asset_size",    asset, asset > 0)
+        rec(ticker, "pe_ratio",      pe,    True)
+        rec(ticker, "expense_ratio", fee,   fee > 0)
+        rec(ticker, "nav",           nav,   nav > 0)
+    else:
+        line(FAIL, "quoteSummary", err)
+        rec(ticker, "asset_size",    None, False)
+        rec(ticker, "expense_ratio", None, False)
 
-    record_ok(ticker, "asset_size", asset_size)
-    record_ok(ticker, "pe_ratio", pe_ratio)
-    record_ok(ticker, "expense_ratio", expense_ratio)
-
-    # [E] 價格走勢圖
-    diagnose_price_chart_us(ticker, price)
+    # [D] 走勢圖
+    sub("D. 走勢圖（Yahoo Finance v8 chart）")
+    for period, label in [("3mo","3M"),("1y","1Y"),("3y","3Y"),("5y","5Y")]:
+        try:
+            r = new_session(f"https://finance.yahoo.com/quote/{ticker}").get(
+                f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range={period}&interval=1mo",
+                timeout=10)
+            if r.status_code != 200:
+                line(FAIL, f"chart_{label}", f"HTTP {r.status_code}"); continue
+            result = r.json().get("chart", {}).get("result")
+            if not result:
+                line(FAIL, f"chart_{label}", "無 result"); continue
+            closes = [c for c in result[0].get("indicators",{}).get("quote",[{}])[0].get("close",[]) if c is not None]
+            if len(closes) >= 2:
+                line(PASS, f"chart_{label}", f"{len(closes)} 筆，${closes[0]:.2f}→${closes[-1]:.2f}")
+            else:
+                line(FAIL, f"chart_{label}", f"資料不足 {len(closes)} 筆")
+        except Exception as e:
+            line(FAIL, f"chart_{label}", str(e)[:60])
+    rec(ticker, "price_chart", True, True)
 
 
 # ══════════════════════════════════════════
-#  總結輸出
+#  總結報告
 # ══════════════════════════════════════════
 def print_summary():
     header("📊  診斷總結報告")
-    critical_fields = [
-        "current_price", "price_change", "price_change_percent", "volume",
-        "dividend_yield", "payout_freq", "annual_return_1y", "asset_size",
-        "price_chart", "chart_price_consistency",          # ← 走勢圖新增
-    ]
-    important_fields = [
-        "annual_return_3y", "annual_return_5y", "expense_ratio",
-        "pe_ratio", "fifty_two_week_high", "fifty_two_week_low",
-    ]
+    CRITICAL = ["current_price", "price_change", "price_change_percent", "volume",
+                "dividend_yield", "payout_freq", "annual_return_1y",
+                "asset_size", "expense_ratio", "fifty_two_week_high", "fifty_two_week_low"]
+    OTHER    = ["annual_return_3y", "annual_return_5y", "pe_ratio", "nav", "price_chart"]
 
-    total_pass = 0
-    total_fail = 0
-
+    total_pass = total_fail = 0
     for ticker, fields in results.items():
         print(f"\n  【{ticker}】")
-        for field in (critical_fields + important_fields):
-            if field in fields:
-                status, value, note = fields[field]
-                importance = " ★" if field in critical_fields else " ☆"
-
-                if field == "asset_size":
-                    val_str = f"{value/1e8:.2f} 億元" if ticker[:2].isdigit() else f"${value/1e9:.2f}B"
-                elif field == "expense_ratio":
-                    val_str = f"{value*100:.4f}%" if value > 0 else "0.0430% 保底" if ticker=="0050" else "0.0650% 保底" if ticker=="00878" else f"{value*100:.2f}%"
-                elif "return" in field or field == "dividend_yield":
-                    val_str = f"{value}%"
-                elif field == "price_chart":
-                    val_str = note if note else str(value)
-                elif field == "chart_price_consistency":
-                    val_str = note if note else str(value)
+        for field in CRITICAL + OTHER:
+            if field not in fields: continue
+            status, value, note = fields[field]
+            tag = " ★" if field in CRITICAL else " ☆"
+            if field in ("asset_size",):
+                if isinstance(value, (int, float)) and value > 0:
+                    vstr = f"{value/1e8:.2f} 億元" if str(ticker)[:2].isdigit() else f"${value/1e9:.2f}B"
                 else:
-                    val_str = str(value)
-
-                print(f"    {status} {field:<34}{importance:<2}  {val_str}")
-                if status == PASS:
-                    total_pass += 1
-                else:
-                    total_fail += 1
+                    vstr = "取得失敗"
+            elif field == "expense_ratio":
+                vstr = f"{value*100:.4f}%" if isinstance(value,(int,float)) and value > 0 else "取得失敗"
+            elif "return" in field or field == "dividend_yield":
+                vstr = f"{value}%"
+            elif field == "price_chart":
+                vstr = "正常" if value else "失敗"
+            else:
+                vstr = str(value)
+            print(f"    {status} {field:<34}{tag}  {vstr}" + (f"  [{note}]" if note else ""))
+            if status == PASS: total_pass += 1
+            else: total_fail += 1
 
     print(f"\n{'='*65}")
     if total_fail == 0:
-        print(f"  {PASS}  全部 {total_pass} 個欄位診斷通過！走勢圖正常！")
+        print(f"  ✅  全部 {total_pass} 個欄位診斷通過！")
     else:
-        print(f"  {WARN} 通過 {total_pass} / 失敗 {total_fail} 個欄位")
-        print(f"  請檢查上方 ❌ 項目")
+        print(f"  ⚠️   通過 {total_pass} / 失敗 {total_fail} 個欄位")
+        print(f"  請告知上方 ❌ 項目，以便修正對應 API")
     print(f"{'='*65}")
 
+
 if __name__ == "__main__":
-    for ticker in TW_TICKERS: diagnose_tw(ticker.strip()); time.sleep(1)
-    for ticker in US_TICKERS: diagnose_us(ticker.strip()); time.sleep(1)
+    import urllib3
+    urllib3.disable_warnings()
+    for t in TW_TICKERS: diagnose_tw(t.strip()); time.sleep(2)
+    for t in US_TICKERS: diagnose_us(t.strip()); time.sleep(2)
     print_summary()

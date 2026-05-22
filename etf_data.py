@@ -286,32 +286,53 @@ def _fetch_tw_history(ticker: str) -> list:
     return []
 
 
+def _fetch_yahoo_quotesummary(yt: str) -> dict:
+    """直接呼叫 Yahoo Finance v10 quoteSummary API（比 yf.Ticker().info 更穩定、不易被限速）。"""
+    empty = {"asset_size": 0.0, "pe_ratio": 0.0, "expense_ratio": 0.0, "nav": 0.0, "div_yield": 0.0}
+    url = (f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{yt}"
+           f"?modules=fundProfile,summaryDetail")
+    for attempt in range(3):
+        try:
+            s = _new_session()
+            s.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
+            r = s.get(url, timeout=12)
+            if r.status_code == 429:
+                time.sleep(20 * (attempt + 1)); continue
+            if r.status_code != 200:
+                return empty
+            data = r.json().get("quoteSummary", {}).get("result")
+            if not data:
+                return empty
+
+            def _raw(d, key):
+                v = d.get(key)
+                if isinstance(v, dict): return safe_float(v.get("raw", 0))
+                return safe_float(v)
+
+            fp = data[0].get("fundProfile", {})
+            sd = data[0].get("summaryDetail", {})
+            return {
+                "asset_size":    _raw(sd, "totalAssets") or _raw(fp, "totalAssets"),
+                "expense_ratio": _raw(fp, "annualReportExpenseRatio") or _raw(fp, "expenseRatio"),
+                "pe_ratio":      _raw(sd, "trailingPE") or _raw(sd, "forwardPE"),
+                "nav":           _raw(sd, "navPrice"),
+                "div_yield":     (_raw(sd, "yield") or _raw(sd, "dividendYield")) * 100,
+            }
+        except Exception as e:
+            logger.debug(f"quoteSummary {yt} attempt {attempt+1}: {e}")
+            if attempt < 2: time.sleep(5 * (attempt + 1))
+    return empty
+
+
 def _fetch_tw_detail(ticker: str) -> dict:
-    """從 Yahoo Finance .info 取得台股 ETF 的費用率、規模、本益比。
-    若 Yahoo 返回空值，欄位保持 0（前端顯示「資料暫缺」）。
-    絕不使用寫死的靜態數值。
-    """
-    result = {"asset_size": 0.0, "pe_ratio": 0.0, "expense_ratio": 0.0}
+    """從 Yahoo Finance v10 quoteSummary 取得台股 ETF 的費用率、規模、本益比。"""
     primary = _yahoo_ticker(ticker, "TW")
     alt     = f"{ticker}.TWO" if primary.endswith(".TW") else f"{ticker}.TW"
     for yt in (primary, alt):
-        try:
-            info = yf.Ticker(yt, session=_new_session()).info or {}
-            if not info.get("regularMarketPrice") and not info.get("totalAssets"):
-                continue  # 空資料，嘗試另一後綴
-            pe = safe_float(info.get("trailingPE") or info.get("forwardPE"))
-            if pe > 0:
-                result["pe_ratio"] = pe
-            fee = safe_float(info.get("expenseRatio") or info.get("annualReportExpenseRatio"))
-            if fee > 0:
-                result["expense_ratio"] = fee
-            assets = safe_float(info.get("totalAssets") or info.get("netAssets"))
-            if assets > 0:
-                result["asset_size"] = assets
-            break  # 成功取得資料，不需嘗試 alt
-        except Exception as e:
-            logger.debug(f"TW detail {yt}: {e}")
-    return result
+        d = _fetch_yahoo_quotesummary(yt)
+        if d.get("asset_size") or d.get("expense_ratio"):
+            return d
+    return {"asset_size": 0.0, "pe_ratio": 0.0, "expense_ratio": 0.0}
 
 
 # ══════════════════════════════════════════════════════════
@@ -477,20 +498,16 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     wk52_h = max(last12) if last12 else quote["day_high"]
     wk52_l = min(last12) if last12 else quote["day_low"]
 
-    asset_size, pe_ratio, expense_ratio, nav = 0.0, 0.0, 0.0, price
-    try:
-        info = (yf.Ticker(ticker, session=_new_session()).info or {})
-        asset_size    = safe_float(info.get("totalAssets") or info.get("netAssets"))
-        pe_ratio      = safe_float(info.get("trailingPE") or info.get("forwardPE"))
-        expense_ratio = safe_float(info.get("expenseRatio") or info.get("annualReportExpenseRatio"))
-        nav           = safe_float(info.get("navPrice") or price)
-        yf_yield = safe_float(info.get("yield") or info.get("dividendYield")) * 100
-        if yf_yield > div_yield:
-            div_yield = round(yf_yield, 4)
-            if div_yield > 0 and payout_freq == "不配息":
-                payout_freq = "季配"
-    except Exception as e:
-        logger.debug(f"US info {ticker}: {e}")
+    detail = _fetch_yahoo_quotesummary(ticker)
+    asset_size    = detail.get("asset_size", 0.0)
+    pe_ratio      = detail.get("pe_ratio", 0.0)
+    expense_ratio = detail.get("expense_ratio", 0.0)
+    nav           = detail.get("nav") or price
+    yf_yield      = detail.get("div_yield", 0.0)
+    if yf_yield > div_yield:
+        div_yield = round(yf_yield, 4)
+        if div_yield > 0 and payout_freq == "不配息":
+            payout_freq = "季配"
 
     return {
         'ticker': ticker, 'current_price': price,
