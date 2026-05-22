@@ -3,7 +3,7 @@ etf_data.py — ETF 靜態清單、資料抓取、DB 存取
 （從原 main.py 提取並整合 exchange_rate）
 """
 from __future__ import annotations
-import random, time, logging
+import random, time, logging, threading
 from datetime import datetime, date
 from typing import Optional
 
@@ -72,7 +72,7 @@ def _get_with_retry(session: req_lib.Session, url: str, timeout: int = 12,
             if r.status_code == 200:
                 return r
             if r.status_code == 429:
-                wait = 30 * (2 ** attempt) + random.uniform(0, 10)
+                wait = min(60, 30 * (2 ** attempt)) + random.uniform(0, 5)
                 logger.debug(f"429 rate-limited {url[:60]}, wait {wait:.1f}s")
                 time.sleep(wait)
                 continue
@@ -93,26 +93,29 @@ def _get_with_retry(session: req_lib.Session, url: str, timeout: int = 12,
 # ── Yahoo Finance crumb 快取（v10 API 認證用） ──
 _yf_crumb: str = ""
 _yf_crumb_cookies: dict = {}
+_crumb_lock = threading.Lock()
 
 def _refresh_yahoo_crumb() -> bool:
     global _yf_crumb, _yf_crumb_cookies
-    for attempt in range(3):
-        try:
-            s = _new_session()
-            s.headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            r1 = s.get("https://fc.yahoo.com", timeout=8)
-            if r1.status_code not in (200, 302, 303):
-                time.sleep(5); continue
-            r2 = s.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=8)
-            if r2.status_code == 200 and r2.text and r2.text.strip() not in ("", "null"):
-                _yf_crumb = r2.text.strip()
-                _yf_crumb_cookies = dict(s.cookies)
-                logger.debug("Yahoo crumb 取得成功")
-                return True
-        except Exception as e:
-            logger.debug(f"crumb refresh attempt {attempt+1}: {e}")
-        time.sleep(10 * (attempt + 1))
-    return False
+    with _crumb_lock:
+        for attempt in range(3):
+            try:
+                s = _new_session()
+                s.headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                r1 = s.get("https://fc.yahoo.com", timeout=8)
+                if r1.status_code not in (200, 302, 303):
+                    time.sleep(5)
+                    continue
+                r2 = s.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=8)
+                if r2.status_code == 200 and r2.text and r2.text.strip() not in ("", "null"):
+                    _yf_crumb = r2.text.strip()
+                    _yf_crumb_cookies = dict(s.cookies)
+                    logger.debug("Yahoo crumb 取得成功")
+                    return True
+            except Exception as e:
+                logger.debug(f"crumb refresh attempt {attempt+1}: {e}")
+            time.sleep(10 * (attempt + 1))
+        return False
 
 
 def _yahoo_ticker(ticker: str, market: str) -> str:
@@ -378,7 +381,9 @@ def _fetch_yahoo_quotesummary(yt: str) -> dict:
     """Yahoo Finance v10 quoteSummary（含 crumb 認證，自動刷新）。"""
     global _yf_crumb, _yf_crumb_cookies
     empty = {"asset_size": 0.0, "pe_ratio": 0.0, "expense_ratio": 0.0, "nav": 0.0, "div_yield": 0.0}
-    if not _yf_crumb:
+    with _crumb_lock:
+        has_crumb = bool(_yf_crumb)
+    if not has_crumb:
         _refresh_yahoo_crumb()
 
     def _raw(d, key):
@@ -388,17 +393,20 @@ def _fetch_yahoo_quotesummary(yt: str) -> dict:
 
     for attempt in range(3):
         try:
+            with _crumb_lock:
+                crumb = _yf_crumb
+                cookies_snap = dict(_yf_crumb_cookies)
             url = (f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{yt}"
-                   f"?modules=fundProfile,summaryDetail,defaultKeyStatistics&crumb={_yf_crumb}")
+                   f"?modules=fundProfile,summaryDetail,defaultKeyStatistics&crumb={crumb}")
             s = _new_session()
             s.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
-            if _yf_crumb_cookies:
-                s.cookies.update(_yf_crumb_cookies)
+            if cookies_snap:
+                s.cookies.update(cookies_snap)
             r = s.get(url, timeout=12)
             if r.status_code == 401:
-                # crumb 過期，刷新後重試
-                _yf_crumb = ""
-                _yf_crumb_cookies = {}
+                with _crumb_lock:
+                    _yf_crumb = ""
+                    _yf_crumb_cookies = {}
                 if _refresh_yahoo_crumb():
                     continue
                 return empty
@@ -643,7 +651,7 @@ def save_etf_data(data: dict):
         dp  = 0.0
     else:
         nav = safe_float(nav_raw) or cp
-        dp  = round((cp - nav) / nav * 100, 2) if nav > 0 and cp != nav else 0.0
+        dp  = round((cp - nav) / nav * 100, 2) if nav > 0 and abs(cp - nav) > 0.001 else 0.0
 
     with get_db() as (conn, cursor):
         cursor.execute("""
@@ -689,7 +697,12 @@ def save_etf_data(data: dict):
         ))
         conn.commit()
     cache.delete(f"detail:{ticker}")
-    cache.delete_prefix("rank:")
+    market = data.get("market", "")
+    if market:
+        for rank_type in ("volume", "asset", "return", "yield"):
+            cache.delete(f"rank:{rank_type}:{market}")
+    else:
+        cache.delete_prefix("rank:")
 
 
 # ── 需要 pandas ──

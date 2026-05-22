@@ -84,6 +84,7 @@ async def _update_active():
                     logger.warning(f"  ✗ {etf['ticker']}: {result}")
                 continue
             result["ticker"] = etf["ticker"]
+            result["market"] = etf["market"]
             ticker       = etf["ticker"]
             current_price = float(result.get("current_price", 0))
             try:
