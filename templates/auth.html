@@ -1,164 +1,191 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="zh-TW" class="">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>登入 / 註冊 - ETF 投資管理系統</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        * { font-family: 'Inter', sans-serif; }
-        .toast-message {
-            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-            background: #1f2937; color: white; padding: 12px 24px; border-radius: 8px;
-            z-index: 1000; animation: fadeInOut 3s ease;
-        }
-        @keyframes fadeInOut {
-            0% { opacity: 0; transform: translateX(-50%) translateY(20px); }
-            15% { opacity: 1; transform: translateX(-50%) translateY(0); }
-            85% { opacity: 1; transform: translateX(-50%) translateY(0); }
-            100% { opacity: 0; transform: translateX(-50%) translateY(20px); }
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>登入 — ETF 投資管理系統</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config={darkMode:'class'}</script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  <link href="/static/css/main.css" rel="stylesheet">
+  <style>
+    .google-btn {
+      display:flex; align-items:center; justify-content:center; gap:12px;
+      width:100%; padding:13px 24px; border-radius:12px;
+      background:#fff; border:2px solid #e2e8f0;
+      font-weight:600; font-size:1rem; color:#374151;
+      cursor:pointer; transition:all 0.2s; box-shadow:0 2px 8px rgba(0,0,0,0.06);
+    }
+    .google-btn:hover { border-color:#4285f4; box-shadow:0 4px 16px rgba(66,133,244,0.2); transform:translateY(-1px); }
+    .dark .google-btn { background:#1e293b; border-color:#334155; color:#f1f5f9; }
+    .dark .google-btn:hover { border-color:#6366f1; }
+    .google-logo { width:24px; height:24px; }
+  </style>
 </head>
-<body class="bg-slate-50 flex items-center justify-center min-h-screen p-4">
+<body class="bg-slate-50 dark:bg-slate-900 min-h-screen flex items-center justify-center p-4">
 
-    <div class="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100">
-        <div class="text-center pt-8 pb-4">
-            <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-indigo-100 text-indigo-600 mb-4">
-                <i class="fas fa-chart-line text-3xl"></i>
-            </div>
-            <h2 class="text-2xl font-bold text-slate-800" id="form-title">歡迎回來</h2>
-            <p class="text-slate-500 mt-1" id="form-subtitle">登入以管理您的投資組合</p>
-        </div>
+<div class="w-full max-w-md">
+  <!-- Logo -->
+  <div class="text-center mb-8">
+    <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-600 text-white mb-4 shadow-lg">
+      <i class="fas fa-chart-line text-2xl"></i>
+    </div>
+    <h1 class="text-2xl font-bold text-slate-800 dark:text-white">ETF 投資管理系統</h1>
+    <p class="text-slate-500 dark:text-slate-400 mt-1 text-sm">智慧追蹤 · 精準分析 · 輕鬆管理</p>
+  </div>
 
-        <div class="p-8 pt-4">
-            <form id="auth-form" onsubmit="handleSubmit(event)">
-                
-                <div id="username-field" class="hidden mb-4">
-                    <label class="block text-sm font-medium text-slate-700 mb-1">使用者名稱</label>
-                    <input type="text" id="username" class="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition" placeholder="例如: ETF達人">
-                </div>
+  <!-- 登入卡片 -->
+  <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-8 border border-slate-100 dark:border-slate-700">
+    <h2 class="text-xl font-bold text-slate-800 dark:text-white mb-2">歡迎回來</h2>
+    <p class="text-slate-500 dark:text-slate-400 text-sm mb-6">使用 Google 帳號登入，安全便捷</p>
 
-                <div class="mb-4">
-                    <label class="block text-sm font-medium text-slate-700 mb-1">電子郵件</label>
-                    <input type="email" id="email" required class="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition" placeholder="your@email.com">
-                </div>
+    <!-- URL 錯誤訊息 -->
+    <div id="error-msg" class="hidden mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg text-red-600 dark:text-red-400 text-sm"></div>
 
-                <div class="mb-6">
-                    <label class="block text-sm font-medium text-slate-700 mb-1">密碼 (至少 6 個字元)</label>
-                    <input type="password" id="password" required minlength="6" class="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition" placeholder="••••••••">
-                </div>
+    <!-- Google 登入按鈕 -->
+    {% if google_enabled %}
+    <a href="/api/auth/google/login" class="google-btn mb-4">
+      <svg class="google-logo" viewBox="0 0 48 48">
+        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+      </svg>
+      使用 Google 帳號登入
+    </a>
+    {% else %}
+    <div class="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 rounded-lg text-yellow-700 dark:text-yellow-400 text-sm">
+      <i class="fas fa-exclamation-triangle mr-2"></i>
+      Google OAuth 尚未設定。請在 <code>.env</code> 加入 <code>GOOGLE_CLIENT_ID</code> 與 <code>GOOGLE_CLIENT_SECRET</code>。
+      <a href="https://console.cloud.google.com" target="_blank" class="underline ml-1">前往設定</a>
+    </div>
+    <!-- 開發模式：帳密登入 -->
+    <div id="dev-login" class="space-y-3">
+      <p class="text-xs text-slate-400 text-center mb-3">— 開發模式（帳密登入）—</p>
+      <input type="email" id="dev-email" placeholder="Email" class="input">
+      <input type="password" id="dev-password" placeholder="密碼" class="input">
+      <button onclick="devLogin()" class="btn-primary w-full justify-center">
+        <i class="fas fa-sign-in-alt"></i>登入
+      </button>
+      <button onclick="showRegister()" class="w-full text-center text-sm text-indigo-500 hover:text-indigo-700 mt-1">還沒有帳號？立即註冊</button>
+    </div>
+    <div id="dev-register" class="hidden space-y-3">
+      <p class="text-xs text-slate-400 text-center mb-3">— 開發模式（帳號註冊）—</p>
+      <input type="text" id="dev-username" placeholder="使用者名稱（至少2字元）" class="input">
+      <input type="email" id="dev-email2" placeholder="Email" class="input">
+      <input type="password" id="dev-password2" placeholder="密碼（至少6字元）" class="input">
+      <button onclick="devRegister()" class="btn-primary w-full justify-center">
+        <i class="fas fa-user-plus"></i>註冊
+      </button>
+      <button onclick="showLogin()" class="w-full text-center text-sm text-indigo-500 hover:text-indigo-700 mt-1">已有帳號？登入</button>
+    </div>
+    {% endif %}
 
-                <button type="submit" id="submit-btn" class="w-full bg-indigo-600 text-white font-bold py-3 rounded-lg hover:bg-indigo-700 transition shadow-md flex justify-center items-center">
-                    登入
-                </button>
-            </form>
-
-            <div class="mt-6 text-center">
-                <button type="button" onclick="toggleMode()" id="toggle-btn" class="text-indigo-600 hover:text-indigo-800 font-medium text-sm transition focus:outline-none">
-                    還沒有帳號？立即註冊
-                </button>
-            </div>
-            
-            <div class="mt-4 text-center">
-                <a href="/" class="text-slate-400 hover:text-slate-600 text-sm"><i class="fas fa-home mr-1"></i>回首頁</a>
-            </div>
-        </div>
+    <!-- 分隔線 -->
+    <div class="flex items-center gap-3 my-4">
+      <div class="flex-1 h-px bg-slate-200 dark:bg-slate-700"></div>
+      <span class="text-xs text-slate-400">安全登入</span>
+      <div class="flex-1 h-px bg-slate-200 dark:bg-slate-700"></div>
     </div>
 
-    <script>
-        let isLoginMode = true;
+    <!-- 安全說明 -->
+    <div class="space-y-2">
+      <div class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+        <i class="fas fa-shield-alt text-green-500"></i>
+        <span>使用 Google 帳號，無需記住額外密碼</span>
+      </div>
+      <div class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+        <i class="fas fa-lock text-blue-500"></i>
+        <span>JWT 加密傳輸，資料安全保護</span>
+      </div>
+      <div class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+        <i class="fas fa-user-shield text-purple-500"></i>
+        <span>個人資料與投資紀錄完全隔離</span>
+      </div>
+    </div>
+  </div>
 
-        function showToast(message, isSuccess = true) {
-            const toast = document.createElement('div');
-            toast.className = 'toast-message';
-            toast.style.backgroundColor = isSuccess ? '#10b981' : '#ef4444';
-            toast.innerHTML = `<i class="fas ${isSuccess ? 'fa-check-circle' : 'fa-exclamation-circle'} mr-2"></i>${message}`;
-            document.body.appendChild(toast);
-            setTimeout(() => toast.remove(), 3000);
-        }
+  <!-- 回首頁 -->
+  <div class="text-center mt-4">
+    <a href="/" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-sm">
+      <i class="fas fa-arrow-left mr-1"></i>回首頁
+    </a>
+  </div>
+</div>
 
-        function toggleMode() {
-            isLoginMode = !isLoginMode;
-            const title = document.getElementById('form-title');
-            const subtitle = document.getElementById('form-subtitle');
-            const btn = document.getElementById('submit-btn');
-            const toggleBtn = document.getElementById('toggle-btn');
-            const usernameField = document.getElementById('username-field');
-            const usernameInput = document.getElementById('username');
+<script src="/static/js/common.js"></script>
+<script>
+  // 從 URL 讀取錯誤
+  const urlParams = new URLSearchParams(window.location.search);
+  const err = urlParams.get('error');
+  if (err) {
+    const msgs = {
+      'oauth_failed': 'Google 登入失敗，請重試',
+      'no_email': '無法取得 Google 帳號信箱',
+      'cancelled': '已取消登入',
+    };
+    const box = document.getElementById('error-msg');
+    if (box) {
+      box.textContent = msgs[err] || `登入失敗：${err}`;
+      box.classList.remove('hidden');
+    }
+  }
 
-            if (isLoginMode) {
-                title.innerText = '歡迎回來';
-                subtitle.innerText = '登入以管理您的投資組合';
-                btn.innerText = '登入';
-                toggleBtn.innerText = '還沒有帳號？立即註冊';
-                usernameField.classList.add('hidden');
-                usernameInput.removeAttribute('required');
-            } else {
-                title.innerText = '建立新帳號';
-                subtitle.innerText = '加入我們，開啟投資之旅';
-                btn.innerText = '註冊';
-                toggleBtn.innerText = '已有帳號？返回登入';
-                usernameField.classList.remove('hidden');
-                usernameInput.setAttribute('required', 'true');
-            }
-        }
+  // 如果已登入，跳轉首頁
+  if (Auth.isLoggedIn()) {
+    window.location.href = '/';
+  }
 
-        async function handleSubmit(e) {
-            e.preventDefault();
-            const btn = document.getElementById('submit-btn');
-            const originalText = btn.innerText;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>處理中...';
-            btn.disabled = true;
+  // 開發模式登入
+  async function devLogin() {
+    const email = document.getElementById('dev-email')?.value;
+    const password = document.getElementById('dev-password')?.value;
+    if (!email || !password) return showToast('請輸入 Email 和密碼', false);
+    const data = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      credentials: 'include',   // 確保伺服器設定的 HttpOnly cookie 被保存
+      body: JSON.stringify({email, password})
+    }).then(r => r.json());
+    if (data.status === 'success') {
+      // Token 已由伺服器寫入 HttpOnly cookie，無需客戶端儲存
+      Auth.setToken(null);
+      showToast('登入成功！');
+      setTimeout(() => window.location.href = '/', 800);
+    } else {
+      showToast(data.message || '登入失敗', false);
+    }
+  }
 
-            const email = document.getElementById('email').value.trim();
-            const password = document.getElementById('password').value;
-            const username = document.getElementById('username').value.trim();
+  async function devRegister() {
+    const username = document.getElementById('dev-username')?.value;
+    const email = document.getElementById('dev-email2')?.value;
+    const password = document.getElementById('dev-password2')?.value;
+    if (!username || !email || !password) return showToast('請填寫所有欄位', false);
+    const data = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      credentials: 'include',   // 確保伺服器設定的 HttpOnly cookie 被保存
+      body: JSON.stringify({username, email, password})
+    }).then(r => r.json());
+    if (data.status === 'success') {
+      Auth.setToken(null);
+      showToast('註冊成功！');
+      setTimeout(() => window.location.href = '/', 800);
+    } else {
+      showToast(data.message || '註冊失敗', false);
+    }
+  }
 
-            const endpoint = isLoginMode ? '/api/auth/login' : '/api/auth/register';
-            const payload = isLoginMode ? { email, password } : { username, email, password };
+  function showRegister() {
+    document.getElementById('dev-login').classList.add('hidden');
+    document.getElementById('dev-register').classList.remove('hidden');
+  }
 
-            try {
-                const res = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                
-                const data = await res.json();
-
-                if (res.ok && data.status === 'success') {
-                    if (isLoginMode) {
-                        localStorage.setItem('token', data.token);
-                        localStorage.setItem('user', JSON.stringify(data.user));
-                        showToast('登入成功，正在導向...', true);
-                        setTimeout(() => window.location.href = '/etf-list', 1000);
-                    } else {
-                        showToast('註冊成功！請使用新帳號登入', true);
-                        toggleMode();
-                        document.getElementById('password').value = '';
-                    }
-                } else {
-                    showToast(data.message || '操作失敗', false);
-                }
-            } catch (err) {
-                console.error(err);
-                showToast('網路連線錯誤，請稍後再試', false);
-            } finally {
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-            }
-        }
-
-        document.addEventListener('DOMContentLoaded', () => {
-            const token = localStorage.getItem('token');
-            const user = localStorage.getItem('user');
-            if (token && user) {
-                window.location.href = '/etf-list';
-            }
-        });
-    </script>
+  function showLogin() {
+    document.getElementById('dev-register').classList.add('hidden');
+    document.getElementById('dev-login').classList.remove('hidden');
+  }
+</script>
 </body>
 </html>

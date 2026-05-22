@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>通知中心 — ETF 投資管理系統</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config={darkMode:'class'}</script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  <link href="/static/css/main.css" rel="stylesheet">
+</head>
+<body class="bg-slate-50 dark:bg-slate-900 pb-mobile">
+
+<nav class="navbar">
+  <div class="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
+    <div class="flex items-center gap-4">
+      <a href="/" class="text-indigo-600 dark:text-indigo-400"><i class="fas fa-arrow-left"></i></a>
+      <span class="font-bold text-slate-800 dark:text-white">通知中心</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <button onclick="markAllRead()" class="text-xs text-indigo-500 hover:text-indigo-700">全部已讀</button>
+      <button onclick="toggleDarkMode()" id="dark-toggle" class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"><i class="fas fa-moon"></i></button>
+    </div>
+  </div>
+</nav>
+
+<div class="max-w-3xl mx-auto px-4 py-6">
+  <!-- 篩選 -->
+  <div class="flex gap-2 mb-5 overflow-x-auto pb-1">
+    <button onclick="filterType('all')" data-f="all" class="filter-btn px-3 py-1.5 text-xs rounded-full bg-indigo-600 text-white whitespace-nowrap">全部</button>
+    <button onclick="filterType('dip_alert')" data-f="dip_alert" class="filter-btn px-3 py-1.5 text-xs rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 whitespace-nowrap">⚠️ 低檔加碼</button>
+    <button onclick="filterType('price_alert')" data-f="price_alert" class="filter-btn px-3 py-1.5 text-xs rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 whitespace-nowrap">📈 到價提醒</button>
+    <button onclick="filterType('dividend')" data-f="dividend" class="filter-btn px-3 py-1.5 text-xs rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 whitespace-nowrap">💰 配息通知</button>
+    <button onclick="filterType('system')" data-f="system" class="filter-btn px-3 py-1.5 text-xs rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 whitespace-nowrap">🔔 系統通知</button>
+  </div>
+
+  <!-- 到價提醒設定 -->
+  <div class="card p-4 mb-5">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-bold text-slate-800 dark:text-white text-sm flex items-center gap-2"><i class="fas fa-bell text-indigo-500"></i>到價提醒設定</h3>
+      <button onclick="toggleAlertForm()" class="btn-primary text-xs py-1 px-3">
+        <i class="fas fa-plus"></i> 新增
+      </button>
+    </div>
+    <div id="alert-form" class="hidden mb-3 grid grid-cols-1 sm:grid-cols-4 gap-2">
+      <input type="text" id="alert-ticker" placeholder="代碼 (如 0050)" class="input text-sm">
+      <select id="alert-type" class="input text-sm">
+        <option value="above">突破上方目標價</option>
+        <option value="below">跌破下方目標價</option>
+      </select>
+      <input type="number" id="alert-price" placeholder="目標價格" step="0.01" class="input text-sm">
+      <button onclick="createAlert()" class="btn-primary justify-center text-sm">確認設定</button>
+    </div>
+    <div id="alert-list" class="space-y-2">
+      <div class="text-center py-3 text-slate-400 text-sm">載入中…</div>
+    </div>
+  </div>
+
+  <!-- 通知列表 -->
+  <div id="notif-list" class="space-y-3">
+    <div class="flex items-center justify-center py-12 text-slate-400"><span class="spinner mr-2"></span>載入中…</div>
+  </div>
+
+  <div id="load-more-btn" class="hidden text-center mt-4">
+    <button onclick="loadMore()" class="text-sm text-indigo-500 hover:text-indigo-700 dark:text-indigo-400">載入更多</button>
+  </div>
+</div>
+
+<nav class="bottom-nav">
+  <a href="/"><i class="fas fa-home"></i>首頁</a>
+  <a href="/etf-list"><i class="fas fa-chart-bar"></i>ETF</a>
+  <a href="/watchlist"><i class="fas fa-star"></i>自選</a>
+  <a href="/portfolio"><i class="fas fa-wallet"></i>庫存</a>
+  <a href="/profile"><i class="fas fa-user"></i>我的</a>
+</nav>
+
+<script src="/static/js/common.js"></script>
+<script>
+let page = 1, currentFilter = 'all', allNotifs = [];
+
+const TYPE_ICONS = {
+  dip_alert:   '⚠️',
+  price_alert: '📈',
+  dividend:    '💰',
+  system:      '🔔',
+};
+
+async function loadNotifications() {
+  if (!Auth.isLoggedIn()) { window.location.href = '/auth'; return; }
+  const data = await Auth.fetchJson(`/api/notifications?page=${page}`);
+  if (!data) return;
+  allNotifs = (page === 1) ? (data.data || []) : [...allNotifs, ...(data.data || [])];
+  renderNotifs();
+  document.getElementById('load-more-btn').classList.toggle('hidden', (data.data || []).length < 20);
+}
+
+function renderNotifs() {
+  const list = currentFilter === 'all' ? allNotifs : allNotifs.filter(n => n.type === currentFilter);
+  const box = document.getElementById('notif-list');
+  if (!list.length) {
+    box.innerHTML = `<div class="text-center py-12 text-slate-400"><i class="fas fa-bell-slash text-3xl mb-3"></i><br>目前沒有通知</div>`;
+    return;
+  }
+  box.innerHTML = list.map(n => `
+    <div class="card p-4 flex gap-3 ${n.is_read ? 'opacity-70' : ''} animate-fade-in" id="notif-${n.id}">
+      <div class="text-2xl flex-shrink-0 mt-0.5">${TYPE_ICONS[n.type] || '🔔'}</div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-start justify-between gap-2">
+          <div class="font-semibold text-slate-800 dark:text-white text-sm">${n.title}
+            ${!n.is_read ? '<span class="notif-dot inline-block ml-1"></span>' : ''}
+          </div>
+          <div class="flex items-center gap-2 flex-shrink-0">
+            ${n.ticker ? `<a href="/etf-detail/${n.ticker}" class="text-xs text-indigo-500 hover:underline">${n.ticker}</a>` : ''}
+            <button onclick="deleteNotif(${n.id})" class="text-slate-300 hover:text-red-400 text-xs"><i class="fas fa-times"></i></button>
+          </div>
+        </div>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 whitespace-pre-line leading-relaxed">${n.content}</p>
+        <p class="text-xs text-slate-400 mt-2">${formatTime(n.created_at)}</p>
+      </div>
+    </div>
+  `).join('');
+
+  // 標記已讀（點擊展開）
+  list.filter(n => !n.is_read).forEach(n => {
+    const el = document.getElementById(`notif-${n.id}`);
+    if (el) el.addEventListener('click', () => markRead(n.id, el), { once: true });
+  });
+}
+
+async function markRead(id, el) {
+  await Auth.fetchJson(`/api/notifications/${id}/read`, { method: 'POST' });
+  el?.classList.add('opacity-70');
+  el?.querySelector('.notif-dot')?.remove();
+  loadUnreadCount();
+}
+
+async function markAllRead() {
+  await Auth.fetchJson('/api/notifications/read-all', { method: 'POST' });
+  allNotifs.forEach(n => n.is_read = 1);
+  renderNotifs();
+  loadUnreadCount();
+  showToast('全部已標記為已讀');
+}
+
+async function deleteNotif(id) {
+  await Auth.fetchJson(`/api/notifications/${id}`, { method: 'DELETE' });
+  allNotifs = allNotifs.filter(n => n.id !== id);
+  renderNotifs();
+  showToast('已刪除');
+}
+
+function filterType(type) {
+  currentFilter = type;
+  document.querySelectorAll('.filter-btn').forEach(b => {
+    b.className = `filter-btn px-3 py-1.5 text-xs rounded-full whitespace-nowrap transition ` +
+      (b.dataset.f === type ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200');
+  });
+  renderNotifs();
+}
+
+function loadMore() { page++; loadNotifications(); }
+
+function formatTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts.replace(' ', 'T'));
+  const diff = (Date.now() - d) / 1000;
+  if (diff < 60) return '剛剛';
+  if (diff < 3600) return `${Math.floor(diff/60)} 分鐘前`;
+  if (diff < 86400) return `${Math.floor(diff/3600)} 小時前`;
+  return `${Math.floor(diff/86400)} 天前`;
+}
+
+// 到價提醒
+async function loadAlerts() {
+  if (!Auth.isLoggedIn()) return;
+  const data = await Auth.fetchJson('/api/price-alerts');
+  const box = document.getElementById('alert-list');
+  if (!data?.data?.length) { box.innerHTML = '<p class="text-xs text-slate-400">尚未設定到價提醒</p>'; return; }
+  box.innerHTML = data.data.map(a => `
+    <div class="flex items-center justify-between text-xs py-1.5 border-b border-slate-100 dark:border-slate-700 last:border-0">
+      <span class="font-medium text-slate-800 dark:text-slate-200">${a.name || a.ticker} (${a.ticker})</span>
+      <span class="text-slate-500 dark:text-slate-400">${a.alert_type === 'above' ? '突破' : '跌破'} <b>${a.target_price}</b></span>
+      <button onclick="deleteAlert(${a.id})" class="text-red-400 hover:text-red-600"><i class="fas fa-trash-alt"></i></button>
+    </div>`).join('');
+}
+
+function toggleAlertForm() {
+  document.getElementById('alert-form').classList.toggle('hidden');
+}
+
+async function createAlert() {
+  const ticker = document.getElementById('alert-ticker').value.trim().toUpperCase();
+  const type   = document.getElementById('alert-type').value;
+  const price  = parseFloat(document.getElementById('alert-price').value);
+  if (!ticker || !price || price <= 0) return showToast('請填寫完整資訊', false);
+  const data = await Auth.fetchJson('/api/price-alerts', {
+    method: 'POST',
+    body: JSON.stringify({ ticker, alert_type: type, target_price: price })
+  });
+  if (data?.status === 'success') {
+    showToast('到價提醒已設定');
+    document.getElementById('alert-form').classList.add('hidden');
+    loadAlerts();
+  } else showToast(data?.message || '設定失敗', false);
+}
+
+async function deleteAlert(id) {
+  await Auth.fetchJson(`/api/price-alerts/${id}`, { method: 'DELETE' });
+  showToast('已刪除');
+  loadAlerts();
+}
+
+loadNotifications();
+loadAlerts();
+</script>
+</body>
+</html>

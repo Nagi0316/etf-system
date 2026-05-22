@@ -1,9 +1,9 @@
 """
-ETF 系統全欄位診斷腳本 v3 (2026 終極完全通過版)
+ETF 系統全欄位診斷腳本 v4 (2026 含走勢圖偵測版)
 用法：python diagnose.py [--tw 代碼] [--us 代碼]
 """
 
-import sys, time, random, datetime, json
+import sys, time, datetime, json
 
 try:
     import requests
@@ -34,7 +34,6 @@ while i < len(args):
 # 工具函式
 # ──────────────────────────────────────────
 def new_session(referer=None):
-    """診斷腳本偽裝升級版：加入極高抗壓標準標頭，完美破解限流阻擋"""
     s = requests.Session()
     s.verify = False
     s.headers.update({
@@ -76,7 +75,7 @@ FAIL = "❌"
 WARN = "⚠️ "
 INFO = "ℹ️ "
 
-results = {} 
+results = {}
 
 def record(ticker, field, value, note=""):
     if ticker not in results: results[ticker] = {}
@@ -102,6 +101,152 @@ def field_line(status, field, value, note=""):
     val_str = str(value) if value is not None else "(無)"
     note_str = f"  [{note}]" if note else ""
     print(f"  {status}  {field:<30} {val_str}{note_str}")
+
+# ══════════════════════════════════════════
+#  走勢圖診斷（台股 & 美股通用）
+# ══════════════════════════════════════════
+def diagnose_price_chart_tw(ticker, price):
+    """診斷台股價格走勢圖資料是否可順利抓取（對應 /api/etf/price-history/{ticker}）"""
+    subheader("E. 價格走勢圖（Price History Chart）")
+    yt = f"{ticker}.TWO" if ticker.upper().endswith("B") else f"{ticker}.TW"
+    periods = ["3m", "6m", "1y", "3y", "5y"]
+    period_map = {"3m": 3, "6m": 6, "1y": 12, "3y": 36, "5y": 60}
+    chart_ok = False
+    chart_details = {}
+
+    for period in periods:
+        try:
+            url = (
+                f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
+                f"?range={period}&interval=1mo"
+            )
+            r = new_session().get(url, timeout=10)
+            if r.status_code != 200:
+                chart_details[period] = (FAIL, f"HTTP {r.status_code}")
+                continue
+
+            j = r.json()
+            result = j.get("chart", {}).get("result")
+            if not result:
+                chart_details[period] = (FAIL, "無 result 資料")
+                continue
+
+            timestamps = result[0].get("timestamp", [])
+            quotes = result[0].get("indicators", {}).get("quote", [{}])[0]
+            closes = [c for c in quotes.get("close", []) if c is not None]
+
+            n = period_map.get(period, 12)
+            if len(closes) >= max(1, n // 2):
+                labels_preview = []
+                for ts in timestamps[:3]:
+                    try:
+                        labels_preview.append(datetime.datetime.fromtimestamp(ts).strftime('%Y/%m'))
+                    except Exception:
+                        pass
+                preview = f"{closes[0]:.2f}→{closes[-1]:.2f}" if closes else "空"
+                chart_details[period] = (PASS, f"{len(closes)} 筆, {preview}")
+                chart_ok = True
+            else:
+                chart_details[period] = (WARN, f"資料點不足 ({len(closes)}/{n})")
+        except Exception as ex:
+            chart_details[period] = (FAIL, str(ex)[:60])
+
+    for period, (status, msg) in chart_details.items():
+        field_line(status, f"chart_{period}", msg)
+
+    if chart_ok:
+        record_ok(ticker, "price_chart", True, f"走勢圖 {sum(1 for s,_ in chart_details.values() if s==PASS)}/{len(periods)} 期間通過")
+    else:
+        record_fail(ticker, "price_chart", "所有走勢圖期間均失敗")
+
+    # 額外驗證：最新收盤價是否與即時報價接近（資料一致性）
+    try:
+        url1y = f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}?range=1m&interval=1d"
+        r1 = new_session().get(url1y, timeout=10)
+        if r1.status_code == 200:
+            meta = r1.json().get("chart", {}).get("result", [{}])[0].get("meta", {})
+            chart_price = safe_float(meta.get("regularMarketPrice") or meta.get("previousClose"))
+            if price > 0 and chart_price > 0:
+                diff_pct = abs(chart_price - price) / price * 100
+                if diff_pct < 5:
+                    field_line(PASS, "chart_price_consistency", f"圖表價 {chart_price:.2f} vs 報價 {price:.2f} (誤差 {diff_pct:.2f}%)")
+                    record_ok(ticker, "chart_price_consistency", chart_price)
+                else:
+                    field_line(WARN, "chart_price_consistency", f"⚠ 誤差 {diff_pct:.2f}%，圖表={chart_price:.2f} 報價={price:.2f}")
+                    record_fail(ticker, "chart_price_consistency", f"誤差過大 {diff_pct:.2f}%")
+    except Exception:
+        pass
+
+
+def diagnose_price_chart_us(ticker, price):
+    """診斷美股價格走勢圖資料是否可順利抓取（對應 /api/etf/price-history/{ticker}）"""
+    subheader("E. 價格走勢圖（Price History Chart）")
+    periods = ["3m", "6m", "1y", "3y", "5y"]
+    period_map_yf = {"3m": "3mo", "6m": "6mo", "1y": "1y", "3y": "3y", "5y": "5y"}
+    chart_ok = False
+    chart_details = {}
+
+    for period in periods:
+        try:
+            yf_range = period_map_yf.get(period, "1y")
+            url = (
+                f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}"
+                f"?range={yf_range}&interval=1mo&includePrePost=false"
+            )
+            s = new_session()
+            s.headers["Referer"] = f"https://finance.yahoo.com/quote/{ticker}"
+            r = s.get(url, timeout=12)
+
+            if r.status_code != 200:
+                chart_details[period] = (FAIL, f"HTTP {r.status_code}")
+                continue
+
+            j = r.json()
+            result = j.get("chart", {}).get("result")
+            if not result:
+                chart_details[period] = (FAIL, "無 result 資料")
+                continue
+
+            timestamps = result[0].get("timestamp", [])
+            quotes = result[0].get("indicators", {}).get("quote", [{}])[0]
+            closes = [c for c in quotes.get("close", []) if c is not None]
+
+            min_pts = {"3m": 2, "6m": 4, "1y": 8, "3y": 24, "5y": 40}.get(period, 8)
+            if len(closes) >= min_pts:
+                preview = f"{closes[0]:.2f}→{closes[-1]:.2f}" if closes else "空"
+                chart_details[period] = (PASS, f"{len(closes)} 筆, {preview}")
+                chart_ok = True
+            else:
+                chart_details[period] = (WARN, f"資料點不足 ({len(closes)}/{min_pts})")
+        except Exception as ex:
+            chart_details[period] = (FAIL, str(ex)[:60])
+
+    for period, (status, msg) in chart_details.items():
+        field_line(status, f"chart_{period}", msg)
+
+    if chart_ok:
+        record_ok(ticker, "price_chart", True, f"走勢圖 {sum(1 for s,_ in chart_details.values() if s==PASS)}/{len(periods)} 期間通過")
+    else:
+        record_fail(ticker, "price_chart", "所有走勢圖期間均失敗")
+
+    # 一致性驗證
+    try:
+        url_snap = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=5d&interval=1d"
+        r2 = new_session().get(url_snap, timeout=10)
+        if r2.status_code == 200:
+            meta = r2.json().get("chart", {}).get("result", [{}])[0].get("meta", {})
+            chart_price = safe_float(meta.get("regularMarketPrice") or meta.get("previousClose"))
+            if price > 0 and chart_price > 0:
+                diff_pct = abs(chart_price - price) / price * 100
+                if diff_pct < 5:
+                    field_line(PASS, "chart_price_consistency", f"圖表價 {chart_price:.2f} vs 報價 {price:.2f} (誤差 {diff_pct:.2f}%)")
+                    record_ok(ticker, "chart_price_consistency", chart_price)
+                else:
+                    field_line(WARN, "chart_price_consistency", f"⚠ 誤差 {diff_pct:.2f}%，圖表={chart_price:.2f} 報價={price:.2f}")
+                    record_fail(ticker, "chart_price_consistency", f"誤差過大 {diff_pct:.2f}%")
+    except Exception:
+        pass
+
 
 # ══════════════════════════════════════════
 #  台股診斷
@@ -149,7 +294,7 @@ def diagnose_tw(ticker):
         field_line(PASS, "price_change", chg)
         field_line(PASS, "price_change_percent", f"{chg_p}%")
         field_line(PASS, "volume", vol, "股數對齊")
-        
+
         record_ok(ticker, "current_price", price, f"來源={source}")
         record_ok(ticker, "price_change", chg)
         record_ok(ticker, "price_change_percent", chg_p)
@@ -202,14 +347,14 @@ def diagnose_tw(ticker):
         record_ok(ticker, "annual_return_3y", 12.2)
         record_ok(ticker, "annual_return_5y", 10.1)
 
-    # [D] 詳細資料：結合 yfinance 與投信靜態費用穿透
+    # [D] 詳細資料
     subheader("D. 詳細資料（asset_size / pe_ratio / expense_ratio）")
     STATIC_INFO = {
         '0050':  {'asset': 3200e8, 'fee': 0.0043, 'pe': 31.2},
         '00878': {'asset': 4839e8, 'fee': 0.0065, 'pe': 19.4}
     }
     info = STATIC_INFO.get(ticker, {'asset': 1000e8, 'fee': 0.0060, 'pe': 20.0})
-    
+
     asset_size = info['asset']
     pe_ratio = info['pe']
     expense_ratio = info['fee']
@@ -235,13 +380,17 @@ def diagnose_tw(ticker):
     record_ok(ticker, "fifty_two_week_high", round(price*1.1, 2))
     record_ok(ticker, "fifty_two_week_low", round(price*0.8, 2))
 
+    # [E] 價格走勢圖
+    diagnose_price_chart_tw(ticker, price)
+
+
 # ══════════════════════════════════════════
 #  美股診斷
 # ══════════════════════════════════════════
 def diagnose_us(ticker):
     header(f"美股 ETF：{ticker}")
     price = 0.0
-    
+
     # [A] 即時報價
     subheader("A. 即時報價")
     try:
@@ -252,10 +401,10 @@ def diagnose_us(ticker):
         prev = safe_float(meta.get("chartPreviousClose") or meta.get("previousClose"))
         chg = round(price - prev, 4)
         chg_p = round(chg / prev * 100, 4) if prev > 0 else 0.0
-        
+
         field_line(PASS, "current_price", price)
         field_line(PASS, "price_change_percent", f"{chg_p}%")
-        
+
         record_ok(ticker, "current_price", price)
         record_ok(ticker, "price_change", chg)
         record_ok(ticker, "price_change_percent", chg_p)
@@ -274,18 +423,18 @@ def diagnose_us(ticker):
     record_ok(ticker, "fifty_two_week_high", price * 1.05)
     record_ok(ticker, "fifty_two_week_low", price * 0.85)
 
-    # [D] 詳細資料：完全改走 yfinance.fast_info 記憶體穿透（100% 解決 401 封鎖）
+    # [D] 詳細資料
     subheader("D. 詳細資料（yfinance 穿透通道）")
-    asset_size, pe_ratio, expense_ratio = 4500e8 if ticker=="VOO" else 620e8, 24.2 if ticker=="VOO" else 15.6, 0.0003 if ticker=="VOO" else 0.0006
+    asset_size = 4500e8 if ticker=="VOO" else 620e8
+    pe_ratio = 24.2 if ticker=="VOO" else 15.6
+    expense_ratio = 0.0003 if ticker=="VOO" else 0.0006
     try:
         stock = yf.Ticker(ticker)
-        # 深度防禦：優先從 fast_info 與基礎 info 包提取數據
         fast = stock.fast_info
         if fast and getattr(fast, "total_assets", 0) > 0:
             asset_size = safe_float(fast.total_assets)
         elif stock.info and stock.info.get("totalAssets"):
             asset_size = safe_float(stock.info.get("totalAssets"))
-            
         if stock.info and stock.info.get("trailingPE"):
             pe_ratio = safe_float(stock.info.get("trailingPE"))
         if stock.info and stock.info.get("expenseRatio"):
@@ -300,14 +449,27 @@ def diagnose_us(ticker):
     record_ok(ticker, "pe_ratio", pe_ratio)
     record_ok(ticker, "expense_ratio", expense_ratio)
 
+    # [E] 價格走勢圖
+    diagnose_price_chart_us(ticker, price)
+
 
 # ══════════════════════════════════════════
 #  總結輸出
 # ══════════════════════════════════════════
 def print_summary():
     header("📊  診斷總結報告")
-    critical_fields = ["current_price", "price_change", "price_change_percent", "volume", "dividend_yield", "payout_freq", "annual_return_1y", "asset_size"]
-    important_fields = ["annual_return_3y", "annual_return_5y", "expense_ratio", "pe_ratio", "fifty_two_week_high", "fifty_two_week_low"]
+    critical_fields = [
+        "current_price", "price_change", "price_change_percent", "volume",
+        "dividend_yield", "payout_freq", "annual_return_1y", "asset_size",
+        "price_chart", "chart_price_consistency",          # ← 走勢圖新增
+    ]
+    important_fields = [
+        "annual_return_3y", "annual_return_5y", "expense_ratio",
+        "pe_ratio", "fifty_two_week_high", "fifty_two_week_low",
+    ]
+
+    total_pass = 0
+    total_fail = 0
 
     for ticker, fields in results.items():
         print(f"\n  【{ticker}】")
@@ -315,21 +477,33 @@ def print_summary():
             if field in fields:
                 status, value, note = fields[field]
                 importance = " ★" if field in critical_fields else " ☆"
-                
-                # 數值精確美化輸出
+
                 if field == "asset_size":
                     val_str = f"{value/1e8:.2f} 億元" if ticker[:2].isdigit() else f"${value/1e9:.2f}B"
                 elif field == "expense_ratio":
                     val_str = f"{value*100:.4f}%" if value > 0 else "0.0430% 保底" if ticker=="0050" else "0.0650% 保底" if ticker=="00878" else f"{value*100:.2f}%"
                 elif "return" in field or field == "dividend_yield":
                     val_str = f"{value}%"
+                elif field == "price_chart":
+                    val_str = note if note else str(value)
+                elif field == "chart_price_consistency":
+                    val_str = note if note else str(value)
                 else:
                     val_str = str(value)
-                    
-                print(f"    {PASS} {field:<32}{importance:<2}  {val_str}")
-        print(f"    {PASS} 所有欄位抓取正常")
 
-    print(f"\n{'='*65}\n  {PASS}  全部代碼診斷通過！\n{'='*65}")
+                print(f"    {status} {field:<34}{importance:<2}  {val_str}")
+                if status == PASS:
+                    total_pass += 1
+                else:
+                    total_fail += 1
+
+    print(f"\n{'='*65}")
+    if total_fail == 0:
+        print(f"  {PASS}  全部 {total_pass} 個欄位診斷通過！走勢圖正常！")
+    else:
+        print(f"  {WARN} 通過 {total_pass} / 失敗 {total_fail} 個欄位")
+        print(f"  請檢查上方 ❌ 項目")
+    print(f"{'='*65}")
 
 if __name__ == "__main__":
     for ticker in TW_TICKERS: diagnose_tw(ticker.strip()); time.sleep(1)
