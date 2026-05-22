@@ -324,7 +324,7 @@ def _fetch_yahoo_quotesummary(yt: str) -> dict:
     for attempt in range(3):
         try:
             url = (f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{yt}"
-                   f"?modules=fundProfile,summaryDetail&crumb={_yf_crumb}")
+                   f"?modules=fundProfile,summaryDetail,defaultKeyStatistics&crumb={_yf_crumb}")
             s = _new_session()
             s.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
             if _yf_crumb_cookies:
@@ -345,10 +345,20 @@ def _fetch_yahoo_quotesummary(yt: str) -> dict:
             if not data:
                 return empty
             fp = data[0].get("fundProfile", {})
-            sd = data[0].get("summaryDetail", {})
+            sd   = data[0].get("summaryDetail", {})
+            ks   = data[0].get("defaultKeyStatistics", {})
+            fees = fp.get("feesExpensesInvestment", {})
+            expense_ratio = (
+                _raw(fees, "annualReportExpenseRatio") or
+                _raw(fees, "netExpRatio") or
+                _raw(fees, "grossExpRatio") or
+                _raw(fp, "annualReportExpenseRatio") or
+                _raw(fp, "expenseRatio") or
+                _raw(ks, "expenseRatio")
+            )
             return {
-                "asset_size":    _raw(sd, "totalAssets") or _raw(fp, "totalAssets"),
-                "expense_ratio": _raw(fp, "annualReportExpenseRatio") or _raw(fp, "expenseRatio"),
+                "asset_size":    _raw(sd, "totalAssets") or _raw(fp, "totalAssets") or _raw(ks, "totalAssets"),
+                "expense_ratio": expense_ratio,
                 "pe_ratio":      _raw(sd, "trailingPE") or _raw(sd, "forwardPE"),
                 "nav":           _raw(sd, "navPrice"),
                 "div_yield":     (_raw(sd, "yield") or _raw(sd, "dividendYield")) * 100,
