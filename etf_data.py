@@ -18,47 +18,101 @@ from utils import safe_float
 
 logger = logging.getLogger(__name__)
 
+# ── UA 池：模擬多種真實瀏覽器，避免固定特徵被封鎖 ──
+_UA_POOL = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+]
+
+def _new_session(referer: str = "") -> req_lib.Session:
+    """建立模擬真實瀏覽器的 Session，隨機 UA + 完整 headers，降低被封鎖機率。"""
+    ua = random.choice(_UA_POOL)
+    is_firefox = "Firefox" in ua
+    s = req_lib.Session()
+    s.verify = certifi.where()
+    s.headers.update({
+        "User-Agent": ua,
+        "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
+                   "image/webp,*/*;q=0.8") if is_firefox else
+                  ("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
+                   "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"),
+        "Accept-Language": random.choice([
+            "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+            "zh-TW,zh;q=0.8,en;q=0.6",
+            "en-US,en;q=0.9,zh-TW;q=0.8",
+        ]),
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "DNT": "1",
+        "Upgrade-Insecure-Requests": "1",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    })
+    if referer:
+        s.headers["Referer"] = referer
+    return s
+
+
+def _jitter(base: float = 1.0, spread: float = 2.0):
+    """在下一次請求前加入隨機延遲，模擬人工瀏覽行為，避免固定節奏被偵測。"""
+    time.sleep(base + random.uniform(0, spread))
+
+
+def _get_with_retry(session: req_lib.Session, url: str, timeout: int = 12,
+                    max_attempts: int = 3) -> Optional[req_lib.Response]:
+    """帶指數退避的 GET，自動處理 429 限速與瞬斷重試。"""
+    for attempt in range(max_attempts):
+        try:
+            r = session.get(url, timeout=timeout)
+            if r.status_code == 200:
+                return r
+            if r.status_code == 429:
+                wait = 30 * (2 ** attempt) + random.uniform(0, 10)
+                logger.debug(f"429 rate-limited {url[:60]}, wait {wait:.1f}s")
+                time.sleep(wait)
+                continue
+            if r.status_code in (403, 401):
+                logger.debug(f"HTTP {r.status_code} {url[:60]}")
+                return r   # 回傳讓呼叫方決定處理方式
+            logger.debug(f"HTTP {r.status_code} {url[:60]}")
+            return None
+        except req_lib.exceptions.Timeout:
+            logger.debug(f"Timeout {url[:60]} attempt {attempt+1}")
+        except req_lib.exceptions.ConnectionError as e:
+            logger.debug(f"ConnectionError {url[:60]}: {e}")
+        if attempt < max_attempts - 1:
+            time.sleep(5 * (attempt + 1) + random.uniform(0, 3))
+    return None
+
+
 # ── Yahoo Finance crumb 快取（v10 API 認證用） ──
 _yf_crumb: str = ""
 _yf_crumb_cookies: dict = {}
 
 def _refresh_yahoo_crumb() -> bool:
     global _yf_crumb, _yf_crumb_cookies
-    try:
-        s = req_lib.Session()
-        s.verify = certifi.where()
-        s.headers.update({
-            "User-Agent": random.choice(_UA_POOL),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        })
-        s.get("https://fc.yahoo.com", timeout=8)
-        r = s.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=8)
-        if r.status_code == 200 and r.text and r.text.strip() not in ("", "null"):
-            _yf_crumb = r.text.strip()
-            _yf_crumb_cookies = dict(s.cookies)
-            return True
-    except Exception as e:
-        logger.debug(f"crumb refresh: {e}")
+    for attempt in range(3):
+        try:
+            s = _new_session()
+            s.headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            r1 = s.get("https://fc.yahoo.com", timeout=8)
+            if r1.status_code not in (200, 302, 303):
+                time.sleep(5); continue
+            r2 = s.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=8)
+            if r2.status_code == 200 and r2.text and r2.text.strip() not in ("", "null"):
+                _yf_crumb = r2.text.strip()
+                _yf_crumb_cookies = dict(s.cookies)
+                logger.debug("Yahoo crumb 取得成功")
+                return True
+        except Exception as e:
+            logger.debug(f"crumb refresh attempt {attempt+1}: {e}")
+        time.sleep(10 * (attempt + 1))
     return False
-
-# ── UA 池 ──
-_UA_POOL = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 Version/17.4.1 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
-]
-
-def _new_session() -> req_lib.Session:
-    s = req_lib.Session()
-    s.verify = certifi.where()   # 使用 certifi 根憑證，不關閉 SSL 驗證
-    s.headers.update({
-        "User-Agent": random.choice(_UA_POOL),
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8",
-        "Cache-Control": "no-cache",
-    })
-    return s
 
 
 def _yahoo_ticker(ticker: str, market: str) -> str:
@@ -191,10 +245,11 @@ def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
         ("otc", "https://mis.tpex.org.tw/stock/api/getStockInfo.jsp",  "https://mis.tpex.org.tw/"),
     ]:
         try:
-            s = _new_session()
-            s.headers["Referer"] = referer
+            s = _new_session(referer)
             url = f"{base_url}?ex_ch={prefix}_{ticker}.tw&json=1&delay=0"
-            r = s.get(url, timeout=8)
+            r = _get_with_retry(s, url, timeout=8, max_attempts=2)
+            if not r:
+                continue
             items = r.json().get("msgArray", [])
             if not items:
                 continue
@@ -240,8 +295,8 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
         try:
             url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
                    f"?range=2y&interval=1mo&events=dividends")
-            r = _new_session().get(url, timeout=10)
-            if r.status_code == 200:
+            r = _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{yt}"), url, timeout=10)
+            if r and r.status_code == 200:
                 result = r.json().get("chart", {}).get("result")
                 if result:
                     events = result[0].get("events", {}).get("dividends", {})
@@ -256,14 +311,15 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
                         return dy, freq
         except Exception as e:
             logger.debug(f"TW dividend Yahoo {yt}: {e}")
+        _jitter(0.5, 1.5)
 
     # 2. TWSE TWT48U（只對末位為數字的上市 ETF 有效）
     if ticker[-1].isdigit():
         try:
             url = (f"https://www.twse.com.tw/exchangeReport/TWT48U"
                    f"?response=json&stockNo={ticker}")
-            r = _new_session().get(url, timeout=10)
-            rows = r.json().get("data", [])
+            r = _get_with_retry(_new_session("https://www.twse.com.tw/"), url, timeout=10)
+            rows = r.json().get("data", []) if r else []
             if rows:
                 recent = rows[-12:]
                 total_div, n = 0.0, 0
@@ -296,9 +352,8 @@ def _fetch_tw_history(ticker: str) -> list:
     for yt in (primary, alt):
         try:
             url = f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}?range=5y&interval=1mo"
-            s = _new_session(); s.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
-            r = s.get(url, timeout=12)
-            if r.status_code == 200:
+            r = _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{yt}"), url, timeout=12)
+            if r and r.status_code == 200:
                 result = r.json().get("chart", {}).get("result")
                 if result:
                     closes = [safe_float(c) for c in (result[0].get("indicators", {}).get("quote", [{}])[0].get("close") or []) if c is not None]
@@ -386,42 +441,37 @@ def _fetch_tw_detail(ticker: str) -> dict:
 
 def _fetch_us_quote(ticker: str) -> Optional[dict]:
     url = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=10d&interval=1d"
-    for attempt in range(3):
-        try:
-            s = _new_session()
-            s.headers.update({"Origin": "https://finance.yahoo.com",
-                               "Referer": f"https://finance.yahoo.com/quote/{ticker}"})
-            r = s.get(url, timeout=12)
-            if r.status_code == 429:
-                time.sleep(20 * (2 ** attempt)); continue
-            if r.status_code != 200:
-                return None
-            j = r.json()
-            result = j.get("chart", {}).get("result")
-            if not result:
-                return None
-            meta   = result[0].get("meta", {})
-            q      = result[0].get("indicators", {}).get("quote", [{}])[0]
-            closes  = [c for c in (q.get("close") or []) if c is not None]
-            highs   = [h for h in (q.get("high")  or []) if h is not None]
-            lows    = [l for l in (q.get("low")   or []) if l is not None]
-            volumes = [v for v in (q.get("volume") or []) if v is not None]
-            price = safe_float(closes[-1]) if closes else safe_float(meta.get("regularMarketPrice"))
-            prev  = safe_float(closes[-2]) if len(closes) >= 2 else safe_float(meta.get("chartPreviousClose"))
-            if price <= 0:
-                return None
-            chg     = round(price - prev, 4)
-            chg_pct = round(chg / prev * 100, 4) if prev > 0 else 0.0
-            return {
-                "current_price": price, "price_change": chg, "price_change_percent": chg_pct,
-                "day_high": safe_float(highs[-1]) if highs else price,
-                "day_low":  safe_float(lows[-1])  if lows  else price,
-                "volume": int(volumes[-1]) if volumes else int(safe_float(meta.get("regularMarketVolume", 0))),
-            }
-        except Exception as e:
-            logger.debug(f"US quote {ticker} attempt {attempt+1}: {e}")
-            if attempt < 2:
-                time.sleep(5 * (attempt + 1))
+    referer = f"https://finance.yahoo.com/quote/{ticker}"
+    try:
+        s = _new_session(referer)
+        s.headers["Origin"] = "https://finance.yahoo.com"
+        r = _get_with_retry(s, url, timeout=12, max_attempts=3)
+        if not r or r.status_code != 200:
+            return None
+        j = r.json()
+        result = j.get("chart", {}).get("result")
+        if not result:
+            return None
+        meta    = result[0].get("meta", {})
+        q       = result[0].get("indicators", {}).get("quote", [{}])[0]
+        closes  = [c for c in (q.get("close")  or []) if c is not None]
+        highs   = [h for h in (q.get("high")   or []) if h is not None]
+        lows    = [l for l in (q.get("low")    or []) if l is not None]
+        volumes = [v for v in (q.get("volume") or []) if v is not None]
+        price = safe_float(closes[-1]) if closes else safe_float(meta.get("regularMarketPrice"))
+        prev  = safe_float(closes[-2]) if len(closes) >= 2 else safe_float(meta.get("chartPreviousClose"))
+        if price <= 0:
+            return None
+        chg     = round(price - prev, 4)
+        chg_pct = round(chg / prev * 100, 4) if prev > 0 else 0.0
+        return {
+            "current_price": price, "price_change": chg, "price_change_percent": chg_pct,
+            "day_high": safe_float(highs[-1]) if highs else price,
+            "day_low":  safe_float(lows[-1])  if lows  else price,
+            "volume": int(volumes[-1]) if volumes else int(safe_float(meta.get("regularMarketVolume", 0))),
+        }
+    except Exception as e:
+        logger.debug(f"US quote {ticker}: {e}")
     return None
 
 
@@ -519,8 +569,8 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     history, div_yield, payout_freq = [], 0.0, "不配息"
     try:
         url = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=5y&interval=1mo&events=dividends"
-        r = _new_session().get(url, timeout=12)
-        if r.status_code == 200:
+        r = _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{ticker}"), url, timeout=12)
+        if r and r.status_code == 200:
             res = r.json().get("chart", {}).get("result", [{}])[0]
             history = [safe_float(c) for c in (res.get("indicators", {}).get("quote", [{}])[0].get("close") or []) if c is not None]
             events  = res.get("events", {}).get("dividends", {})
