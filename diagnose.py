@@ -39,25 +39,60 @@ def new_session(referer=None):
     return s
 
 
+_crumb = ""
+_crumb_cookies = {}
+
+def _get_crumb():
+    global _crumb, _crumb_cookies
+    if _crumb:
+        return _crumb, _crumb_cookies
+    try:
+        s = requests.Session()
+        s.verify = False
+        s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36",
+                           "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"})
+        s.get("https://fc.yahoo.com", timeout=8)
+        r = s.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=8)
+        if r.status_code == 200 and r.text and r.text.strip() not in ("", "null"):
+            _crumb = r.text.strip()
+            _crumb_cookies = dict(s.cookies)
+            print(f"  ℹ️   Yahoo crumb 取得成功")
+            return _crumb, _crumb_cookies
+    except Exception as e:
+        print(f"  ⚠️   crumb 取得失敗: {e}")
+    return "", {}
+
+
 def fetch_quotesummary(yt):
-    """直接呼叫 Yahoo Finance v10 quoteSummary（比 yf.Ticker().info 更穩定）。"""
-    url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{yt}?modules=fundProfile,summaryDetail"
+    """Yahoo Finance v10 quoteSummary（含 crumb 認證）。"""
+    global _crumb, _crumb_cookies
+    crumb, cookies = _get_crumb()
+
+    def _raw(d, key):
+        v = d.get(key)
+        if isinstance(v, dict): return safe_float(v.get("raw", 0))
+        return safe_float(v)
+
     for attempt in range(3):
         try:
+            url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{yt}?modules=fundProfile,summaryDetail&crumb={crumb}"
             s = new_session(f"https://finance.yahoo.com/quote/{yt}")
+            if cookies:
+                s.cookies.update(cookies)
             r = s.get(url, timeout=12)
+            if r.status_code == 401:
+                _crumb = ""; _crumb_cookies = {}
+                crumb, cookies = _get_crumb()
+                if not crumb:
+                    return None, "crumb 取得失敗，無法認證"
+                continue
             if r.status_code == 429:
-                line(WARN, f"quoteSummary {yt}", f"限速 429，等待後重試 (attempt {attempt+1})")
                 time.sleep(20 * (attempt + 1)); continue
             if r.status_code != 200:
                 return None, f"HTTP {r.status_code}"
             data = r.json().get("quoteSummary", {}).get("result")
             if not data:
                 return None, "quoteSummary 無 result"
-            def _raw(d, key):
-                v = d.get(key)
-                if isinstance(v, dict): return safe_float(v.get("raw", 0))
-                return safe_float(v)
             fp = data[0].get("fundProfile", {})
             sd = data[0].get("summaryDetail", {})
             return {
@@ -68,8 +103,7 @@ def fetch_quotesummary(yt):
             }, None
         except Exception as e:
             if attempt < 2: time.sleep(5 * (attempt + 1))
-            last_err = str(e)[:60]
-    return None, last_err
+    return None, "連線失敗"
 
 def safe_float(v, default=0.0):
     if v is None: return default

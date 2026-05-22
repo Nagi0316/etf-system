@@ -18,6 +18,29 @@ from utils import safe_float
 
 logger = logging.getLogger(__name__)
 
+# ── Yahoo Finance crumb 快取（v10 API 認證用） ──
+_yf_crumb: str = ""
+_yf_crumb_cookies: dict = {}
+
+def _refresh_yahoo_crumb() -> bool:
+    global _yf_crumb, _yf_crumb_cookies
+    try:
+        s = req_lib.Session()
+        s.verify = certifi.where()
+        s.headers.update({
+            "User-Agent": random.choice(_UA_POOL),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        })
+        s.get("https://fc.yahoo.com", timeout=8)
+        r = s.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=8)
+        if r.status_code == 200 and r.text and r.text.strip() not in ("", "null"):
+            _yf_crumb = r.text.strip()
+            _yf_crumb_cookies = dict(s.cookies)
+            return True
+    except Exception as e:
+        logger.debug(f"crumb refresh: {e}")
+    return False
+
 # ── UA 池 ──
 _UA_POOL = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
@@ -287,15 +310,33 @@ def _fetch_tw_history(ticker: str) -> list:
 
 
 def _fetch_yahoo_quotesummary(yt: str) -> dict:
-    """直接呼叫 Yahoo Finance v10 quoteSummary API（比 yf.Ticker().info 更穩定、不易被限速）。"""
+    """Yahoo Finance v10 quoteSummary（含 crumb 認證，自動刷新）。"""
+    global _yf_crumb, _yf_crumb_cookies
     empty = {"asset_size": 0.0, "pe_ratio": 0.0, "expense_ratio": 0.0, "nav": 0.0, "div_yield": 0.0}
-    url = (f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{yt}"
-           f"?modules=fundProfile,summaryDetail")
+    if not _yf_crumb:
+        _refresh_yahoo_crumb()
+
+    def _raw(d, key):
+        v = d.get(key)
+        if isinstance(v, dict): return safe_float(v.get("raw", 0))
+        return safe_float(v)
+
     for attempt in range(3):
         try:
+            url = (f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{yt}"
+                   f"?modules=fundProfile,summaryDetail&crumb={_yf_crumb}")
             s = _new_session()
             s.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
+            if _yf_crumb_cookies:
+                s.cookies.update(_yf_crumb_cookies)
             r = s.get(url, timeout=12)
+            if r.status_code == 401:
+                # crumb 過期，刷新後重試
+                _yf_crumb = ""
+                _yf_crumb_cookies = {}
+                if _refresh_yahoo_crumb():
+                    continue
+                return empty
             if r.status_code == 429:
                 time.sleep(20 * (attempt + 1)); continue
             if r.status_code != 200:
@@ -303,12 +344,6 @@ def _fetch_yahoo_quotesummary(yt: str) -> dict:
             data = r.json().get("quoteSummary", {}).get("result")
             if not data:
                 return empty
-
-            def _raw(d, key):
-                v = d.get(key)
-                if isinstance(v, dict): return safe_float(v.get("raw", 0))
-                return safe_float(v)
-
             fp = data[0].get("fundProfile", {})
             sd = data[0].get("summaryDetail", {})
             return {
