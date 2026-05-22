@@ -350,4 +350,19 @@ def init_db():
             except Exception:
                 pass
 
+    # 效能索引（已存在則忽略）
+    indexes = [
+        ("idx_user_txs",   "user_transactions", "user_id, ticker, transaction_date"),
+        ("idx_daily_date", "etf_daily_data",    "ticker, date"),
+        ("idx_master_hot", "etf_master",        "is_hot"),
+    ]
+    with get_db() as (conn, cursor):
+        for idx_name, tbl, cols in indexes:
+            try:
+                cursor.execute(f"CREATE INDEX {idx_name} ON {tbl} ({cols})")
+                conn.commit()
+                logger.info(f"✅ 建立索引 {idx_name}")
+            except Exception:
+                pass  # 已存在則忽略
+
     logger.info(f"✅ 資料庫初始化完成 ({'TiDB/MySQL' if USE_MYSQL else 'SQLite'})")

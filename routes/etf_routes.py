@@ -86,7 +86,9 @@ async def get_etf_rankings(rank_type: str, market: str = ""):
     ORDER_MAP = {
         "return":   "d.annual_return_1y DESC",
         "dividend": "d.dividend_yield DESC",
+        "yield":    "d.dividend_yield DESC",
         "volume":   "d.volume DESC",
+        "asset":    "d.asset_size DESC",
         "assets":   "d.asset_size DESC",
         "drop":     "d.price_change_percent ASC",
         "rise":     "d.price_change_percent DESC",
@@ -104,7 +106,7 @@ async def get_etf_rankings(rank_type: str, market: str = ""):
                 COALESCE(d.volume,0) as volume,
                 COALESCE(d.asset_size,0) as asset_size,
                 COALESCE(d.dividend_yield,0) as dividend_yield,
-                COALESCE(d.payout_freq,'季配') as payout_freq,
+                COALESCE(d.payout_freq,'不配息') as payout_freq,
                 COALESCE(d.annual_return_1y,0) as annual_return_1y,
                 COALESCE(d.expense_ratio,0) as expense_ratio
             FROM etf_master m
@@ -243,7 +245,7 @@ async def get_etf_detail(ticker: str):
                 COALESCE(d.nav,0) as nav,
                 COALESCE(d.discount_premium,0) as discount_premium,
                 COALESCE(d.dividend_yield,0) as dividend_yield,
-                COALESCE(d.payout_freq,'季配') as payout_freq,
+                COALESCE(d.payout_freq,'不配息') as payout_freq,
                 COALESCE(d.annual_return_1y,0) as annual_return_1y,
                 COALESCE(d.annual_return_3y,0) as annual_return_3y,
                 COALESCE(d.annual_return_5y,0) as annual_return_5y,
@@ -301,8 +303,55 @@ async def get_etf_detail(ticker: str):
         row["price_twd"] = round(float(row.get("current_price", 0)) * usd_twd, 2)
         row["usd_twd_rate"] = usd_twd
 
+    # 資料明顯過期（> 1 天）或關鍵欄位為 0，背景靜默更新一次
+    _maybe_background_refresh(ticker, row)
+
     cache.set(cache_key, row, CACHE_TTL_DETAIL)
     return safe_json({"status": "success", "data": row})
+
+
+_refresh_in_progress: set = set()
+
+def _maybe_background_refresh(ticker: str, row: dict):
+    """若資料超過 1 天或關鍵欄位缺失，在背景靜默重抓一次。"""
+    import asyncio
+    from datetime import date as _date
+    if ticker in _refresh_in_progress:
+        return
+    data_date = row.get("data_date")
+    try:
+        if isinstance(data_date, str):
+            data_date = datetime.strptime(data_date, "%Y-%m-%d").date()
+        is_stale = (not data_date) or ((_date.today() - data_date).days >= 1)
+    except Exception:
+        is_stale = True
+    missing_returns = (float(row.get("annual_return_1y", 0)) == 0.0 and
+                       float(row.get("annual_return_3y", 0)) == 0.0)
+    if not (is_stale or missing_returns):
+        return
+
+    async def _do():
+        _refresh_in_progress.add(ticker)
+        try:
+            market = row.get("market") or ("TW" if ticker[:4].isdigit() else "US")
+            data = await asyncio.to_thread(fetch_one_etf, ticker, market)
+            if data and data.get("current_price"):
+                data["ticker"] = ticker
+                data["market"] = market
+                save_etf_data(data)
+                cache.delete(f"detail:{ticker}")
+                logger.info(f"🔄 背景更新 {ticker} 完成")
+        except Exception as e:
+            logger.debug(f"背景更新 {ticker}: {e}")
+        finally:
+            _refresh_in_progress.discard(ticker)
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(_do())
+    except Exception:
+        pass
 
 
 # ── 歷史走勢 ──
@@ -310,8 +359,11 @@ async def get_etf_detail(ticker: str):
 @router.get("/api/etf/price-history/{ticker}")
 async def get_price_history(ticker: str, period: str = "1y"):
     ticker = ticker.upper()
-    PERIOD_MAP = {"1M": "1mo", "3M": "3mo", "6M": "6mo", "1Y": "1y", "3Y": "3y", "5Y": "5y", "MAX": "max"}
-    yf_period = PERIOD_MAP.get(period.upper(), "1y")
+    RANGE_MAP = {"1M": "1mo", "3M": "3mo", "6M": "6mo", "1Y": "1y", "3Y": "3y", "5Y": "5y", "MAX": "10y"}
+    INTERVAL_MAP = {"1M": "1d", "3M": "1d", "6M": "1d", "1Y": "1d", "3Y": "1wk", "5Y": "1mo", "MAX": "1mo"}
+    p = period.upper()
+    yf_range    = RANGE_MAP.get(p, "1y")
+    yf_interval = INTERVAL_MAP.get(p, "1d")
 
     with get_db() as (conn, cursor):
         cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
@@ -321,31 +373,32 @@ async def get_price_history(ticker: str, period: str = "1y"):
     yt = _yahoo_ticker(ticker, market)
 
     def _fetch():
-        try:
-            sess = _new_session()
-            df = yf.Ticker(yt, session=sess).history(period=yf_period)
-            if df.empty:
-                return None
-            # 新版 yfinance 可能回傳 MultiIndex columns
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-            if df.index.tz is not None:
-                df.index = df.index.tz_localize(None)
-            if period.upper() == "3Y":
-                cutoff = datetime.now() - timedelta(days=3 * 365)
-                df = df[df.index >= cutoff]
-            return {
-                "labels": df.index.strftime("%Y-%m-%d").tolist(),
-                "prices": [round(float(p), 2) for p in df["Close"].tolist()],
-            }
-        except Exception as e:
-            logger.error(f"price history {ticker} ({yt}): {e}")
-            return None
+        for symbol in ([yt, f"{ticker}.TWO"] if market == "TW" and yt.endswith(".TW") else [yt]):
+            try:
+                url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
+                       f"?range={yf_range}&interval={yf_interval}")
+                r = _new_session(f"https://finance.yahoo.com/quote/{symbol}").get(url, timeout=15)
+                if r.status_code != 200:
+                    continue
+                result = r.json().get("chart", {}).get("result")
+                if not result:
+                    continue
+                ts      = result[0].get("timestamp", [])
+                closes  = result[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
+                pairs   = [(t, c) for t, c in zip(ts, closes) if c is not None]
+                if len(pairs) < 2:
+                    continue
+                labels = [datetime.utcfromtimestamp(t).strftime("%Y-%m-%d") for t, _ in pairs]
+                prices = [round(float(c), 2) for _, c in pairs]
+                return {"labels": labels, "prices": prices}
+            except Exception as e:
+                logger.debug(f"price history {symbol}: {e}")
+        return None
 
     data = await asyncio.to_thread(_fetch)
     if not data:
         return safe_json({"status": "error", "message": "無法取得歷史資料"}, 400)
-    return safe_json({"status": "success", "data": data})
+    return safe_json({"status": "success", "labels": data["labels"], "prices": data["prices"]})
 
 
 @router.get("/api/etf/history")

@@ -421,9 +421,11 @@ async function loadDipAlert(ticker) {
 async function loadPriceHistory(ticker, period = '1y') {
   try {
     const data = await fetch(`/api/etf/price-history/${ticker}?period=${period}`).then(r=>r.json());
-    if (data.status === 'success' && data.prices?.length) {
-      const cleanPrices = data.prices.map(p => parseFloat(p)).filter(p => !isNaN(p) && p > 0);
-      const cleanLabels = data.labels.slice(data.labels.length - cleanPrices.length);
+    const prices = data.prices || data.data?.prices;
+    const labels = data.labels || data.data?.labels;
+    if (data.status === 'success' && prices?.length) {
+      const cleanPrices = prices.map(p => parseFloat(p)).filter(p => !isNaN(p) && p > 0);
+      const cleanLabels = labels.slice(labels.length - cleanPrices.length);
       if (cleanPrices.length >= 2) { drawChart(cleanLabels, cleanPrices, false); return; }
     }
     showNoChart();

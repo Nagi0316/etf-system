@@ -305,9 +305,6 @@ function openTradeModal(ticker, type) {
   document.getElementById('m-note').value = '';
   document.getElementById('modal-title').textContent = type === 'sell' ? '賣出' : '買入';
   document.getElementById('trade-modal').classList.remove('hidden');
-  ['m-shares','m-price'].forEach(id => {
-    document.getElementById(id).addEventListener('input', updateTotal);
-  });
 }
 function closeModal() { document.getElementById('trade-modal').classList.add('hidden'); }
 function updateTotal() {
@@ -330,12 +327,18 @@ async function submitTrade() {
     note: document.getElementById('m-note').value,
   };
   if (!body.ticker || !body.shares || !body.price || !body.transaction_date) return showToast('請填寫必要欄位', false);
+  if (body.transaction_date > new Date().toISOString().slice(0,10)) return showToast('交易日期不能是未來日期', false);
+  if (body.shares <= 0 || body.price <= 0) return showToast('股數與價格必須大於 0', false);
   const data = await Auth.fetchJson('/api/portfolio/transaction', { method:'POST', body: JSON.stringify(body) });
   if (data?.status === 'success') { showToast('已新增'); closeModal(); loadPortfolio(); loadTransactions(); }
   else showToast(data?.message || '新增失敗', false);
 }
 
+// 綁定一次，不在 openTradeModal 重複綁定
+document.getElementById('m-shares').addEventListener('input', updateTotal);
+document.getElementById('m-price').addEventListener('input', updateTotal);
 document.getElementById('trade-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 loadPortfolio();
 loadTransactions();

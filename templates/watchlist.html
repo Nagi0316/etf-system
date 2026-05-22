@@ -196,7 +196,7 @@ function renderWatchlist() {
       </td>
       <td class="px-4 py-3.5 text-right text-emerald-600 dark:text-emerald-400 hide-mobile tabular-nums">${yld}</td>
       <td class="px-4 py-3.5 text-center" onclick="event.stopPropagation()">
-        <button onclick="removeFromWatchlist('${item.ticker}')"
+        <button data-ticker="${item.ticker}" onclick="removeFromWatchlist(this.dataset.ticker)"
           class="w-7 h-7 rounded-md text-slate-300 dark:text-slate-600 hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-400 transition-colors inline-flex items-center justify-center">
           <i class="fas fa-trash text-xs"></i>
         </button>
@@ -233,7 +233,8 @@ async function removeFromWatchlist(ticker) {
   else showToast(data?.message || '移除失敗', false);
 }
 
-window.onclick = e => { if (e.target === document.getElementById('addModal')) closeAddModal(); };
+document.getElementById('addModal').addEventListener('click', e => { if (e.target === e.currentTarget) closeAddModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAddModal(); });
 
 document.addEventListener('DOMContentLoaded', () => {
   loadUserInfo('user-area');
