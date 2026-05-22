@@ -76,8 +76,9 @@ async def notifications_page(request: Request):
 # ── 排行榜 ──
 
 @router.get("/api/etf-rankings/{rank_type}")
-async def get_etf_rankings(rank_type: str):
-    cache_key = f"rank:{rank_type}"
+async def get_etf_rankings(rank_type: str, market: str = ""):
+    market = market.upper() if market in ("TW", "US", "tw", "us") else ""
+    cache_key = f"rank:{rank_type}:{market}"
     cached = cache.get(cache_key)
     if cached:
         return safe_json({"status": "success", "data": cached})
@@ -91,6 +92,8 @@ async def get_etf_rankings(rank_type: str):
         "rise":     "d.price_change_percent DESC",
     }
     order = ORDER_MAP.get(rank_type, "d.annual_return_1y DESC")
+    market_filter = "AND m.market = %s" if market else ""
+    params = (market,) if market else ()
 
     with get_db() as (conn, cursor):
         cursor.execute(f"""
@@ -108,9 +111,10 @@ async def get_etf_rankings(rank_type: str):
             {LATEST_DAILY_JOIN}
             WHERE d.current_price IS NOT NULL AND d.current_price > 0
               AND COALESCE(m.is_delisted, 0) = 0
+              {market_filter}
             ORDER BY {order}
             LIMIT 10
-        """)
+        """, params)
         rows = cursor.fetchall()
 
     cache.set(cache_key, rows, CACHE_TTL_RANK)

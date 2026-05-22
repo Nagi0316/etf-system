@@ -154,7 +154,7 @@ function switchMarket(m) {
   const off = 'market-btn px-5 py-1.5 rounded-md text-sm font-semibold text-slate-400 dark:text-slate-300 transition-all';
   document.getElementById('btn-TW').className = m === 'TW' ? on : off;
   document.getElementById('btn-US').className = m === 'US' ? on : off;
-  renderTable(allEtfData, currentRanking);
+  switchRanking(currentRanking);
 }
 
 async function switchRanking(type) {
@@ -170,7 +170,7 @@ async function switchRanking(type) {
   document.getElementById('ranking-body').innerHTML = `<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">
     <span class="spinner mr-2"></span>載入中…</td></tr>`;
 
-  const data = await fetch(`/api/etf-rankings/${type}`).then(r=>r.json()).catch(()=>null);
+  const data = await fetch(`/api/etf-rankings/${type}?market=${currentMarket}`).then(r=>r.json()).catch(()=>null);
   if (data?.status === 'success') {
     allEtfData = data.data || [];
     const t = data.update_time || new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
@@ -183,7 +183,7 @@ async function switchRanking(type) {
 
 function renderTable(data, type) {
   const tbody = document.getElementById('ranking-body');
-  const rows = (data || []).filter(d => d.market === currentMarket).slice(0, 20);
+  const rows = (data || []).slice(0, 10);
   if (!rows.length) {
     tbody.innerHTML = `<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">${allEtfData.length ? '此市場暫無資料' : '數據抓取中，請稍後重新整理頁面'}</td></tr>`;
     return;
