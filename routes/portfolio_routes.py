@@ -1,16 +1,15 @@
 """
-routes/portfolio_routes.py — 庫存 / 交易記錄 / CSV 匯入
+routes/portfolio_routes.py — 庫存 / 交易記錄
 """
 import logging
 from datetime import date
-from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends
 
 from auth import get_current_user
 from models import TransactionIn
 from database import get_db
 from utils import safe_json
 from services.exchange_rate import get_usd_twd
-from services.csv_import import parse_csv
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -132,50 +131,6 @@ async def delete_transaction(tid: int, current_user: dict = Depends(get_current_
         _recalc_portfolio_cursor(uid, ticker, cursor)
         conn.commit()
     return safe_json({"status": "success", "message": "已刪除"})
-
-
-@router.post("/api/portfolio/import-csv")
-async def import_csv(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user),
-):
-    uid = current_user["id"]
-    if not file.filename.endswith(".csv"):
-        return safe_json({"status": "error", "message": "請上傳 .csv 檔案"}, 400)
-
-    content = await file.read()
-    rows, errors = parse_csv(content)
-
-    if errors and not rows:
-        return safe_json({"status": "error", "message": "CSV 格式錯誤", "errors": errors}, 400)
-
-    imported, failed = 0, []
-    for tx in rows:
-        try:
-            # 防止重複匯入：同一使用者相同代碼/日期/股數/價格視為重複
-            with get_db() as (conn, cursor):
-                cursor.execute(
-                    "SELECT id FROM user_transactions WHERE user_id=%s AND ticker=%s "
-                    "AND transaction_date=%s AND shares=%s AND price=%s",
-                    (uid, tx["ticker"], tx["transaction_date"],
-                     tx["shares"], tx["price"])
-                )
-                if cursor.fetchone():
-                    failed.append(f"重複略過: {tx['ticker']} {tx['transaction_date']} "
-                                  f"{tx['shares']}股@{tx['price']}")
-                    continue
-            _insert_transaction(uid, tx)  # 內部已包含 atomic recalc
-            imported += 1
-        except Exception as e:
-            failed.append(str(e))
-
-    return safe_json({
-        "status": "success",
-        "imported": imported,
-        "failed": failed,
-        "errors": errors,
-        "message": f"成功匯入 {imported} 筆，失敗 {len(failed)} 筆",
-    })
 
 
 # ── 私有邏輯 ──

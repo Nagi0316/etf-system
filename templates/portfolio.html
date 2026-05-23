@@ -58,11 +58,6 @@
   <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
     <h2 class="font-bold text-slate-800 dark:text-white">持倉明細</h2>
     <div class="flex gap-2 flex-wrap">
-      <!-- CSV 匯入 -->
-      <label class="btn-primary text-sm cursor-pointer" style="background:#10b981">
-        <i class="fas fa-file-csv"></i><span class="hide-mobile"> CSV 匯入</span>
-        <input type="file" id="csv-file" accept=".csv" class="hidden" onchange="importCSV(this)">
-      </label>
       <button onclick="openTradeModal('','buy')" class="btn-primary text-sm">
         <i class="fas fa-plus"></i><span class="hide-mobile"> 新增成交</span>
       </button>
@@ -270,28 +265,6 @@ async function deleteTx(id) {
   const data = await Auth.fetchJson(`/api/portfolio/transaction/${id}`, { method: 'DELETE' });
   if (data?.status === 'success') { showToast('已刪除'); loadPortfolio(); loadTransactions(); }
   else showToast(data?.message || '刪除失敗', false);
-}
-
-// CSV 匯入
-async function importCSV(input) {
-  const file = input.files[0];
-  if (!file) return;
-  const fd = new FormData();
-  fd.append('file', file);
-  showToast('匯入中…');
-  const resp = await fetch('/api/portfolio/import-csv', {
-    method: 'POST',
-    headers: Auth.isLoggedIn() ? { Authorization: `Bearer ${Auth.getToken()}` } : {},
-    body: fd,
-    credentials: 'include',
-  });
-  const data = await resp.json();
-  input.value = '';
-  if (data.status === 'success') {
-    showToast(data.message);
-    if (data.errors?.length) console.warn('CSV 警告:', data.errors);
-    loadPortfolio(); loadTransactions();
-  } else showToast(data.message || '匯入失敗', false);
 }
 
 // Modal
