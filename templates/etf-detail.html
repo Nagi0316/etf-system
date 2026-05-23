@@ -140,7 +140,6 @@
       <div class="card p-5">
         <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">基本資訊</h3>
         <div class="divide-y divide-slate-50 dark:divide-slate-700">
-          <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">資產規模</span><span id="asset-size" class="font-medium text-slate-700 dark:text-slate-300">-</span></div>
           <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">淨值 (NAV)</span><span id="nav" class="font-medium text-slate-700 dark:text-slate-300 tabular-nums">-</span></div>
           <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">折溢價</span><span id="premium" class="font-medium">-</span></div>
           <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">本益比 (P/E)</span><span id="pe-ratio" class="font-medium text-slate-700 dark:text-slate-300 tabular-nums">-</span></div>
@@ -288,8 +287,7 @@ async function loadETFDetail() {
       // 若關鍵欄位缺失（爬取曾失敗），立即在背景強制重抓並刷新顯示
       const d = etfData;
       const missingReturns = !parseFloat(d.annual_return_1y) && !parseFloat(d.annual_return_3y) && !parseFloat(d.annual_return_5y);
-      const missingAsset   = !parseFloat(d.asset_size);
-      if (missingReturns || missingAsset) {
+      if (missingReturns) {
         fetch(`/api/etf/update/${currentTicker}`, { method: 'POST' })
           .then(r => r.json())
           .then(upd => {
@@ -357,10 +355,6 @@ function renderData() {
     document.getElementById('volume').textContent = vol >= 1e6 ? (vol/1e6).toFixed(2)+'M' : vol.toLocaleString();
     document.getElementById('volume-unit').textContent = '股';
   }
-
-  // 資產規模
-  const assets = parseFloat(d.asset_size) || 0;
-  document.getElementById('asset-size').textContent = assets > 0 ? fmtLargeNum(assets) : '-';
 
   // NAV & 折溢價
   const nav  = parseFloat(d.nav) || price;
@@ -503,9 +497,18 @@ function drawChart(labels, prices, isFallback = false, isIntraday = false) {
           callbacks: { label: c => `價格: ${c.raw.toFixed(2)}` } } },
       scales: {
         x: {
-          display: isIntraday,   // 盤中（1D/5D）顯示時間軸，其餘隱藏保持簡潔
+          display: true,
           grid: { display: false },
-          ticks: { color: '#94a3b8', font: { size: 9 }, maxTicksLimit: 8, maxRotation: 0 }
+          ticks: { color: '#94a3b8', font: { size: 9 }, maxTicksLimit: isIntraday ? 8 : 6, maxRotation: 0,
+            callback: function(val, idx) {
+              const lbl = this.getLabelForValue(val);
+              if (!lbl) return '';
+              if (isIntraday) return lbl;
+              // 非盤中只顯示年月，減少擁擠
+              const parts = lbl.split('-');
+              return parts.length >= 2 ? parts[0] + '/' + parts[1] : lbl;
+            }
+          }
         },
         y: { position:'right', grid: { color:'rgba(241,245,249,.6)' }, ticks: { color:'#94a3b8', font:{size:10} } }
       }

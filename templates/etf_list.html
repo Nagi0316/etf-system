@@ -62,8 +62,6 @@
   <div class="flex gap-0 border-b border-slate-200 dark:border-slate-700 mb-0 overflow-x-auto">
     <button id="tab-volume" onclick="switchRanking('volume')"
       class="rank-tab px-4 py-2.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500 -mb-px whitespace-nowrap">成交量</button>
-    <button id="tab-asset" onclick="switchRanking('asset')"
-      class="rank-tab px-4 py-2.5 text-sm font-medium text-slate-400 dark:text-slate-500 border-b-2 border-transparent -mb-px hover:text-slate-600 whitespace-nowrap">資產規模</button>
     <button id="tab-return" onclick="switchRanking('return')"
       class="rank-tab px-4 py-2.5 text-sm font-medium text-slate-400 dark:text-slate-500 border-b-2 border-transparent -mb-px hover:text-slate-600 whitespace-nowrap">年化報酬</button>
     <button id="tab-yield" onclick="switchRanking('yield')"
@@ -143,13 +141,6 @@ function fmtVol(v, market) {
   return v.toLocaleString();
 }
 
-function fmtAsset(v) {
-  if (!v || v <= 0) return '-';
-  if (v >= 1e12) return (v/1e12).toFixed(2)+' 兆';
-  if (v >= 1e8)  return (v/1e8).toFixed(1)+' 億';
-  if (v >= 1e6)  return (v/1e6).toFixed(1)+' 百萬';
-  return v.toLocaleString();
-}
 
 function switchMarket(m) {
   currentMarket = m;
@@ -167,7 +158,7 @@ async function switchRanking(type) {
   });
   const tab = document.getElementById('tab-' + type);
   if (tab) tab.className = 'rank-tab px-4 py-2.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500 -mb-px whitespace-nowrap';
-  const headers = { volume:'今日成交量', asset:'資產規模', return:'年化報酬', yield:'殖利率' };
+  const headers = { volume:'今日成交量', return:'年化報酬', yield:'殖利率' };
   document.getElementById('rank-col-header').textContent = headers[type] || '';
 
   document.getElementById('ranking-body').innerHTML = `<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">
@@ -203,7 +194,6 @@ function renderTable(data, type) {
 
     let rankVal = '-';
     if (type === 'volume')      rankVal = fmtVol(item.volume || 0, item.market);
-    else if (type === 'asset')  rankVal = fmtAsset(item.asset_size);
     else if (type === 'return') {
       const r = item.annual_return_1y || 0;
       rankVal = `<span class="${r>=0?'text-red-500':'text-green-500'}">${r>=0?'+':''}${r.toFixed(2)}%</span>`;

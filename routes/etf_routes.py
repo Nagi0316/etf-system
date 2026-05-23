@@ -61,12 +61,6 @@ _ETF_DETAIL_SELECT = """
         COALESCE(d.price_change,0) as price_change,
         COALESCE(d.price_change_percent,0) as price_change_percent,
         COALESCE(d.volume,0) as volume,
-        COALESCE(
-            NULLIF(d.asset_size, 0),
-            CASE WHEN m.outstanding_units > 0
-                 THEN m.outstanding_units * COALESCE(d.current_price, 0)
-                 ELSE 0 END
-        ) as asset_size,
         COALESCE(d.nav,0) as nav,
         COALESCE(d.discount_premium,0) as discount_premium,
         COALESCE(d.dividend_yield,0) as dividend_yield,
@@ -140,8 +134,6 @@ async def get_etf_rankings(rank_type: str, market: str = ""):
         "dividend": "d.dividend_yield DESC",
         "yield":    "d.dividend_yield DESC",
         "volume":   "d.volume DESC",
-        "asset":    "asset_size DESC",
-        "assets":   "asset_size DESC",
         "drop":     "d.price_change_percent ASC",
         "rise":     "d.price_change_percent DESC",
     }
@@ -156,12 +148,6 @@ async def get_etf_rankings(rank_type: str, market: str = ""):
                 COALESCE(d.price_change,0) as price_change,
                 COALESCE(d.price_change_percent,0) as price_change_percent,
                 COALESCE(d.volume,0) as volume,
-                COALESCE(
-                    NULLIF(d.asset_size, 0),
-                    CASE WHEN m.outstanding_units > 0
-                         THEN m.outstanding_units * COALESCE(d.current_price, 0)
-                         ELSE 0 END
-                ) as asset_size,
                 COALESCE(d.dividend_yield,0) as dividend_yield,
                 COALESCE(d.payout_freq,'不配息') as payout_freq,
                 COALESCE(d.annual_return_1y,0) as annual_return_1y,
@@ -334,8 +320,7 @@ def _maybe_background_refresh(ticker: str, row: dict):
         is_stale = True
     missing_returns = (float(row.get("annual_return_1y", 0)) == 0.0 and
                        float(row.get("annual_return_3y", 0)) == 0.0)
-    missing_asset   = float(row.get("asset_size", 0)) == 0.0
-    if not (is_stale or missing_returns or missing_asset):
+    if not (is_stale or missing_returns):
         return
 
     async def _do():
@@ -392,6 +377,77 @@ def _fetch_db_price_history(ticker: str, period: str) -> Optional[dict]:
     except Exception as e:
         logger.debug(f"DB price history {ticker}: {e}")
     return None
+
+
+_TWSE_HIST_HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 (compatible; ETF-System/2.0)",
+}
+
+
+def _fetch_twse_price_history(ticker: str, period: str) -> Optional[dict]:
+    """從 TWSE STOCK_DAY API 即時抓取歷史收盤價（TW ETF 專用，不依賴 Yahoo Finance）。
+    結果快取 6 小時，避免重複打 TWSE API。
+    """
+    cache_key = f"twse_hist:{ticker}:{period}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    today = date.today()
+    PERIOD_MONTHS = {
+        "1M": 2, "3M": 4, "6M": 7, "YTD": today.month + 1,
+        "1Y": 13, "3Y": 37, "5Y": 61, "ALL": 61, "MAX": 61,
+    }
+    months_needed = PERIOD_MONTHS.get(period.upper(), 13)
+
+    all_days: list[dict] = []
+    for i in range(months_needed - 1, -1, -1):
+        # 從最早月份到最新月份
+        from dateutil.relativedelta import relativedelta as _rd
+        target = today - _rd(months=i)
+        date_str = f"{target.year}{target.month:02d}01"
+        url = (f"https://www.twse.com.tw/rwd/zh/stock/STOCK_DAY"
+               f"?stockNo={ticker}&date={date_str}&response=json")
+        try:
+            r = _req.get(url, headers=_TWSE_HIST_HEADERS, timeout=15,
+                         verify=_certifi.where())
+            if r.status_code != 200:
+                continue
+            body = r.json()
+            if body.get("stat") != "OK":
+                continue
+            for row in body.get("data", []):
+                try:
+                    parts = row[0].strip().split("/")
+                    iso_date = f"{int(parts[0]) + 1911}-{parts[1]}-{parts[2]}"
+                    close = float(row[6].strip().replace(",", ""))
+                    if close > 0:
+                        all_days.append({"date": iso_date, "close": close})
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.debug(f"TWSE hist {ticker} {date_str}: {e}")
+        time.sleep(0.3)
+
+    if len(all_days) < 2:
+        return None
+
+    # 按日期排序並去重
+    seen_dates: set = set()
+    deduped = []
+    for d in sorted(all_days, key=lambda x: x["date"]):
+        if d["date"] not in seen_dates:
+            seen_dates.add(d["date"])
+            deduped.append(d)
+
+    result = {
+        "labels": [d["date"] for d in deduped],
+        "prices": [round(d["close"], 2) for d in deduped],
+        "is_intraday": False,
+    }
+    cache.set(cache_key, result, ttl=21600)  # 6h
+    return result
 
 
 @router.get("/api/etf/price-history/{ticker}")
@@ -469,7 +525,11 @@ async def get_price_history(ticker: str, period: str = "1y"):
 
     data = await asyncio.to_thread(_fetch)
     if not data and not is_intraday:
+        # 優先用 DB 已有的收盤價（速度最快）
         data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
+        # DB 不足時，TW ETF 改走 TWSE 官方 API（不依賴 Yahoo）
+        if not data and market == "TW":
+            data = await asyncio.to_thread(_fetch_twse_price_history, ticker, p)
     if not data:
         return safe_json({"status": "error", "message": "無法取得歷史資料"}, 400)
     return safe_json({
