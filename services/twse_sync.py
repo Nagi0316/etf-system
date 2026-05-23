@@ -15,8 +15,9 @@ from database import get_db
 
 logger = logging.getLogger(__name__)
 
-TWSE_URL = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
-TPEX_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
+TWSE_URL          = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+TPEX_URL          = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
+TWSE_FUND_URL     = "https://openapi.twse.com.tw/v1/opendata/t187ap47_L"
 
 _HEADERS = {
     "Accept": "application/json",
@@ -79,6 +80,30 @@ def _fetch_tpex() -> list[tuple]:
     except Exception as e:
         logger.warning(f"TPEX OpenAPI 失敗: {e}")
         return []
+
+
+def _fetch_twse_outstanding_units() -> dict:
+    """從 TWSE OpenAPI t187ap47_L 取得所有台股 ETF 的發行單位數。
+    回傳 {ticker: units_int}，供 sync_tw_etfs() 更新 etf_master.outstanding_units。
+    """
+    try:
+        resp = requests.get(TWSE_FUND_URL, headers=_HEADERS, timeout=_TIMEOUT)
+        resp.raise_for_status()
+        result = {}
+        for item in resp.json():
+            code = str(item.get("基金代號", "")).strip()
+            raw  = str(item.get("發行單位數/轉換數", "0")).replace(",", "").strip()
+            try:
+                units = int(float(raw))
+                if code and units > 0:
+                    result[code] = units
+            except (ValueError, TypeError):
+                pass
+        logger.info(f"TWSE t187ap47_L: 取得 {len(result)} 筆 ETF 發行單位數")
+        return result
+    except Exception as e:
+        logger.warning(f"TWSE 發行單位數 API 失敗: {e}")
+        return {}
 
 
 def sync_tw_etfs() -> int:
@@ -155,4 +180,23 @@ def sync_tw_etfs() -> int:
         conn.commit()
 
     logger.info(f"✅ sync_tw_etfs: 掃描 {len(deduped)} 檔，新增 {new_count} 檔進資料庫")
+
+    # ── 更新 ETF 發行單位數（用於計算基金規模，補 Yahoo Finance 空缺）──
+    units_map = _fetch_twse_outstanding_units()
+    if units_map:
+        with get_db() as (conn, cursor):
+            updated = 0
+            for ticker, units in units_map.items():
+                try:
+                    cursor.execute(
+                        "UPDATE etf_master SET outstanding_units=%s WHERE ticker=%s",
+                        (units, ticker),
+                    )
+                    if cursor.rowcount:
+                        updated += 1
+                except Exception as e:
+                    logger.debug(f"outstanding_units {ticker}: {e}")
+            conn.commit()
+        logger.info(f"✅ 更新 {updated} 檔 ETF 發行單位數（基金規模計算依據）")
+
     return new_count

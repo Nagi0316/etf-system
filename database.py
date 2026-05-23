@@ -340,6 +340,7 @@ def init_db():
         ("etf_master",     "is_hot",            "TINYINT(1) DEFAULT 0"),
         ("etf_master",     "auto_discovered",   "TINYINT(1) DEFAULT 0"),
         ("etf_master",     "is_delisted",       "TINYINT(1) DEFAULT 0"),
+        ("etf_master",     "outstanding_units", "BIGINT DEFAULT 0"),
     ]
     with get_db() as (conn, cursor):
         for tbl, col, coldef in new_cols:

@@ -61,7 +61,12 @@ _ETF_DETAIL_SELECT = """
         COALESCE(d.price_change,0) as price_change,
         COALESCE(d.price_change_percent,0) as price_change_percent,
         COALESCE(d.volume,0) as volume,
-        COALESCE(d.asset_size,0) as asset_size,
+        COALESCE(
+            NULLIF(d.asset_size, 0),
+            CASE WHEN m.outstanding_units > 0
+                 THEN m.outstanding_units * COALESCE(d.current_price, 0)
+                 ELSE 0 END
+        ) as asset_size,
         COALESCE(d.nav,0) as nav,
         COALESCE(d.discount_premium,0) as discount_premium,
         COALESCE(d.dividend_yield,0) as dividend_yield,
@@ -135,8 +140,8 @@ async def get_etf_rankings(rank_type: str, market: str = ""):
         "dividend": "d.dividend_yield DESC",
         "yield":    "d.dividend_yield DESC",
         "volume":   "d.volume DESC",
-        "asset":    "d.asset_size DESC",
-        "assets":   "d.asset_size DESC",
+        "asset":    "asset_size DESC",
+        "assets":   "asset_size DESC",
         "drop":     "d.price_change_percent ASC",
         "rise":     "d.price_change_percent DESC",
     }
@@ -151,7 +156,12 @@ async def get_etf_rankings(rank_type: str, market: str = ""):
                 COALESCE(d.price_change,0) as price_change,
                 COALESCE(d.price_change_percent,0) as price_change_percent,
                 COALESCE(d.volume,0) as volume,
-                COALESCE(d.asset_size,0) as asset_size,
+                COALESCE(
+                    NULLIF(d.asset_size, 0),
+                    CASE WHEN m.outstanding_units > 0
+                         THEN m.outstanding_units * COALESCE(d.current_price, 0)
+                         ELSE 0 END
+                ) as asset_size,
                 COALESCE(d.dividend_yield,0) as dividend_yield,
                 COALESCE(d.payout_freq,'不配息') as payout_freq,
                 COALESCE(d.annual_return_1y,0) as annual_return_1y,
