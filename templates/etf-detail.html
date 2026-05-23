@@ -180,6 +180,9 @@
       <p id="chart-note" class="hidden text-xs text-amber-500 text-right mb-1">⚠️ 歷史資料暫時無法取得，以下為 52 週區間估算</p>
       <div style="position:relative;height:260px;max-height:260px;">
         <canvas id="price-chart"></canvas>
+        <div id="chart-loading" class="hidden absolute inset-0 flex items-center justify-center">
+          <span class="spinner mr-2"></span><span class="text-slate-400 text-sm">載入中…</span>
+        </div>
       </div>
       <p id="no-chart-msg" class="hidden text-center text-slate-400 text-sm py-8">暫無歷史價格資料</p>
     </div>
@@ -258,6 +261,7 @@ const STATIC_INFO = {
 };
 
 let etfData = null, priceChart = null, inWatchlist = false, currentPeriod = '1Y', currentTicker = '';
+let _chartReqId = 0;   // 防止並發請求互搶圖表
 
 async function loadETFDetail() {
   const parts = window.location.pathname.split('/');
@@ -282,15 +286,15 @@ async function loadETFDetail() {
       document.getElementById('loading').classList.add('hidden');
       document.getElementById('content').classList.remove('hidden');
 
-      // 若年化報酬全為 0（爬取曾失敗），立即在背景強制重抓並刷新顯示
+      // 若關鍵欄位缺失（爬取曾失敗），立即在背景強制重抓並刷新顯示
       const d = etfData;
-      if (!parseFloat(d.annual_return_1y) && !parseFloat(d.annual_return_3y) &&
-          !parseFloat(d.annual_return_5y)) {
+      const missingReturns = !parseFloat(d.annual_return_1y) && !parseFloat(d.annual_return_3y) && !parseFloat(d.annual_return_5y);
+      const missingAsset   = !parseFloat(d.asset_size);
+      if (missingReturns || missingAsset) {
         fetch(`/api/etf/update/${currentTicker}`, { method: 'POST' })
           .then(r => r.json())
           .then(upd => {
             if (upd.status === 'success' && upd.data) {
-              // 合併最新欄位並重新渲染
               etfData = { ...etfData, ...upd.data };
               renderData();
             }
@@ -443,27 +447,45 @@ async function loadDipAlert(ticker) {
 
 // 圖表
 async function loadPriceHistory(ticker, period = '1Y') {
+  const reqId = ++_chartReqId;   // 每次呼叫取得唯一 ID，過期的回應直接丟棄
+  // 顯示載入中狀態
+  const canvas = document.getElementById('price-chart');
+  canvas.style.display = 'none';
+  document.getElementById('no-chart-msg').classList.add('hidden');
+  document.getElementById('chart-loading').classList.remove('hidden');
+
   try {
     const data = await fetch(`/api/etf/price-history/${ticker}?period=${period}`).then(r=>r.json());
-    const prices    = data.prices || data.data?.prices;
-    const labels    = data.labels || data.data?.labels;
-    const intraday  = data.is_intraday || false;
+    if (reqId !== _chartReqId) return;   // 已有更新的請求，放棄此次結果
+    document.getElementById('chart-loading').classList.add('hidden');
+    const prices   = data.prices || data.data?.prices;
+    const labels   = data.labels || data.data?.labels;
+    const intraday = data.is_intraday || false;
     if (data.status === 'success' && prices?.length) {
       const cleanPrices = prices.map(p => parseFloat(p)).filter(p => !isNaN(p) && p > 0);
       const cleanLabels = labels.slice(labels.length - cleanPrices.length);
       if (cleanPrices.length >= 2) { drawChart(cleanLabels, cleanPrices, false, intraday); return; }
     }
     showNoChart();
-  } catch(e) { showNoChart(); }
+  } catch(e) {
+    if (reqId !== _chartReqId) return;
+    document.getElementById('chart-loading').classList.add('hidden');
+    showNoChart();
+  }
 }
 
 function showNoChart() {
-  document.getElementById('price-chart').classList.add('hidden');
+  // 用 style.display 確保優先級高於 Chart.js 設定的 inline style
+  const canvas = document.getElementById('price-chart');
+  canvas.style.display = 'none';
+  canvas.classList.add('hidden');
   document.getElementById('no-chart-msg').classList.remove('hidden');
 }
 
 function drawChart(labels, prices, isFallback = false, isIntraday = false) {
   const canvas = document.getElementById('price-chart');
+  // 用 style.display 清除 Chart.js 可能設定的 inline display:block
+  canvas.style.display = '';
   canvas.classList.remove('hidden');
   document.getElementById('no-chart-msg').classList.add('hidden');
   if (!isFallback) document.getElementById('chart-note').classList.add('hidden');

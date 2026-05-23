@@ -334,7 +334,8 @@ def _maybe_background_refresh(ticker: str, row: dict):
         is_stale = True
     missing_returns = (float(row.get("annual_return_1y", 0)) == 0.0 and
                        float(row.get("annual_return_3y", 0)) == 0.0)
-    if not (is_stale or missing_returns):
+    missing_asset   = float(row.get("asset_size", 0)) == 0.0
+    if not (is_stale or missing_returns or missing_asset):
         return
 
     async def _do():
