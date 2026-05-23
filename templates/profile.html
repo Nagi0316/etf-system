@@ -299,10 +299,8 @@ async function handleAvatarUpload(input) {
   if (file.size > 5 * 1024 * 1024) { showToast('圖片不能超過 5MB', false); return; }
   const fd = new FormData();
   fd.append('file', file);
-  const token = Auth.getToken();
   const res = await fetch('/api/user/avatar', {
     method: 'POST',
-    headers: token ? { 'Authorization': `Bearer ${token}` } : {},
     credentials: 'include',
     body: fd
   });

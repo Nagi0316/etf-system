@@ -4,7 +4,6 @@ services/alerts.py — 低檔加碼提醒 & 金字塔加碼法計算
 from __future__ import annotations
 import logging
 from typing import Optional
-import pandas as pd
 
 logger = logging.getLogger(__name__)
 

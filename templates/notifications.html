@@ -127,18 +127,28 @@ function renderNotifs() {
   });
 }
 
+async function _refreshBadge() {
+  const data = await Auth.fetchJson('/api/notifications?unread_only=true', {}, 6000);
+  const cnt = data?.unread_count || 0;
+  const badge = document.getElementById('notif-badge');
+  if (badge) {
+    if (cnt > 0) { badge.textContent = cnt > 9 ? '9+' : cnt; badge.classList.remove('hidden'); }
+    else badge.classList.add('hidden');
+  }
+}
+
 async function markRead(id, el) {
   await Auth.fetchJson(`/api/notifications/${id}/read`, { method: 'POST' });
   el?.classList.add('opacity-70');
   el?.querySelector('.notif-dot')?.remove();
-  loadUnreadCount();
+  _refreshBadge();
 }
 
 async function markAllRead() {
   await Auth.fetchJson('/api/notifications/read-all', { method: 'POST' });
   allNotifs.forEach(n => n.is_read = 1);
   renderNotifs();
-  loadUnreadCount();
+  _refreshBadge();
   showToast('全部已標記為已讀');
 }
 

@@ -210,9 +210,4 @@ def _insert_transaction(uid: int, data: dict):
         conn.commit()
 
 
-def _recalc_portfolio(uid: int, ticker: str):
-    """獨立重算版本（供需要獨立連線的場景使用）。"""
-    ticker = ticker.upper()
-    with get_db() as (conn, cursor):
-        _recalc_portfolio_cursor(uid, ticker, cursor)
-        conn.commit()
+

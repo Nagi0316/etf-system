@@ -220,29 +220,10 @@ function fmtPct(n, d = 2) {
 }
 
 function fmtMoney(n, currency = 'TWD') {
-  if (n == null) return '—';
-  if (currency === 'TWD') return `NT$${parseInt(n).toLocaleString()}`;
-  return `$${parseFloat(n).toLocaleString(undefined, {minimumFractionDigits: 2})}`;
-}
-
-function fmtLargeNum(n) {
-  if (!n || n === 0) return '—';
-  const absN = Math.abs(n);
-  const sign = n < 0 ? '-' : '';
-  if (absN >= 1e12) return `${sign}${(absN / 1e12).toFixed(2)}兆`;
-  if (absN >= 1e8)  return `${sign}${(absN / 1e8).toFixed(1)}億`;
-  if (absN >= 1e4)  return `${sign}${(absN / 1e4).toFixed(1)}萬`;
-  return n.toLocaleString();
-}
-
-function pctColor(v) {
-  if (!v) return 'text-slate-500 dark:text-slate-400';
-  return v > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400';
-}
-
-function pctArrow(v) {
-  if (!v) return '';
-  return v > 0 ? '▲' : '▼';
+  const v = parseFloat(n);
+  if (n == null || isNaN(v)) return '—';
+  if (currency === 'TWD') return `NT$${Math.round(v).toLocaleString()}`;
+  return `$${v.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
 }
 
 // 初始化頁面

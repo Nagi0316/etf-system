@@ -240,21 +240,22 @@
 
 <script src="/static/js/common.js"></script>
 <script>
+// expense_ratio 統一使用小數格式（與後端 DB 一致）：0.0046 = 0.46%
 const STATIC_INFO = {
-  '0050':{'issuer':'元大投信','listing_date':'2003-06-25','expense_ratio':0.46},
-  '0056':{'issuer':'元大投信','listing_date':'2007-12-26','expense_ratio':0.66},
-  '00878':{'issuer':'國泰投信','listing_date':'2020-07-20','expense_ratio':0.65},
-  '006208':{'issuer':'富邦投信','listing_date':'2012-07-17','expense_ratio':0.46},
-  '00919':{'issuer':'群益投信','listing_date':'2022-10-20','expense_ratio':0.90},
-  '00929':{'issuer':'復華投信','listing_date':'2023-03-31','expense_ratio':0.95},
-  '00713':{'issuer':'元大投信','listing_date':'2017-09-27','expense_ratio':0.45},
-  '00940':{'issuer':'元大投信','listing_date':'2024-03-20','expense_ratio':0.65},
-  'SPY':{'issuer':'State Street','listing_date':'1993-01-22','expense_ratio':0.0945},
-  'QQQ':{'issuer':'Invesco','listing_date':'1999-03-10','expense_ratio':0.20},
-  'VOO':{'issuer':'Vanguard','listing_date':'2010-09-07','expense_ratio':0.03},
-  'VTI':{'issuer':'Vanguard','listing_date':'2001-05-24','expense_ratio':0.03},
-  'SCHD':{'issuer':'Schwab','listing_date':'2011-10-20','expense_ratio':0.06},
-  'GLD':{'issuer':'State Street','listing_date':'2004-11-18','expense_ratio':0.40},
+  '0050':  {'issuer':'元大投信',  'listing_date':'2003-06-25','expense_ratio':0.0046},
+  '0056':  {'issuer':'元大投信',  'listing_date':'2007-12-26','expense_ratio':0.0066},
+  '00878': {'issuer':'國泰投信',  'listing_date':'2020-07-20','expense_ratio':0.0065},
+  '006208':{'issuer':'富邦投信',  'listing_date':'2012-07-17','expense_ratio':0.0046},
+  '00919': {'issuer':'群益投信',  'listing_date':'2022-10-20','expense_ratio':0.0090},
+  '00929': {'issuer':'復華投信',  'listing_date':'2023-03-31','expense_ratio':0.0095},
+  '00713': {'issuer':'元大投信',  'listing_date':'2017-09-27','expense_ratio':0.0045},
+  '00940': {'issuer':'元大投信',  'listing_date':'2024-03-20','expense_ratio':0.0065},
+  'SPY':   {'issuer':'State Street','listing_date':'1993-01-22','expense_ratio':0.000945},
+  'QQQ':   {'issuer':'Invesco',   'listing_date':'1999-03-10','expense_ratio':0.0020},
+  'VOO':   {'issuer':'Vanguard',  'listing_date':'2010-09-07','expense_ratio':0.0003},
+  'VTI':   {'issuer':'Vanguard',  'listing_date':'2001-05-24','expense_ratio':0.0003},
+  'SCHD':  {'issuer':'Schwab',    'listing_date':'2011-10-20','expense_ratio':0.0006},
+  'GLD':   {'issuer':'State Street','listing_date':'2004-11-18','expense_ratio':0.0040},
 };
 
 let etfData = null, priceChart = null, inWatchlist = false, currentPeriod = '1Y', currentTicker = '';
@@ -366,9 +367,10 @@ function renderData() {
   document.getElementById('day-range').textContent = (dh > 0 && dl > 0 && dh !== dl)
     ? dl.toFixed(2) + ' – ' + dh.toFixed(2) : '-';
 
+  // expense_ratio 在 DB 與 STATIC_INFO 中統一為小數格式（0.0046 = 0.46%），顯示時乘以 100
   let er = parseFloat(d.expense_ratio) || 0;
   if (er <= 0 && stat.expense_ratio) er = stat.expense_ratio;
-  document.getElementById('expense-ratio').textContent = er > 0 ? ((er < 0.1 ? er*100 : er).toFixed(2))+'%' : '-';
+  document.getElementById('expense-ratio').textContent = er > 0 ? (er * 100).toFixed(2) + '%' : '-';
 
   const h52 = parseFloat(d.fifty_two_week_high) || 0;
   const l52 = parseFloat(d.fifty_two_week_low)  || 0;
@@ -403,7 +405,7 @@ async function loadDipAlert(ticker) {
 
   const tags = document.getElementById('dip-alert-tags');
   tags.innerHTML = (alert.triggers || []).map(t =>
-    `<span class="text-[11px] px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 font-medium">${t.type === '20d' ? '20日' : '60日'}跌 ${t.drop_pct?.toFixed(1)}%</span>`
+    `<span class="text-[11px] px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 font-medium">${t.period || ''}跌 ${t.drop_pct?.toFixed(1)}%</span>`
   ).join('');
 
   // 詳情區

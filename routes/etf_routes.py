@@ -10,7 +10,6 @@ from fastapi.templating import Jinja2Templates
 import yfinance as yf
 import pandas as pd
 
-from auth import get_optional_user
 from models import EtfAddIn
 from database import get_db
 from utils import safe_json, safe_float
