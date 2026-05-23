@@ -1,7 +1,13 @@
 """
-ETF 系統全欄位診斷腳本 v6
+ETF 系統全欄位診斷腳本 v7
 對齊目前程式架構，完整偵測所有欄位與全部 8 個走勢圖期間：
   1D / 5D / 1M / 6M / YTD / 1Y / 5Y / All
+
+變更 (v7)：
+  - expense_ratio 加入 KNOWN_EXPENSE_RATIO 靜態備援（Yahoo v10 對台股常失敗）
+  - payout_freq 改用 best_freq()：取 Yahoo 偵測 與 靜態備援 中頻率等級較高者
+  - KNOWN_PAYOUT_FREQ 同步更新（0050 → 半年配）
+  - 修正 utcfromtimestamp DeprecationWarning → fromtimestamp(tz=UTC)
 
 用法：
   python diagnose.py                          # 預設測 0050, 00878, VOO, SCHD
@@ -149,6 +155,53 @@ def classify_freq(n: int) -> str:
     return "不配息"
 
 
+# ── 頻率等級（數字越大頻率越高） ──
+_FREQ_RANK = {'不配息': 0, '年配': 1, '半年配': 2, '季配': 3, '雙月配': 4, '月配': 5}
+
+KNOWN_PAYOUT_FREQ = {
+    '0050':'半年配','006208':'半年配','0056':'季配','00878':'季配',
+    '00919':'月配','00929':'月配','00713':'季配','00940':'月配',
+    '00891':'季配','00692':'年配','0051':'年配','0052':'年配',
+    '0053':'年配','00850':'季配','00757':'季配','00939':'月配',
+    '00934':'月配','00936':'月配','00944':'月配','00900':'季配',
+    '00907':'季配','00915':'雙月配','00892':'季配','00861':'季配',
+    '00679B':'半年配','00687B':'半年配','00695B':'半年配','00720B':'季配',
+    '006205':'年配',
+    'SPY':'季配','QQQ':'季配','VOO':'季配','VTI':'季配','SCHD':'季配',
+    'IVV':'季配','VYM':'季配','JEPI':'月配','SOXL':'季配','ARKK':'不配息',
+    'IWM':'季配','DIA':'月配','VIG':'季配','XLK':'季配','SMH':'季配',
+    'SOXX':'季配','VGT':'季配','TLT':'月配','IEF':'月配','AGG':'月配',
+    'BND':'月配','GLD':'不配息','VNQ':'季配','VEA':'季配','VWO':'季配',
+    'EEM':'半年配','XLF':'季配','XLE':'季配','XLV':'季配',
+}
+
+KNOWN_EXPENSE_RATIO = {
+    '0050':0.0046,'006208':0.0046,'0056':0.0066,'00878':0.0065,
+    '00919':0.0090,'00929':0.0095,'00713':0.0045,'00940':0.0065,
+    '00891':0.0075,'00692':0.0061,'0051':0.0044,'0052':0.0053,
+    '0053':0.0044,'00850':0.0060,'00757':0.0099,'00939':0.0080,
+    '00934':0.0085,'00936':0.0085,'00944':0.0080,'00900':0.0090,
+    '00907':0.0075,'00915':0.0080,'00892':0.0065,'00861':0.0080,
+    '00679B':0.0015,'00687B':0.0017,'00695B':0.0020,'00720B':0.0025,
+    '006205':0.0099,
+    'SPY':0.0009,'QQQ':0.0020,'VOO':0.0003,'VTI':0.0003,'SCHD':0.0006,
+    'IVV':0.0003,'VYM':0.0006,'JEPI':0.0035,'SOXL':0.0176,'ARKK':0.0075,
+    'IWM':0.0019,'DIA':0.0016,'VIG':0.0006,'XLK':0.0009,'SMH':0.0035,
+    'SOXX':0.0035,'VGT':0.0010,'TLT':0.0015,'IEF':0.0015,'AGG':0.0003,
+    'BND':0.0003,'GLD':0.0040,'VNQ':0.0013,'VEA':0.0005,'VWO':0.0008,
+    'EEM':0.0068,'XLF':0.0009,'XLE':0.0009,'XLV':0.0009,
+}
+
+
+def best_freq(yf_count: int, ticker: str) -> str:
+    """取 Yahoo 事件數 與 靜態備援 兩者中頻率等級較高者（防漏抓或偵測升頻）。"""
+    yf_f    = classify_freq(yf_count)
+    known_f = KNOWN_PAYOUT_FREQ.get(ticker, '')
+    if not known_f:
+        return yf_f
+    return known_f if _FREQ_RANK.get(known_f, 0) >= _FREQ_RANK.get(yf_f, 0) else yf_f
+
+
 def header(t):
     print(f"\n{'='*70}\n  {t}\n{'='*70}")
 
@@ -207,16 +260,17 @@ def check_chart_period(symbol, period_id, period_label, yf_range, yf_interval, i
         # 計算時間標籤範圍
         t_first, p_first = pairs[0]
         t_last,  p_last  = pairs[-1]
+        _UTC = datetime.timezone.utc
         if is_intraday:
             fmt = "%H:%M" if period_id == "1D" else "%m/%d %H:%M"
-            dt_first = (datetime.datetime.utcfromtimestamp(t_first) +
+            dt_first = (datetime.datetime.fromtimestamp(t_first, tz=_UTC) +
                         datetime.timedelta(hours=tz_offset_h)).strftime(fmt)
-            dt_last  = (datetime.datetime.utcfromtimestamp(t_last)  +
+            dt_last  = (datetime.datetime.fromtimestamp(t_last,  tz=_UTC) +
                         datetime.timedelta(hours=tz_offset_h)).strftime(fmt)
             lbl = f"{dt_first}→{dt_last}"
         else:
-            dt_first = datetime.datetime.utcfromtimestamp(t_first).strftime("%Y-%m-%d")
-            dt_last  = datetime.datetime.utcfromtimestamp(t_last).strftime("%Y-%m-%d")
+            dt_first = datetime.datetime.fromtimestamp(t_first, tz=_UTC).strftime("%Y-%m-%d")
+            dt_last  = datetime.datetime.fromtimestamp(t_last,  tz=_UTC).strftime("%Y-%m-%d")
             lbl = f"{dt_first}→{dt_last}"
 
         return True, f"{len(pairs)} 筆  {lbl}  {p_first:.2f}→{p_last:.2f}"
@@ -305,18 +359,23 @@ def diagnose_tw(ticker):
             recent = [v["amount"] for v in events.values()
                       if v.get("date", 0) >= cutoff and v.get("amount", 0) > 0]
             if recent and price > 0:
-                dy   = round(sum(recent) / price * 100, 4)
-                n    = len(recent)
-                freq = classify_freq(n)
+                dy     = round(sum(recent) / price * 100, 4)
+                n      = len(recent)
+                yf_f   = classify_freq(n)
+                bf     = best_freq(n, ticker)
+                note   = (f"代碼={yt}" if yf_f == bf
+                          else f"代碼={yt}  Yahoo推算={yf_f}→靜態備援校正={bf}")
                 line(PASS, "dividend_yield",
-                     f"{dy}%（近12月 {n} 次 → {freq}）", f"代碼={yt}")
-                rec(ticker, "dividend_yield", dy,   True)
-                rec(ticker, "payout_freq",    freq, freq != "不配息")
+                     f"{dy}%（近12月 {n} 次 → {bf}）", note)
+                rec(ticker, "dividend_yield", dy,  True)
+                rec(ticker, "payout_freq",    bf,  bf != "不配息")
             else:
+                known_f = KNOWN_PAYOUT_FREQ.get(ticker, "")
                 line(WARN, f"dividend {yt}",
-                     f"近1年無配息記錄（歷史共 {len(events)} 筆，靜態備援將補上頻率）")
-                rec(ticker, "dividend_yield", 0.0,      False, "近1年無配息")
-                rec(ticker, "payout_freq",    "靜態備援補", True, "見 KNOWN_PAYOUT_FREQ")
+                     f"近1年無配息記錄（歷史共 {len(events)} 筆）",
+                     f"靜態備援頻率={known_f}" if known_f else "無靜態備援")
+                rec(ticker, "dividend_yield", 0.0,     False, "近1年無配息")
+                rec(ticker, "payout_freq", known_f or "不配息", bool(known_f), "KNOWN_PAYOUT_FREQ")
             div_ok = True; break
         except Exception as e:
             line(FAIL, f"dividend {yt}", str(e)[:60])
@@ -406,19 +465,30 @@ def diagnose_tw(ticker):
         asset = d.get("asset_size", 0.0)
         pe    = d.get("pe_ratio", 0.0)
         fee   = d.get("expense_ratio", 0.0)
+        # 靜態備援：Yahoo v10 對台股常不提供 expense_ratio
+        fee_src = "Yahoo"
+        if not fee:
+            fee     = KNOWN_EXPENSE_RATIO.get(ticker, 0.0)
+            fee_src = "靜態備援" if fee else ""
         line(PASS if asset > 0 else FAIL,
              "asset_size",    f"NT${asset/1e8:.2f} 億" if asset > 0 else "取得失敗", f"代碼={yt}")
         line(PASS if pe  > 0 else WARN, "pe_ratio",      pe if pe > 0 else "N/A（ETF 通常無 PE）")
-        line(PASS if fee > 0 else FAIL, "expense_ratio", f"{fee*100:.4f}%" if fee > 0 else "取得失敗")
+        line(PASS if fee > 0 else FAIL, "expense_ratio",
+             f"{fee*100:.4f}%  [{fee_src}]" if fee > 0 else "取得失敗（Yahoo+靜態備援均無）")
         rec(ticker, "asset_size",    asset, asset > 0)
         rec(ticker, "pe_ratio",      pe,    True)
         rec(ticker, "expense_ratio", fee,   fee > 0)
         detail_ok = True; break
 
     if not detail_ok:
+        # quoteSummary 完全失敗時嘗試靜態備援
+        fee_static = KNOWN_EXPENSE_RATIO.get(ticker, 0.0)
         line(FAIL, "詳細資料", "quoteSummary 兩種後綴均失敗")
+        if fee_static:
+            line(WARN, "expense_ratio", f"{fee_static*100:.4f}%  [靜態備援]",
+                 "quoteSummary 失敗但靜態備援補上")
         rec(ticker, "asset_size",    None, False)
-        rec(ticker, "expense_ratio", None, False)
+        rec(ticker, "expense_ratio", fee_static, fee_static > 0)
 
     # [E] 走勢圖 — 全部 8 個期間（對齊 etf_routes.py RANGE_MAP / INTERVAL_MAP）
     sub("E. 價格走勢圖（全部 8 個期間 × Yahoo Finance v8 chart）")
@@ -538,18 +608,23 @@ def diagnose_us(ticker):
                 cutoff = time.time() - 365 * 86400
                 recent = [v["amount"] for v in events.values() if v.get("date", 0) >= cutoff]
                 if recent and price > 0:
-                    dy   = round(sum(recent) / price * 100, 4)
-                    n    = len(recent)
-                    freq = classify_freq(n)
+                    dy     = round(sum(recent) / price * 100, 4)
+                    n      = len(recent)
+                    yf_f   = classify_freq(n)
+                    bf     = best_freq(n, ticker)
+                    note   = ("" if yf_f == bf
+                              else f"Yahoo推算={yf_f}→靜態備援校正={bf}")
                     line(PASS, "dividend_yield",
-                         f"{dy}%（近12月 {n} 次 → {freq}）")
-                    rec(ticker, "dividend_yield", dy,   True)
-                    rec(ticker, "payout_freq",    freq, freq != "不配息")
+                         f"{dy}%（近12月 {n} 次 → {bf}）", note)
+                    rec(ticker, "dividend_yield", dy,  True)
+                    rec(ticker, "payout_freq",    bf,  bf != "不配息")
                 else:
+                    known_f = KNOWN_PAYOUT_FREQ.get(ticker, "")
                     line(WARN, "dividend_yield",
-                         f"近1年無配息記錄（歷史共 {len(events)} 筆，靜態備援補頻率）")
-                    rec(ticker, "dividend_yield", 0.0,      False, "近1年無配息")
-                    rec(ticker, "payout_freq",    "靜態備援補", True, "KNOWN_PAYOUT_FREQ")
+                         f"近1年無配息記錄（歷史共 {len(events)} 筆）",
+                         f"靜態備援頻率={known_f}" if known_f else "無靜態備援")
+                    rec(ticker, "dividend_yield", 0.0,     False, "近1年無配息")
+                    rec(ticker, "payout_freq", known_f or "不配息", bool(known_f), "KNOWN_PAYOUT_FREQ")
     except Exception as e:
         line(FAIL, "history+dividend", str(e)[:60])
 
@@ -562,10 +637,16 @@ def diagnose_us(ticker):
         fee    = d.get("expense_ratio", 0.0)
         nav    = d.get("nav") or price
         yf_yld = d.get("div_yield", 0.0)
+        # 靜態備援：若 Yahoo 未提供 expense_ratio
+        fee_src = "Yahoo"
+        if not fee:
+            fee     = KNOWN_EXPENSE_RATIO.get(ticker, 0.0)
+            fee_src = "靜態備援" if fee else ""
         line(PASS if asset > 0 else FAIL, "asset_size",
              f"${asset/1e9:.2f}B" if asset > 0 else "取得失敗")
         line(PASS if pe  > 0 else WARN,  "pe_ratio",      pe if pe > 0 else "N/A")
-        line(PASS if fee > 0 else FAIL,  "expense_ratio", f"{fee*100:.4f}%" if fee > 0 else "取得失敗")
+        line(PASS if fee > 0 else FAIL,  "expense_ratio",
+             f"{fee*100:.4f}%  [{fee_src}]" if fee > 0 else "取得失敗（Yahoo+靜態備援均無）")
         line(PASS if nav > 0 else WARN,  "nav",           f"${nav:.4f}" if nav > 0 else "N/A")
         line(PASS if yf_yld > 0 else WARN, "yf_div_yield",
              f"{yf_yld:.4f}%" if yf_yld > 0 else "N/A（quoteSummary 補充值）")
@@ -574,9 +655,13 @@ def diagnose_us(ticker):
         rec(ticker, "expense_ratio", fee,    fee > 0)
         rec(ticker, "nav",           nav,    nav > 0)
     else:
+        fee_static = KNOWN_EXPENSE_RATIO.get(ticker, 0.0)
         line(FAIL, "quoteSummary", err)
+        if fee_static:
+            line(WARN, "expense_ratio", f"{fee_static*100:.4f}%  [靜態備援]",
+                 "quoteSummary 失敗但靜態備援補上")
         rec(ticker, "asset_size",    None, False)
-        rec(ticker, "expense_ratio", None, False)
+        rec(ticker, "expense_ratio", fee_static, fee_static > 0)
 
     # [D] 走勢圖 — 全部 8 個期間（對齊 etf_routes.py）
     sub("D. 價格走勢圖（全部 8 個期間 × Yahoo Finance v8 chart）")

@@ -3,7 +3,7 @@ routes/etf_routes.py — ETF 清單、詳情、搜尋、排行榜、歷史
 """
 import asyncio, logging, time
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, Query
 from fastapi.templating import Jinja2Templates
@@ -420,14 +420,16 @@ async def get_price_history(ticker: str, period: str = "1y"):
                     continue
 
                 if is_intraday:
-                    # 轉換為市場本地時間
+                    # 轉換為市場本地時間（UTC → 台股 UTC+8 / 美股 UTC-4）
                     labels = []
                     for t, _ in pairs:
-                        dt_local = datetime.utcfromtimestamp(t) + timedelta(hours=tz_offset_h)
+                        dt_local = (datetime.fromtimestamp(t, tz=timezone.utc).replace(tzinfo=None)
+                                    + timedelta(hours=tz_offset_h))
                         labels.append(dt_local.strftime("%H:%M") if p == "1D"
                                       else dt_local.strftime("%m/%d %H:%M"))
                 else:
-                    labels = [datetime.utcfromtimestamp(t).strftime("%Y-%m-%d") for t, _ in pairs]
+                    labels = [datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%d")
+                              for t, _ in pairs]
 
                 prices = [round(float(c), 2) for _, c in pairs]
                 return {"labels": labels, "prices": prices, "is_intraday": is_intraday}

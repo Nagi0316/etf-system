@@ -129,7 +129,7 @@ def _yahoo_ticker(ticker: str, market: str) -> str:
 # ══════════════════════════════════════════════════════════
 KNOWN_PAYOUT_FREQ: dict = {
     # ── 台股 ──
-    '0050':   '年配',    # 元大台灣50（每年1次，通常9月）
+    '0050':   '半年配',  # 元大台灣50（2024起改半年配）
     '006208': '半年配',  # 富邦台50（每半年1次）
     '0056':   '季配',    # 元大高股息（2020Q4起改季配）
     '00878':  '季配',    # 國泰永續高股息
@@ -191,6 +191,31 @@ KNOWN_PAYOUT_FREQ: dict = {
 }
 
 
+# ══════════════════════════════════════════════════════════
+#  費用率靜態備援（Yahoo v10 對台股常無法取得費用率）
+# ══════════════════════════════════════════════════════════
+KNOWN_EXPENSE_RATIO: dict = {
+    # 台股（單位：小數，例 0.0046 = 0.46%）
+    '0050':   0.0046, '006208': 0.0046, '0056':   0.0066, '00878':  0.0065,
+    '00919':  0.0090, '00929':  0.0095, '00713':  0.0045, '00940':  0.0065,
+    '00891':  0.0075, '00692':  0.0061, '0051':   0.0044, '0052':   0.0053,
+    '0053':   0.0044, '00850':  0.0060, '00757':  0.0099, '00939':  0.0080,
+    '00934':  0.0085, '00936':  0.0085, '00944':  0.0080, '00900':  0.0090,
+    '00907':  0.0075, '00915':  0.0080, '00892':  0.0065, '00861':  0.0080,
+    '00679B': 0.0015, '00687B': 0.0017, '00695B': 0.0020, '00720B': 0.0025,
+    '006205': 0.0099,
+    # 美股（通常 Yahoo 可取得，此處備援）
+    'SPY':  0.0009, 'QQQ':  0.0020, 'VOO':  0.0003, 'VTI':  0.0003,
+    'SCHD': 0.0006, 'IVV':  0.0003, 'VYM':  0.0006, 'JEPI': 0.0035,
+    'SOXL': 0.0176, 'ARKK': 0.0075, 'IWM':  0.0019, 'DIA':  0.0016,
+    'VIG':  0.0006, 'XLK':  0.0009, 'SMH':  0.0035, 'SOXX': 0.0035,
+    'VGT':  0.0010, 'TLT':  0.0015, 'IEF':  0.0015, 'AGG':  0.0003,
+    'BND':  0.0003, 'GLD':  0.0040, 'VNQ':  0.0013, 'VEA':  0.0005,
+    'VWO':  0.0008, 'EEM':  0.0068, 'XLF':  0.0009, 'XLE':  0.0009,
+    'XLV':  0.0009,
+}
+
+
 def _classify_freq(n: int) -> str:
     """根據過去 12 個月內的「個別配息事件次數」判斷配息頻率。
 
@@ -207,6 +232,26 @@ def _classify_freq(n: int) -> str:
     if n == 2: return "半年配"
     if n == 1: return "年配"
     return "不配息"
+
+
+# 頻率等級對照（數字越大頻率越高）
+_FREQ_RANK: dict = {'不配息': 0, '年配': 1, '半年配': 2, '季配': 3, '雙月配': 4, '月配': 5}
+
+
+def _best_freq(yf_count: int, ticker: str) -> str:
+    """取 Yahoo 事件數推算頻率 與 靜態備援 兩者中等級較高的。
+
+    設計原則：
+    - Yahoo 事件數 > 靜態備援：ETF 升頻（例如年配→半年配），信任最新資料。
+    - 靜態備援 > Yahoo 事件數：Yahoo 漏抓事件（常見於台股月配），以靜態備援校正。
+    - 若靜態備援無記錄：直接使用 Yahoo 推算結果。
+    """
+    yf_freq    = _classify_freq(yf_count)
+    known_freq = KNOWN_PAYOUT_FREQ.get(ticker, '')
+    if not known_freq:
+        return yf_freq
+    return (known_freq if _FREQ_RANK.get(known_freq, 0) >= _FREQ_RANK.get(yf_freq, 0)
+            else yf_freq)
 
 
 def _annualized_return(closes: list, years: float) -> float:
@@ -395,8 +440,8 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
                               if v.get("date", 0) >= cutoff and safe_float(v.get("amount", 0)) > 0]
                     if recent and current_price > 0:
                         dy   = round(sum(recent) / current_price * 100, 4)
-                        # 優先以靜態備援校正頻率（歷史資料更可靠）；否則由事件數推算
-                        freq = KNOWN_PAYOUT_FREQ.get(ticker) or _classify_freq(len(recent))
+                        # 取 Yahoo 事件數 與 靜態備援 兩者中頻率等級較高者（防止漏抓或升頻）
+                        freq = _best_freq(len(recent), ticker)
                         return dy, freq
         except Exception as e:
             logger.debug(f"TW dividend Yahoo {yt}: {e}")
@@ -418,7 +463,8 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
                         div_amt = float(str(row[1]).replace(",", "").strip())
                         if 0.01 < div_amt < 200 and current_price > 0:
                             dy   = round(div_amt / current_price * 100, 4)
-                            freq = KNOWN_PAYOUT_FREQ.get(ticker, "年配")
+                            # TWSE TWT48U 無法判斷頻率，直接用靜態備援
+                            freq = KNOWN_PAYOUT_FREQ.get(ticker) or "年配"
                             return dy, freq
                     except (ValueError, TypeError):
                         continue
@@ -627,7 +673,7 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
         'asset_size': detail.get("asset_size", 0),
         'nav': None,  # 台股 NAV 由資產管理公司每日公告，無即時來源；None 存入 DB 讓前端顯示「暫無資料」
         'pe_ratio': detail.get("pe_ratio", 0),
-        'expense_ratio': detail.get("expense_ratio", 0),
+        'expense_ratio': detail.get("expense_ratio") or KNOWN_EXPENSE_RATIO.get(ticker, 0),
         'dividend_yield': div_yield,
         'payout_freq': payout_freq or "不配息",
         'annual_return_1y': ann_1y,
@@ -671,8 +717,8 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
                 recent = [v["amount"] for v in events.values() if v.get("date", 0) >= cutoff]
                 if recent:
                     div_yield   = round(sum(recent) / price * 100, 4)
-                    # 優先用靜態備援；否則由實際事件數推算（支援全部5種頻率）
-                    payout_freq = KNOWN_PAYOUT_FREQ.get(ticker) or _classify_freq(len(recent))
+                    # 取 Yahoo 事件數 與 靜態備援 兩者中頻率等級較高者
+                    payout_freq = _best_freq(len(recent), ticker)
     except Exception as e:
         logger.debug(f"US history/dividend {ticker}: {e}")
 
@@ -689,7 +735,7 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     detail = _fetch_yahoo_quotesummary(ticker)
     asset_size    = detail.get("asset_size", 0.0)
     pe_ratio      = detail.get("pe_ratio", 0.0)
-    expense_ratio = detail.get("expense_ratio", 0.0)
+    expense_ratio = detail.get("expense_ratio") or KNOWN_EXPENSE_RATIO.get(ticker, 0.0)
     nav           = detail.get("nav") or price
     yf_yield      = detail.get("div_yield", 0.0)
     if yf_yield > div_yield:
