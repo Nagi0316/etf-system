@@ -63,7 +63,19 @@ async def _startup_sequence():
     from scheduler import _update_active
     logger.info("▶ 開始更新活躍 ETF 行情...")
     await _update_active()
-    logger.info("✅ 啟動序列完成")
+
+    # Step 3: 背景補齊 TW ETF 歷史收盤價（只補缺月，冪等；不阻塞啟動）
+    async def _bg_backfill():
+        await asyncio.sleep(30)  # 等 _update_active 完成後再開始，避免同時競爭 DB
+        try:
+            from services.twse_history import backfill_tw_history
+            result = await asyncio.to_thread(backfill_tw_history)
+            logger.info(f"▶ 啟動歷史補齊完成：{result['etfs']} 檔，補 {result['days_inserted']} 日")
+        except Exception as e:
+            logger.warning(f"啟動歷史補齊失敗（繼續）: {e}")
+
+    asyncio.ensure_future(_bg_backfill())
+    logger.info("✅ 啟動序列完成（歷史補齊已在背景啟動）")
 
 
 # ══════════════════════════════════════════════════════════

@@ -2,7 +2,7 @@
 routes/etf_routes.py — ETF 清單、詳情、搜尋、排行榜、歷史
 """
 import asyncio, logging, time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 from typing import Optional
 from fastapi import APIRouter, Request, Query
 from fastapi.templating import Jinja2Templates
@@ -365,6 +365,35 @@ def _maybe_background_refresh(ticker: str, row: dict):
 
 # ── 歷史走勢 ──
 
+def _fetch_db_price_history(ticker: str, period: str) -> Optional[dict]:
+    """從 etf_daily_data 取歷史收盤價（Yahoo Finance 失敗時的 DB 備援）"""
+    today = date.today()
+    PERIOD_DAYS = {
+        "1D": 1, "5D": 5, "1M": 35, "3M": 95,
+        "6M": 185, "YTD": (today - date(today.year, 1, 1)).days + 1,
+        "1Y": 370, "3Y": 1100, "5Y": 1830, "ALL": 9999, "MAX": 9999,
+    }
+    days = PERIOD_DAYS.get(period.upper(), 370)
+    since = today - timedelta(days=days)
+    try:
+        with get_db() as (conn, cursor):
+            cursor.execute(
+                "SELECT date, current_price FROM etf_daily_data "
+                "WHERE ticker=%s AND date >= %s AND current_price > 0 "
+                "ORDER BY date ASC",
+                (ticker, since.strftime("%Y-%m-%d")),
+            )
+            rows = cursor.fetchall()
+        if len(rows) < 2:
+            return None
+        labels = [str(r["date"])[:10] for r in rows]
+        prices = [round(float(r["current_price"]), 2) for r in rows]
+        return {"labels": labels, "prices": prices, "is_intraday": False}
+    except Exception as e:
+        logger.debug(f"DB price history {ticker}: {e}")
+    return None
+
+
 @router.get("/api/etf/price-history/{ticker}")
 async def get_price_history(ticker: str, period: str = "1y"):
     ticker = ticker.upper()
@@ -439,6 +468,8 @@ async def get_price_history(ticker: str, period: str = "1y"):
         return None
 
     data = await asyncio.to_thread(_fetch)
+    if not data and not is_intraday:
+        data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
     if not data:
         return safe_json({"status": "error", "message": "無法取得歷史資料"}, 400)
     return safe_json({

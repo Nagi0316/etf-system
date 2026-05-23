@@ -375,6 +375,25 @@ async def _update_missing():
 
 
 # ──────────────────────────────────────────────
+#  TWSE 歷史價格補齊（每日 03:00 增量補缺月份）
+# ──────────────────────────────────────────────
+
+def schedule_history_backfill():
+    if MAIN_LOOP and MAIN_LOOP.is_running():
+        asyncio.run_coroutine_threadsafe(_run_history_backfill(), MAIN_LOOP)
+
+
+async def _run_history_backfill():
+    """增量補齊 TW ETF 歷史收盤價（只補尚未存在的月份，冪等安全）。"""
+    from services.twse_history import backfill_tw_history
+    try:
+        result = await asyncio.to_thread(backfill_tw_history)
+        logger.info(f"✅ 歷史補齊完成：{result['etfs']} 檔，補 {result['days_inserted']} 日")
+    except Exception as e:
+        logger.warning(f"歷史補齊失敗: {e}")
+
+
+# ──────────────────────────────────────────────
 #  TWSE 全市場同步
 # ──────────────────────────────────────────────
 
@@ -470,6 +489,9 @@ def start_scheduler() -> BackgroundScheduler:
     # 04:15 美股收盤後完整更新收盤資料（美東 16:15，夏令對應台灣 04:15）
     sch.add_job(lambda: schedule_update(),    CronTrigger(hour=4,  minute=15), max_instances=1)
 
+    # 每日 03:00 增量補齊 TW ETF 歷史收盤價（只補缺月，冪等）
+    sch.add_job(lambda: schedule_history_backfill(), CronTrigger(hour=3, minute=0), max_instances=1)
+
     # 快取維護（每 30 分鐘）
     sch.add_job(_evict_cache, "interval", minutes=30, max_instances=1)
 
@@ -480,7 +502,7 @@ def start_scheduler() -> BackgroundScheduler:
         "   【盤中完整】每 30 分鐘更新含 dividend/history 補充資料\n"
         "   【台股】09:00–13:30 Asia/Taipei\n"
         "   【美股】09:30–16:00 America/New_York（DST-aware）\n"
-        "   07:00 補漏掃描 | 08:00 TWSE 同步\n"
+        "   03:00 TWSE 歷史補齊 | 07:00 補漏掃描 | 08:00 TWSE 同步\n"
         "   14:35 台股收盤完整更新 | 04:15 美股收盤完整更新 | 每30分清快取"
     )
     return sch

@@ -192,6 +192,30 @@ KNOWN_PAYOUT_FREQ: dict = {
 
 
 # ══════════════════════════════════════════════════════════
+#  年配息金額靜態備援（Yahoo 在 Railway 環境常被封鎖，此為最終 fallback）
+#  單位：TWD / 股 / 年（四捨五入至小數一位）
+#  資料來源：近 4 季或 2 期配息合計（更新基準：2025-Q1）
+#  注意：此為近似值，實際殖利率以即時爬取為準；每年建議人工校對一次。
+# ══════════════════════════════════════════════════════════
+KNOWN_ANNUAL_DIVIDEND: dict = {
+    # ── 台股寬基 ──
+    '0050':   3.40,  '006208': 4.50,  '0051':   1.20,
+    '0052':   3.00,  '0053':   1.50,
+    # ── 高股息 ──
+    '0056':   3.50,  '00878':  1.75,  '00713':  2.68,
+    '00919':  2.52,  '00929':  1.80,  '00940':  0.90,
+    '00891':  3.00,  '00692':  4.50,  '00850':  1.60,
+    '00939':  1.44,  '00934':  1.68,  '00936':  1.56,
+    '00944':  2.00,  '00900':  2.40,  '00907':  1.80,
+    '00915':  1.60,  '00892':  1.20,  '00861':  1.00,
+    '00757':  2.50,  '006205': 0.50,
+    # ── 債券 ETF ──
+    '00679B': 0.42,  '00687B': 0.38,
+    '00695B': 0.36,  '00720B': 0.48,
+}
+
+
+# ══════════════════════════════════════════════════════════
 #  費用率靜態備援（Yahoo v10 對台股常無法取得費用率）
 # ══════════════════════════════════════════════════════════
 KNOWN_EXPENSE_RATIO: dict = {
@@ -473,7 +497,17 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
 
     # 3. 靜態備援：至少確保頻率標示正確，殖利率填 0 表示未知
     if ticker in KNOWN_PAYOUT_FREQ:
-        return 0.0, KNOWN_PAYOUT_FREQ[ticker]
+        freq = KNOWN_PAYOUT_FREQ[ticker]
+        # 4. 最終 fallback：用靜態年配息金額 ÷ 現價 估算殖利率（當 Yahoo/TWSE 均失敗時）
+        if ticker in KNOWN_ANNUAL_DIVIDEND and current_price > 0:
+            approx_dy = round(KNOWN_ANNUAL_DIVIDEND[ticker] / current_price * 100, 4)
+            return approx_dy, freq
+        return 0.0, freq
+
+    # 4. 無任何紀錄：嘗試靜態年配息估算
+    if ticker in KNOWN_ANNUAL_DIVIDEND and current_price > 0:
+        approx_dy = round(KNOWN_ANNUAL_DIVIDEND[ticker] / current_price * 100, 4)
+        return approx_dy, "不配息"
 
     return 0.0, "不配息"
 
