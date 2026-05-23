@@ -423,7 +423,7 @@ def _fetch_twse_month(ticker: str, year: int, month: int) -> list[dict]:
         f"?l=zh-tw&d={year - 1911}/{month:02d}&stkno={ticker}&output=json",
     ]:
         try:
-            r = _req.get(url, headers=_TWSE_HIST_HEADERS, timeout=12, verify=_certifi.where())
+            r = _req.get(url, headers=_TWSE_HIST_HEADERS, timeout=5, verify=_certifi.where())
             if r.status_code != 200:
                 continue
             body = r.json()
@@ -488,7 +488,7 @@ def _fetch_twse_price_history(ticker: str, period: str) -> Optional[dict]:
         month_days = _fetch_twse_month(ticker, target.year, target.month)
         all_days.extend(month_days)
         if i > 0:
-            time.sleep(0.15)  # 避免速率限制，但不要太慢
+            time.sleep(0.05)  # 避免速率限制；0.05s 已足夠，不需要 0.15s
 
     if len(all_days) < 5:
         return None
@@ -557,7 +557,8 @@ async def get_price_history(ticker: str, period: str = "1y"):
             try:
                 url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
                        f"?range={yf_range}&interval={yf_interval}")
-                r = _new_session(f"https://finance.yahoo.com/quote/{symbol}").get(url, timeout=15)
+                # Railway 上 Yahoo Finance 經常被封鎖；使用短 timeout 快速失敗，避免長時間等待
+                r = _new_session(f"https://finance.yahoo.com/quote/{symbol}").get(url, timeout=5)
                 if r.status_code != 200:
                     continue
                 result = r.json().get("chart", {}).get("result")
@@ -587,15 +588,16 @@ async def get_price_history(ticker: str, period: str = "1y"):
                 logger.debug(f"price history {symbol}: {e}")
         return None
 
-    data = await asyncio.to_thread(_fetch)
-    if not data and not is_intraday:
-        if market == "TW":
-            # TW ETF：先試 DB（已有足夠歷史 → 快），否則走 TWSE 官方 API 抓真實歷史
-            data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
-            if not data:
-                data = await asyncio.to_thread(_fetch_twse_price_history, ticker, p)
-        else:
-            # US ETF：Yahoo 失敗後只能靠 DB
+    if not is_intraday and market == "TW":
+        # TW ETF 非即時：Railway 上 Yahoo 必定逾時，直接跳過，先查 DB 再打 TWSE
+        data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
+        if not data:
+            data = await asyncio.to_thread(_fetch_twse_price_history, ticker, p)
+    else:
+        # 即時（1D/5D）或 US ETF：先嘗試 Yahoo（短 timeout），失敗後回落 DB
+        data = await asyncio.to_thread(_fetch)
+        if not data and not is_intraday:
+            # US ETF Yahoo 失敗：只能靠 DB
             data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
     if not data:
         return safe_json({"status": "error", "message": "無法取得歷史資料"}, 400)

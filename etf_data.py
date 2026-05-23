@@ -63,7 +63,7 @@ def _jitter(base: float = 1.0, spread: float = 2.0):
     time.sleep(base + random.uniform(0, spread))
 
 
-def _get_with_retry(session: req_lib.Session, url: str, timeout: int = 12,
+def _get_with_retry(session: req_lib.Session, url: str, timeout: int = 6,
                     max_attempts: int = 3) -> Optional[req_lib.Response]:
     """帶指數退避的 GET，自動處理 429 限速與瞬斷重試。"""
     for attempt in range(max_attempts):
@@ -86,7 +86,7 @@ def _get_with_retry(session: req_lib.Session, url: str, timeout: int = 12,
         except req_lib.exceptions.ConnectionError as e:
             logger.debug(f"ConnectionError {url[:60]}: {e}")
         if attempt < max_attempts - 1:
-            time.sleep(5 * (attempt + 1) + random.uniform(0, 3))
+            time.sleep(2 * (attempt + 1) + random.uniform(0, 1))
     return None
 
 
@@ -519,7 +519,7 @@ def _fetch_tw_history(ticker: str) -> list:
     for yt in (primary, alt):
         try:
             url = f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}?range=5y&interval=1mo"
-            r = _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{yt}"), url, timeout=12)
+            r = _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{yt}"), url, timeout=6)
             if r and r.status_code == 200:
                 result = r.json().get("chart", {}).get("result")
                 if result:
@@ -556,7 +556,7 @@ def _fetch_yahoo_quotesummary(yt: str) -> dict:
             s.headers["Referer"] = f"https://finance.yahoo.com/quote/{yt}"
             if cookies_snap:
                 s.cookies.update(cookies_snap)
-            r = s.get(url, timeout=12)
+            r = s.get(url, timeout=6)
             if r.status_code == 401:
                 with _crumb_lock:
                     _yf_crumb = ""
@@ -592,7 +592,7 @@ def _fetch_yahoo_quotesummary(yt: str) -> dict:
             }
         except Exception as e:
             logger.debug(f"quoteSummary {yt} attempt {attempt+1}: {e}")
-            if attempt < 2: time.sleep(5 * (attempt + 1))
+            if attempt < 2: time.sleep(2 * (attempt + 1))
     return empty
 
 
@@ -617,7 +617,7 @@ def _fetch_us_quote(ticker: str) -> Optional[dict]:
     try:
         s = _new_session(referer)
         s.headers["Origin"] = "https://finance.yahoo.com"
-        r = _get_with_retry(s, url, timeout=12, max_attempts=3)
+        r = _get_with_retry(s, url, timeout=6, max_attempts=3)
         if not r or r.status_code != 200:
             return None
         j = r.json()
@@ -741,7 +741,7 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     history, div_yield, payout_freq = [], 0.0, "不配息"
     try:
         url = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=5y&interval=1mo&events=dividends"
-        r = _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{ticker}"), url, timeout=12)
+        r = _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{ticker}"), url, timeout=6)
         if r and r.status_code == 200:
             res = r.json().get("chart", {}).get("result", [{}])[0]
             history = [safe_float(c) for c in (res.get("indicators", {}).get("quote", [{}])[0].get("close") or []) if c is not None]
