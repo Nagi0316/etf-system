@@ -350,16 +350,31 @@ def _maybe_background_refresh(ticker: str, row: dict):
 
 # ── 歷史走勢 ──
 
+# DB 需達到的最低有效點數，才足以畫出有意義的走勢圖（避免 2-3 個連續相近點畫成直線）
+_MIN_CHART_ROWS = {
+    "1M": 10, "3M": 20, "6M": 40, "YTD": 20,
+    "1Y": 60, "3Y": 100, "5Y": 100, "ALL": 30, "MAX": 30,
+}
+
+_TWSE_HIST_HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 (compatible; ETF-System/2.0)",
+}
+
+
 def _fetch_db_price_history(ticker: str, period: str) -> Optional[dict]:
-    """從 etf_daily_data 取歷史收盤價（Yahoo Finance 失敗時的 DB 備援）"""
+    """從 etf_daily_data 取歷史收盤價。
+    需達到 _MIN_CHART_ROWS 門檻，否則返回 None 讓 TWSE 抓取真實歷史。
+    """
     today = date.today()
     PERIOD_DAYS = {
-        "1D": 1, "5D": 5, "1M": 35, "3M": 95,
-        "6M": 185, "YTD": (today - date(today.year, 1, 1)).days + 1,
+        "1M": 35, "3M": 95, "6M": 185,
+        "YTD": (today - date(today.year, 1, 1)).days + 1,
         "1Y": 370, "3Y": 1100, "5Y": 1830, "ALL": 9999, "MAX": 9999,
     }
     days = PERIOD_DAYS.get(period.upper(), 370)
     since = today - timedelta(days=days)
+    min_rows = _MIN_CHART_ROWS.get(period.upper(), 60)
     try:
         with get_db() as (conn, cursor):
             cursor.execute(
@@ -369,7 +384,8 @@ def _fetch_db_price_history(ticker: str, period: str) -> Optional[dict]:
                 (ticker, since.strftime("%Y-%m-%d")),
             )
             rows = cursor.fetchall()
-        if len(rows) < 2:
+        if len(rows) < min_rows:
+            logger.debug(f"DB price history {ticker} period={period}: only {len(rows)} rows (need {min_rows})")
             return None
         labels = [str(r["date"])[:10] for r in rows]
         prices = [round(float(r["current_price"]), 2) for r in rows]
@@ -379,16 +395,82 @@ def _fetch_db_price_history(ticker: str, period: str) -> Optional[dict]:
     return None
 
 
-_TWSE_HIST_HEADERS = {
-    "Accept": "application/json",
-    "User-Agent": "Mozilla/5.0 (compatible; ETF-System/2.0)",
-}
+def _save_history_to_db(ticker: str, days: list[dict]):
+    """把 TWSE 抓回的歷史日收盤價寫入 DB，只補空缺不覆蓋現有資料。"""
+    if not days:
+        return
+    try:
+        with get_db() as (conn, cursor):
+            for d in days:
+                cursor.execute(
+                    "INSERT INTO etf_daily_data (ticker, date, current_price) "
+                    "VALUES (%s, %s, %s) "
+                    "ON DUPLICATE KEY UPDATE "
+                    "current_price = IF(current_price = 0, VALUES(current_price), current_price)",
+                    (ticker, d["date"], d["close"]),
+                )
+            conn.commit()
+    except Exception as e:
+        logger.debug(f"save history to DB {ticker}: {e}")
+
+
+def _fetch_twse_month(ticker: str, year: int, month: int) -> list[dict]:
+    """從 TWSE 抓單月日收盤資料，同時嘗試 TSE 與 TPEX。"""
+    date_str = f"{year}{month:02d}01"
+    # TSE 上市
+    for url in [
+        f"https://www.twse.com.tw/rwd/zh/stock/STOCK_DAY?stockNo={ticker}&date={date_str}&response=json",
+        f"https://www.tpex.org.tw/web/stock/aftertrading/otc_quotes_no1430/stk_wn1430_result.php"
+        f"?l=zh-tw&d={year - 1911}/{month:02d}&stkno={ticker}&output=json",
+    ]:
+        try:
+            r = _req.get(url, headers=_TWSE_HIST_HEADERS, timeout=12, verify=_certifi.where())
+            if r.status_code != 200:
+                continue
+            body = r.json()
+            # TWSE 格式
+            if body.get("stat") == "OK" and body.get("data"):
+                result = []
+                for row in body["data"]:
+                    try:
+                        parts = row[0].strip().split("/")
+                        iso_date = f"{int(parts[0]) + 1911}-{parts[1]}-{parts[2]}"
+                        raw = row[6].strip().replace(",", "")
+                        close = float(''.join(c for c in raw if c.isdigit() or c == '.'))
+                        if close > 0:
+                            result.append({"date": iso_date, "close": close})
+                    except Exception:
+                        continue
+                if result:
+                    return result
+            # TPEX 格式（欄位不同）
+            tpex_data = body.get("aaData") or body.get("data") or []
+            if tpex_data:
+                result = []
+                for row in tpex_data:
+                    try:
+                        # TPEX aaData: [日期, 收盤, 漲跌, ...] — 收盤在 index 2
+                        parts = str(row[0]).strip().split("/")
+                        iso_date = f"{int(parts[0]) + 1911}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
+                        raw = str(row[2]).strip().replace(",", "")
+                        close = float(''.join(c for c in raw if c.isdigit() or c == '.'))
+                        if close > 0:
+                            result.append({"date": iso_date, "close": close})
+                    except Exception:
+                        continue
+                if result:
+                    return result
+        except Exception as e:
+            logger.debug(f"TWSE/TPEX month {ticker} {year}/{month}: {e}")
+    return []
 
 
 def _fetch_twse_price_history(ticker: str, period: str) -> Optional[dict]:
-    """從 TWSE STOCK_DAY API 即時抓取歷史收盤價（TW ETF 專用，不依賴 Yahoo Finance）。
-    結果快取 6 小時，避免重複打 TWSE API。
+    """從 TWSE / TPEX 官方 API 抓歷史收盤價（不依賴 Yahoo Finance）。
+    成功後寫入 DB，下次請求直接從 DB 走，速度大幅提升。
     """
+    from dateutil.relativedelta import relativedelta as _rd
+
     cache_key = f"twse_hist:{ticker}:{period}"
     cached = cache.get(cache_key)
     if cached:
@@ -403,42 +485,21 @@ def _fetch_twse_price_history(ticker: str, period: str) -> Optional[dict]:
 
     all_days: list[dict] = []
     for i in range(months_needed - 1, -1, -1):
-        # 從最早月份到最新月份
-        from dateutil.relativedelta import relativedelta as _rd
         target = today - _rd(months=i)
-        date_str = f"{target.year}{target.month:02d}01"
-        url = (f"https://www.twse.com.tw/rwd/zh/stock/STOCK_DAY"
-               f"?stockNo={ticker}&date={date_str}&response=json")
-        try:
-            r = _req.get(url, headers=_TWSE_HIST_HEADERS, timeout=15,
-                         verify=_certifi.where())
-            if r.status_code != 200:
-                continue
-            body = r.json()
-            if body.get("stat") != "OK":
-                continue
-            for row in body.get("data", []):
-                try:
-                    parts = row[0].strip().split("/")
-                    iso_date = f"{int(parts[0]) + 1911}-{parts[1]}-{parts[2]}"
-                    close = float(row[6].strip().replace(",", ""))
-                    if close > 0:
-                        all_days.append({"date": iso_date, "close": close})
-                except Exception:
-                    continue
-        except Exception as e:
-            logger.debug(f"TWSE hist {ticker} {date_str}: {e}")
-        time.sleep(0.3)
+        month_days = _fetch_twse_month(ticker, target.year, target.month)
+        all_days.extend(month_days)
+        if i > 0:
+            time.sleep(0.15)  # 避免速率限制，但不要太慢
 
-    if len(all_days) < 2:
+    if len(all_days) < 5:
         return None
 
-    # 按日期排序並去重
-    seen_dates: set = set()
+    # 排序去重
+    seen: set = set()
     deduped = []
     for d in sorted(all_days, key=lambda x: x["date"]):
-        if d["date"] not in seen_dates:
-            seen_dates.add(d["date"])
+        if d["date"] not in seen:
+            seen.add(d["date"])
             deduped.append(d)
 
     result = {
@@ -447,6 +508,10 @@ def _fetch_twse_price_history(ticker: str, period: str) -> Optional[dict]:
         "is_intraday": False,
     }
     cache.set(cache_key, result, ttl=21600)  # 6h
+
+    # 寫入 DB，讓下次請求從 DB 直接回傳（無需再打 TWSE API）
+    _save_history_to_db(ticker, deduped)
+
     return result
 
 
@@ -525,11 +590,14 @@ async def get_price_history(ticker: str, period: str = "1y"):
 
     data = await asyncio.to_thread(_fetch)
     if not data and not is_intraday:
-        # 優先用 DB 已有的收盤價（速度最快）
-        data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
-        # DB 不足時，TW ETF 改走 TWSE 官方 API（不依賴 Yahoo）
-        if not data and market == "TW":
-            data = await asyncio.to_thread(_fetch_twse_price_history, ticker, p)
+        if market == "TW":
+            # TW ETF：先試 DB（已有足夠歷史 → 快），否則走 TWSE 官方 API 抓真實歷史
+            data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
+            if not data:
+                data = await asyncio.to_thread(_fetch_twse_price_history, ticker, p)
+        else:
+            # US ETF：Yahoo 失敗後只能靠 DB
+            data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
     if not data:
         return safe_json({"status": "error", "message": "無法取得歷史資料"}, 400)
     return safe_json({
