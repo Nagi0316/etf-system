@@ -157,7 +157,6 @@
           <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">5 年年化</span><span id="return-5y" class="font-semibold tabular-nums">-</span></div>
           <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">配息頻率</span><span id="payout-freq" class="font-medium text-slate-700 dark:text-slate-300">-</span></div>
           <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">近年殖利率</span><span id="dividend-yield" class="font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">-</span></div>
-          <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">TWD 現價</span><span id="twd-price" class="font-medium text-slate-700 dark:text-slate-300 tabular-nums hidden">-</span></div>
         </div>
       </div>
     </div>
@@ -394,12 +393,7 @@ function renderData() {
   const yld = parseFloat(d.dividend_yield) || 0;
   document.getElementById('dividend-yield').textContent = yld > 0 ? yld.toFixed(2)+'%' : '-';
 
-  // USD→TWD (美股)
-  if (d.market === 'US' && d.price_twd) {
-    const twdEl = document.getElementById('twd-price');
-    twdEl.textContent = `NT$ ${Math.round(d.price_twd).toLocaleString()}`;
-    twdEl.closest('div').classList.remove('hidden');
-  }
+
 }
 
 // 低檔加碼
