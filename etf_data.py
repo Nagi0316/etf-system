@@ -124,6 +124,91 @@ def _yahoo_ticker(ticker: str, market: str) -> str:
     return ticker
 
 
+# ══════════════════════════════════════════════════════════
+#  配息頻率靜態備援（當即時爬取失敗時確保標籤正確）
+# ══════════════════════════════════════════════════════════
+KNOWN_PAYOUT_FREQ: dict = {
+    # ── 台股 ──
+    '0050':   '年配',    # 元大台灣50（每年1次，通常9月）
+    '006208': '半年配',  # 富邦台50（每半年1次）
+    '0056':   '季配',    # 元大高股息（2020Q4起改季配）
+    '00878':  '季配',    # 國泰永續高股息
+    '00919':  '月配',    # 群益台灣精選高息
+    '00929':  '月配',    # 復華台灣科技優息
+    '00713':  '季配',    # 元大台灣高息低波
+    '00940':  '月配',    # 元大台灣價值高息
+    '00891':  '季配',    # 中信關鍵半導體
+    '00692':  '年配',    # 富邦公司治理
+    '0051':   '年配',    # 元大中型100
+    '0052':   '年配',    # 富邦科技
+    '0053':   '年配',    # 元大電子
+    '00850':  '季配',    # 元大臺灣ESG永續
+    '00757':  '季配',    # 統一FANG+
+    '00939':  '月配',    # 統一台灣高息動能
+    '00934':  '月配',    # 中信成長高股息
+    '00936':  '月配',    # 台新台灣永續高息
+    '00944':  '月配',    # 群益半導體收益
+    '00900':  '季配',    # 富邦特選高股息30
+    '00907':  '季配',    # 永豐優息存股
+    '00915':  '雙月配',  # 凱基優選高股息30（每2個月1次）
+    '00892':  '季配',    # 富邦台灣半導體
+    '00861':  '季配',    # 元大全球AI
+    '00679B': '半年配',  # 元大美債20年
+    '00687B': '半年配',  # 國泰20年美債
+    '00695B': '半年配',  # 富邦美債20年
+    '00720B': '季配',    # 元大投資級公司債
+    '006205': '年配',    # 富邦上証
+    # ── 美股 ──
+    'SPY':    '季配',
+    'QQQ':    '季配',
+    'VOO':    '季配',
+    'VTI':    '季配',
+    'SCHD':   '季配',
+    'IVV':    '季配',
+    'VYM':    '季配',
+    'JEPI':   '月配',
+    'SOXL':   '季配',
+    'ARKK':   '不配息',
+    'IWM':    '季配',
+    'DIA':    '月配',
+    'VIG':    '季配',
+    'XLK':    '季配',
+    'SMH':    '季配',
+    'SOXX':   '季配',
+    'VGT':    '季配',
+    'TLT':    '月配',
+    'IEF':    '月配',
+    'AGG':    '月配',
+    'BND':    '月配',
+    'GLD':    '不配息',
+    'VNQ':    '季配',
+    'VEA':    '季配',
+    'VWO':    '季配',
+    'EEM':    '半年配',
+    'XLF':    '季配',
+    'XLE':    '季配',
+    'XLV':    '季配',
+}
+
+
+def _classify_freq(n: int) -> str:
+    """根據過去 12 個月內的「個別配息事件次數」判斷配息頻率。
+
+    月配   (12x/年): n ≥  9  ── 允許最多 3 次未入帳/缺失
+    雙月配  ( 6x/年): n ≥  5  ── 每 2 個月配 1 次（6次/年，允許1次缺失）
+    季配   ( 4x/年): n ≥  3  ── 每季配 1 次（允許1次缺失）
+    半年配  ( 2x/年): n == 2
+    年配   ( 1x/年): n == 1
+    不配息:          n == 0
+    """
+    if n >= 9: return "月配"
+    if n >= 5: return "雙月配"
+    if n >= 3: return "季配"
+    if n == 2: return "半年配"
+    if n == 1: return "年配"
+    return "不配息"
+
+
 def _annualized_return(closes: list, years: float) -> float:
     if not closes or len(closes) < 5:
         return 0.0
@@ -284,17 +369,18 @@ def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
 
 
 def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
-    """取得台股 ETF 配息資料。
+    """取得台股 ETF 配息資料，回傳 (dividend_yield_pct, payout_freq)。
 
-    策略：
-    1. Yahoo Finance dividend events（上市與上櫃通用，最穩定；自動嘗試 .TW / .TWO 兩種後綴）
-    2. TWSE TWT48U 公告（僅限上市 ETF，末位為數字的代碼）
+    來源優先順序：
+    1. Yahoo Finance chart events — 個別配息事件，可準確計算頻率
+    2. TWSE TWT48U — 每筆為「年度彙總」，只取最近年度金額估算殖利率；
+       頻率無法從此端點判斷，改用靜態備援 KNOWN_PAYOUT_FREQ
+    3. 靜態備援 — 確保 payout_freq 不因爬取失敗而標成「不配息」
     """
-    # 自動嘗試 .TW 與 .TWO 後綴，修正非 B 結尾上櫃 ETF 查錯代碼問題
     primary = _yahoo_ticker(ticker, "TW")
     alt     = f"{ticker}.TWO" if primary.endswith(".TW") else f"{ticker}.TW"
 
-    # 1. Yahoo Finance events（適用所有台股 ETF，含上櫃/債券/槓桿/反向）
+    # 1. Yahoo Finance events（個別事件，頻率最準確）
     for yt in (primary, alt):
         try:
             url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
@@ -308,16 +394,16 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
                     recent = [v["amount"] for v in events.values()
                               if v.get("date", 0) >= cutoff and safe_float(v.get("amount", 0)) > 0]
                     if recent and current_price > 0:
-                        dy = round(sum(recent) / current_price * 100, 4)
-                        n  = len(recent)
-                        freq = ("月配" if n >= 10 else "季配" if n >= 3
-                                else "半年配" if n == 2 else "年配")
+                        dy   = round(sum(recent) / current_price * 100, 4)
+                        # 優先以靜態備援校正頻率（歷史資料更可靠）；否則由事件數推算
+                        freq = KNOWN_PAYOUT_FREQ.get(ticker) or _classify_freq(len(recent))
                         return dy, freq
         except Exception as e:
             logger.debug(f"TW dividend Yahoo {yt}: {e}")
         _jitter(0.5, 1.5)
 
-    # 2. TWSE TWT48U（只對末位為數字的上市 ETF 有效）
+    # 2. TWSE TWT48U（每筆 = 一個年度彙總，column[1] = 現金股利合計）
+    #    只取最近一筆有效金額估算殖利率；頻率改由靜態備援決定
     if ticker[-1].isdigit():
         try:
             url = (f"https://www.twse.com.tw/exchangeReport/TWT48U"
@@ -325,26 +411,23 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
             r = _get_with_retry(_new_session("https://www.twse.com.tw/"), url, timeout=10)
             rows = r.json().get("data", []) if r else []
             if rows:
-                recent = rows[-12:]
-                total_div, n = 0.0, 0
-                for row in recent:
-                    if not isinstance(row, list):
+                for row in reversed(rows):          # 最新年度在後，倒序找第一筆有效值
+                    if not isinstance(row, list) or len(row) < 2:
                         continue
-                    for cell in row[1:6]:
-                        s = str(cell).replace(",", "").strip()
-                        try:
-                            v = float(s)
-                            if 0.005 < v < 50:
-                                total_div += v; n += 1; break
-                        except (ValueError, TypeError):
-                            continue
-                if n > 0 and current_price > 0:
-                    dy = round(total_div / current_price * 100, 4)
-                    freq = ("月配" if n >= 10 else "季配" if n >= 3
-                            else "半年配" if n == 2 else "年配")
-                    return dy, freq
+                    try:
+                        div_amt = float(str(row[1]).replace(",", "").strip())
+                        if 0.01 < div_amt < 200 and current_price > 0:
+                            dy   = round(div_amt / current_price * 100, 4)
+                            freq = KNOWN_PAYOUT_FREQ.get(ticker, "年配")
+                            return dy, freq
+                    except (ValueError, TypeError):
+                        continue
         except Exception as e:
             logger.debug(f"TW dividend TWSE {ticker}: {e}")
+
+    # 3. 靜態備援：至少確保頻率標示正確，殖利率填 0 表示未知
+    if ticker in KNOWN_PAYOUT_FREQ:
+        return 0.0, KNOWN_PAYOUT_FREQ[ticker]
 
     return 0.0, "不配息"
 
@@ -588,7 +671,8 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
                 recent = [v["amount"] for v in events.values() if v.get("date", 0) >= cutoff]
                 if recent:
                     div_yield   = round(sum(recent) / price * 100, 4)
-                    payout_freq = "月配" if len(recent) >= 10 else "季配" if len(recent) >= 3 else "半年配" if len(recent) == 2 else "年配"
+                    # 優先用靜態備援；否則由實際事件數推算（支援全部5種頻率）
+                    payout_freq = KNOWN_PAYOUT_FREQ.get(ticker) or _classify_freq(len(recent))
     except Exception as e:
         logger.debug(f"US history/dividend {ticker}: {e}")
 
@@ -611,7 +695,10 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     if yf_yield > div_yield:
         div_yield = round(yf_yield, 4)
         if div_yield > 0 and payout_freq == "不配息":
-            payout_freq = "季配"
+            payout_freq = KNOWN_PAYOUT_FREQ.get(ticker, "季配")
+    # 最終備援：若仍為「不配息」但靜態資料有記錄，以靜態資料為準
+    if payout_freq == "不配息" and ticker in KNOWN_PAYOUT_FREQ:
+        payout_freq = KNOWN_PAYOUT_FREQ[ticker]
 
     return {
         'ticker': ticker, 'current_price': price,
@@ -658,10 +745,24 @@ def save_etf_data(data: dict):
               current_price=VALUES(current_price), price_change=VALUES(price_change),
               price_change_percent=VALUES(price_change_percent),
               volume=VALUES(volume), discount_premium=VALUES(discount_premium),
-              dividend_yield=VALUES(dividend_yield), payout_freq=VALUES(payout_freq),
-              annual_return_1y=VALUES(annual_return_1y),
-              annual_return_3y=VALUES(annual_return_3y),
-              annual_return_5y=VALUES(annual_return_5y),
+              -- 殖利率：新值 > 0 才更新（避免爬取失敗覆蓋正確值）
+              dividend_yield=IF(VALUES(dividend_yield)>0,
+                                VALUES(dividend_yield),
+                                COALESCE(dividend_yield,0)),
+              -- 配息頻率：新值非「不配息」才更新（確保已知頻率不被清空）
+              payout_freq=IF(VALUES(payout_freq)!='不配息',
+                             VALUES(payout_freq),
+                             COALESCE(payout_freq,'不配息')),
+              -- 年化報酬：新值非 0 才更新（避免爬取失敗清空歷史計算結果）
+              annual_return_1y=IF(VALUES(annual_return_1y)!=0,
+                                  VALUES(annual_return_1y),
+                                  COALESCE(annual_return_1y,0)),
+              annual_return_3y=IF(VALUES(annual_return_3y)!=0,
+                                  VALUES(annual_return_3y),
+                                  COALESCE(annual_return_3y,0)),
+              annual_return_5y=IF(VALUES(annual_return_5y)!=0,
+                                  VALUES(annual_return_5y),
+                                  COALESCE(annual_return_5y,0)),
               pe_ratio=IF(VALUES(pe_ratio)>0, VALUES(pe_ratio), pe_ratio),
               expense_ratio=IF(VALUES(expense_ratio)>0, VALUES(expense_ratio), expense_ratio),
               asset_size=IF(VALUES(asset_size)>0, VALUES(asset_size), asset_size),

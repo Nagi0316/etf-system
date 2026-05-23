@@ -367,11 +367,27 @@ def _maybe_background_refresh(ticker: str, row: dict):
 @router.get("/api/etf/price-history/{ticker}")
 async def get_price_history(ticker: str, period: str = "1y"):
     ticker = ticker.upper()
-    RANGE_MAP = {"1M": "1mo", "3M": "3mo", "6M": "6mo", "1Y": "1y", "3Y": "3y", "5Y": "5y", "MAX": "10y"}
-    INTERVAL_MAP = {"1M": "1d", "3M": "1d", "6M": "1d", "1Y": "1d", "3Y": "1wk", "5Y": "1mo", "MAX": "1mo"}
+    # 對齊 Yahoo Finance 標準期間（1D 5D 1M 6M YTD 1Y 5Y All）
+    RANGE_MAP = {
+        "1D":  "1d",   "5D":  "5d",
+        "1M":  "1mo",  "3M":  "3mo",   # 3M 保留向下相容
+        "6M":  "6mo",  "YTD": "ytd",
+        "1Y":  "1y",   "3Y":  "3y",    # 3Y 保留向下相容
+        "5Y":  "5y",   "ALL": "max",
+        "MAX": "max",
+    }
+    INTERVAL_MAP = {
+        "1D":  "5m",    "5D":  "15m",
+        "1M":  "1d",    "3M":  "1d",
+        "6M":  "1d",    "YTD": "1d",
+        "1Y":  "1d",    "3Y":  "1wk",
+        "5Y":  "1wk",   "ALL": "1mo",
+        "MAX": "1mo",
+    }
     p = period.upper()
     yf_range    = RANGE_MAP.get(p, "1y")
     yf_interval = INTERVAL_MAP.get(p, "1d")
+    is_intraday = p in ("1D", "5D")
 
     with get_db() as (conn, cursor):
         cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
@@ -379,9 +395,15 @@ async def get_price_history(ticker: str, period: str = "1y"):
         market = (row or {}).get("market") or ("TW" if ticker[:4].isdigit() else "US")
 
     yt = _yahoo_ticker(ticker, market)
+    # 時區偏移：台股 UTC+8，美股 EDT = UTC-4（夏令）
+    tz_offset_h = 8 if market == "TW" else -4
 
     def _fetch():
-        for symbol in ([yt, f"{ticker}.TWO"] if market == "TW" and yt.endswith(".TW") else [yt]):
+        symbols = [yt]
+        if market == "TW" and yt.endswith(".TW"):
+            symbols.append(f"{ticker}.TWO")
+
+        for symbol in symbols:
             try:
                 url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
                        f"?range={yf_range}&interval={yf_interval}")
@@ -391,14 +413,24 @@ async def get_price_history(ticker: str, period: str = "1y"):
                 result = r.json().get("chart", {}).get("result")
                 if not result:
                     continue
-                ts      = result[0].get("timestamp", [])
-                closes  = result[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
-                pairs   = [(t, c) for t, c in zip(ts, closes) if c is not None]
+                ts     = result[0].get("timestamp", [])
+                closes = result[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
+                pairs  = [(t, c) for t, c in zip(ts, closes) if c is not None]
                 if len(pairs) < 2:
                     continue
-                labels = [datetime.utcfromtimestamp(t).strftime("%Y-%m-%d") for t, _ in pairs]
+
+                if is_intraday:
+                    # 轉換為市場本地時間
+                    labels = []
+                    for t, _ in pairs:
+                        dt_local = datetime.utcfromtimestamp(t) + timedelta(hours=tz_offset_h)
+                        labels.append(dt_local.strftime("%H:%M") if p == "1D"
+                                      else dt_local.strftime("%m/%d %H:%M"))
+                else:
+                    labels = [datetime.utcfromtimestamp(t).strftime("%Y-%m-%d") for t, _ in pairs]
+
                 prices = [round(float(c), 2) for _, c in pairs]
-                return {"labels": labels, "prices": prices}
+                return {"labels": labels, "prices": prices, "is_intraday": is_intraday}
             except Exception as e:
                 logger.debug(f"price history {symbol}: {e}")
         return None
@@ -406,7 +438,12 @@ async def get_price_history(ticker: str, period: str = "1y"):
     data = await asyncio.to_thread(_fetch)
     if not data:
         return safe_json({"status": "error", "message": "無法取得歷史資料"}, 400)
-    return safe_json({"status": "success", "labels": data["labels"], "prices": data["prices"]})
+    return safe_json({
+        "status": "success",
+        "labels": data["labels"],
+        "prices": data["prices"],
+        "is_intraday": data.get("is_intraday", False),
+    })
 
 
 @router.get("/api/etf/history")

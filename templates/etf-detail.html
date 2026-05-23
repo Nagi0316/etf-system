@@ -167,12 +167,14 @@
       <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
         <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide">價格走勢</h3>
         <div class="flex gap-1 flex-wrap">
-          <button onclick="changePeriod('1M')" class="period-btn">1M</button>
-          <button onclick="changePeriod('3M')" class="period-btn">3M</button>
-          <button onclick="changePeriod('6M')" class="period-btn">6M</button>
-          <button onclick="changePeriod('1Y')" class="period-btn active">1Y</button>
-          <button onclick="changePeriod('3Y')" class="period-btn">3Y</button>
-          <button onclick="changePeriod('5Y')" class="period-btn">5Y</button>
+          <button onclick="changePeriod('1D')"  class="period-btn">1D</button>
+          <button onclick="changePeriod('5D')"  class="period-btn">5D</button>
+          <button onclick="changePeriod('1M')"  class="period-btn">1M</button>
+          <button onclick="changePeriod('6M')"  class="period-btn">6M</button>
+          <button onclick="changePeriod('YTD')" class="period-btn">YTD</button>
+          <button onclick="changePeriod('1Y')"  class="period-btn active">1Y</button>
+          <button onclick="changePeriod('5Y')"  class="period-btn">5Y</button>
+          <button onclick="changePeriod('ALL')" class="period-btn">All</button>
         </div>
       </div>
       <p id="chart-note" class="hidden text-xs text-amber-500 text-right mb-1">⚠️ 歷史資料暫時無法取得，以下為 52 週區間估算</p>
@@ -274,11 +276,27 @@ async function loadETFDetail() {
     if (result.status === 'success') {
       etfData = result.data;
       renderData();
-      loadPriceHistory(currentTicker, '1y');
+      loadPriceHistory(currentTicker, '1Y');
       checkWatchlistStatus(currentTicker);
       loadDipAlert(currentTicker);
       document.getElementById('loading').classList.add('hidden');
       document.getElementById('content').classList.remove('hidden');
+
+      // 若年化報酬全為 0（爬取曾失敗），立即在背景強制重抓並刷新顯示
+      const d = etfData;
+      if (!parseFloat(d.annual_return_1y) && !parseFloat(d.annual_return_3y) &&
+          !parseFloat(d.annual_return_5y)) {
+        fetch(`/api/etf/update/${currentTicker}`, { method: 'POST' })
+          .then(r => r.json())
+          .then(upd => {
+            if (upd.status === 'success' && upd.data) {
+              // 合併最新欄位並重新渲染
+              etfData = { ...etfData, ...upd.data };
+              renderData();
+            }
+          })
+          .catch(() => {});
+      }
     } else throw new Error(result.message || '無法載入資料');
   } catch(err) {
     document.getElementById('loading').classList.add('hidden');
@@ -297,8 +315,14 @@ function renderData() {
   document.getElementById('market-badge').textContent = d.market === 'TW' ? '台股' : '美股';
 
   const freq = d.payout_freq || '';
-  const badgeMap = {'月配':'bg-blue-100 text-blue-700','季配':'bg-emerald-100 text-emerald-700',
-    '半年配':'bg-amber-100 text-amber-700','年配':'bg-purple-100 text-purple-700','不配息':'bg-slate-100 text-slate-500'};
+  const badgeMap = {
+    '月配':  'bg-blue-100 text-blue-700',
+    '雙月配':'bg-cyan-100 text-cyan-700',
+    '季配':  'bg-emerald-100 text-emerald-700',
+    '半年配':'bg-amber-100 text-amber-700',
+    '年配':  'bg-purple-100 text-purple-700',
+    '不配息':'bg-slate-100 text-slate-500',
+  };
   const pb = document.getElementById('payout-badge');
   pb.className = `px-2.5 py-0.5 rounded-full text-xs font-bold ${badgeMap[freq]||'bg-slate-100 text-slate-500'}`;
   pb.textContent = freq;
@@ -418,15 +442,16 @@ async function loadDipAlert(ticker) {
 }
 
 // 圖表
-async function loadPriceHistory(ticker, period = '1y') {
+async function loadPriceHistory(ticker, period = '1Y') {
   try {
     const data = await fetch(`/api/etf/price-history/${ticker}?period=${period}`).then(r=>r.json());
-    const prices = data.prices || data.data?.prices;
-    const labels = data.labels || data.data?.labels;
+    const prices    = data.prices || data.data?.prices;
+    const labels    = data.labels || data.data?.labels;
+    const intraday  = data.is_intraday || false;
     if (data.status === 'success' && prices?.length) {
       const cleanPrices = prices.map(p => parseFloat(p)).filter(p => !isNaN(p) && p > 0);
       const cleanLabels = labels.slice(labels.length - cleanPrices.length);
-      if (cleanPrices.length >= 2) { drawChart(cleanLabels, cleanPrices, false); return; }
+      if (cleanPrices.length >= 2) { drawChart(cleanLabels, cleanPrices, false, intraday); return; }
     }
     showNoChart();
   } catch(e) { showNoChart(); }
@@ -437,7 +462,7 @@ function showNoChart() {
   document.getElementById('no-chart-msg').classList.remove('hidden');
 }
 
-function drawChart(labels, prices, isFallback = false) {
+function drawChart(labels, prices, isFallback = false, isIntraday = false) {
   const canvas = document.getElementById('price-chart');
   canvas.classList.remove('hidden');
   document.getElementById('no-chart-msg').classList.add('hidden');
@@ -460,17 +485,24 @@ function drawChart(labels, prices, isFallback = false) {
       plugins: { legend: { display: false },
         tooltip: { backgroundColor:'rgba(30,41,59,.9)', padding:8,
           callbacks: { label: c => `價格: ${c.raw.toFixed(2)}` } } },
-      scales: { x: { display: false },
-        y: { position:'right', grid: { color:'#f1f5f9' }, ticks: { color:'#94a3b8', font:{size:10} } } }
+      scales: {
+        x: {
+          display: isIntraday,   // 盤中（1D/5D）顯示時間軸，其餘隱藏保持簡潔
+          grid: { display: false },
+          ticks: { color: '#94a3b8', font: { size: 9 }, maxTicksLimit: 8, maxRotation: 0 }
+        },
+        y: { position:'right', grid: { color:'rgba(241,245,249,.6)' }, ticks: { color:'#94a3b8', font:{size:10} } }
+      }
     }
   });
 }
 
 function changePeriod(p) {
   currentPeriod = p;
-  document.querySelectorAll('.period-btn').forEach(b => b.classList.toggle('active', b.textContent.toUpperCase() === p.toUpperCase()));
+  document.querySelectorAll('.period-btn').forEach(b =>
+    b.classList.toggle('active', b.textContent.toUpperCase() === p.toUpperCase()));
   document.getElementById('chart-note').classList.add('hidden');
-  if (currentTicker) loadPriceHistory(currentTicker, p.toLowerCase());
+  if (currentTicker) loadPriceHistory(currentTicker, p.toUpperCase());
 }
 
 // 自選股
