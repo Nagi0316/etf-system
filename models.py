@@ -3,7 +3,7 @@ models.py — Pydantic 請求 / 回應模型
 """
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
-from datetime import date
+from datetime import date, datetime
 
 
 # ══════════════════════════════════════════════════════════
@@ -80,6 +80,20 @@ class TransactionIn(BaseModel):
     @classmethod
     def upper_ticker(cls, v: str) -> str:
         return v.strip().upper()
+
+    @field_validator("transaction_date")
+    @classmethod
+    def validate_date_range(cls, v: str) -> str:
+        try:
+            d = datetime.strptime(v, "%Y-%m-%d").date()
+        except ValueError:
+            raise ValueError("transaction_date 格式必須為 YYYY-MM-DD")
+        today = date.today()
+        min_date = date(max(1970, today.year - 50), 1, 1)
+        max_date = date(today.year + 1, 12, 31)
+        if d < min_date or d > max_date:
+            raise ValueError(f"交易日期超出合理範圍（{min_date} ~ {max_date}）")
+        return v
 
 
 # ══════════════════════════════════════════════════════════

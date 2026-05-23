@@ -91,8 +91,7 @@ async def get_portfolio(current_user: dict = Depends(get_current_user)):
 async def add_transaction(body: TransactionIn, current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
     try:
-        _insert_transaction(uid, body.dict())
-        _recalc_portfolio(uid, body.ticker)
+        _insert_transaction(uid, body.dict())  # 內部已包含 recalc，單一 atomic transaction
         return safe_json({"status": "success", "message": "交易已新增"})
     except ValueError as e:
         return safe_json({"status": "error", "message": str(e)}, 400)
@@ -129,8 +128,9 @@ async def delete_transaction(tid: int, current_user: dict = Depends(get_current_
             return safe_json({"status": "error", "message": "找不到此交易"}, 404)
         ticker = row["ticker"]
         cursor.execute("DELETE FROM user_transactions WHERE id=%s AND user_id=%s", (tid, uid))
+        # 刪除與重算在同一 transaction 內，防止 race condition
+        _recalc_portfolio_cursor(uid, ticker, cursor)
         conn.commit()
-    _recalc_portfolio(uid, ticker)
     return safe_json({"status": "success", "message": "已刪除"})
 
 
@@ -164,18 +164,10 @@ async def import_csv(
                     failed.append(f"重複略過: {tx['ticker']} {tx['transaction_date']} "
                                   f"{tx['shares']}股@{tx['price']}")
                     continue
-            _insert_transaction(uid, tx)
+            _insert_transaction(uid, tx)  # 內部已包含 atomic recalc
             imported += 1
         except Exception as e:
             failed.append(str(e))
-
-    # 重算所有受影響的庫存
-    tickers = list({r["ticker"] for r in rows})
-    for t in tickers:
-        try:
-            _recalc_portfolio(uid, t)
-        except Exception:
-            pass
 
     return safe_json({
         "status": "success",
@@ -188,8 +180,46 @@ async def import_csv(
 
 # ── 私有邏輯 ──
 
+def _recalc_portfolio_cursor(uid: int, ticker: str, cursor):
+    """重算持倉的核心邏輯（使用既有 cursor），供原子性操作共用。"""
+    cursor.execute(
+        "SELECT transaction_type, shares, price FROM user_transactions "
+        "WHERE user_id=%s AND ticker=%s ORDER BY transaction_date ASC, id ASC",
+        (uid, ticker)
+    )
+    txs = cursor.fetchall()
+
+    total_shares = 0.0
+    total_cost   = 0.0
+    for t in txs:
+        s = float(t["shares"])
+        p = float(t["price"])
+        if t["transaction_type"] == "buy":
+            total_cost   += s * p
+            total_shares += s
+        elif t["transaction_type"] == "sell":
+            if total_shares > 0:
+                total_cost -= (total_cost / total_shares) * s
+            total_shares -= s
+            if total_shares < 0 or abs(total_shares) < 1e-6:
+                total_shares = 0.0
+                total_cost   = 0.0
+
+    avg_cost = total_cost / total_shares if total_shares > 0 else 0.0
+
+    if total_shares > 0:
+        cursor.execute(
+            "INSERT INTO user_portfolio (user_id,ticker,shares,avg_cost) VALUES (%s,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE shares=%s, avg_cost=%s",
+            (uid, ticker, total_shares, avg_cost, total_shares, avg_cost)
+        )
+    else:
+        cursor.execute("DELETE FROM user_portfolio WHERE user_id=%s AND ticker=%s", (uid, ticker))
+
+
 def _insert_transaction(uid: int, data: dict):
-    ticker = data["ticker"].upper()
+    """新增交易並在同一 transaction 內重算持倉，防止 race condition。"""
+    ticker  = data["ticker"].upper()
     tx_type = data["transaction_type"]
     shares  = float(data["shares"])
     price   = float(data["price"])
@@ -220,44 +250,14 @@ def _insert_transaction(uid: int, data: dict):
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
             (uid, ticker, tx_type, shares, price, comm, tx_date, note)
         )
+        # 在同一 transaction 內重算持倉，避免讀取到中間狀態
+        _recalc_portfolio_cursor(uid, ticker, cursor)
         conn.commit()
 
 
 def _recalc_portfolio(uid: int, ticker: str):
-    """重新計算指定 ticker 的庫存均價與股數"""
+    """獨立重算版本（供需要獨立連線的場景使用）。"""
     ticker = ticker.upper()
     with get_db() as (conn, cursor):
-        cursor.execute(
-            "SELECT transaction_type, shares, price FROM user_transactions "
-            "WHERE user_id=%s AND ticker=%s ORDER BY transaction_date ASC, id ASC",
-            (uid, ticker)
-        )
-        txs = cursor.fetchall()
-
-        total_shares = 0.0
-        total_cost   = 0.0
-        for t in txs:
-            s = float(t["shares"])
-            p = float(t["price"])
-            if t["transaction_type"] == "buy":
-                total_cost   += s * p
-                total_shares += s
-            elif t["transaction_type"] == "sell":
-                if total_shares > 0:
-                    total_cost -= (total_cost / total_shares) * s
-                total_shares -= s
-                if total_shares < 0 or abs(total_shares) < 1e-6:
-                    total_shares = 0.0
-                    total_cost   = 0.0
-
-        avg_cost = total_cost / total_shares if total_shares > 0 else 0.0
-
-        if total_shares > 0:
-            cursor.execute(
-                "INSERT INTO user_portfolio (user_id,ticker,shares,avg_cost) VALUES (%s,%s,%s,%s) "
-                "ON DUPLICATE KEY UPDATE shares=%s, avg_cost=%s",
-                (uid, ticker, total_shares, avg_cost, total_shares, avg_cost)
-            )
-        else:
-            cursor.execute("DELETE FROM user_portfolio WHERE user_id=%s AND ticker=%s", (uid, ticker))
+        _recalc_portfolio_cursor(uid, ticker, cursor)
         conn.commit()

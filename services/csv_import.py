@@ -4,6 +4,7 @@ services/csv_import.py — CSV 交易記錄匯入
 """
 import csv, io, logging
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -69,28 +70,28 @@ def parse_csv(content: bytes) -> tuple[list[dict], list[str]]:
         if not tx_type:
             row_errors.append(f"第 {idx} 行：交易類型無效 ({row.get('類型')})，請使用 buy/sell 或 買/賣")
 
-        # 股數
+        # 股數（使用 Decimal 解析，避免浮點精度問題，如 100.00 → 99.9999999）
         try:
-            shares = float(row.get("股數", "0").replace(",", ""))
+            shares = float(Decimal(row.get("股數", "0").replace(",", "")))
             if shares <= 0:
                 row_errors.append(f"第 {idx} 行：股數必須大於 0")
-        except ValueError:
+        except (InvalidOperation, ValueError):
             row_errors.append(f"第 {idx} 行：股數格式無效 ({row.get('股數')})")
             shares = 0
 
-        # 價格
+        # 價格（同上，使用 Decimal 解析）
         try:
-            price = float(row.get("價格", "0").replace(",", ""))
+            price = float(Decimal(row.get("價格", "0").replace(",", "")))
             if price <= 0:
                 row_errors.append(f"第 {idx} 行：價格必須大於 0")
-        except ValueError:
+        except (InvalidOperation, ValueError):
             row_errors.append(f"第 {idx} 行：價格格式無效 ({row.get('價格')})")
             price = 0
 
         # 選填
         try:
-            commission = float(row.get("手續費", "0").replace(",", ""))
-        except ValueError:
+            commission = float(Decimal(row.get("手續費", "0").replace(",", "")))
+        except (InvalidOperation, ValueError):
             commission = 0.0
 
         note = row.get("備註", "")

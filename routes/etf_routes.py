@@ -2,7 +2,6 @@
 routes/etf_routes.py — ETF 清單、詳情、搜尋、排行榜、歷史
 """
 import asyncio, logging, time
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, Query
@@ -28,9 +27,24 @@ router = APIRouter()
 templates: Jinja2Templates | None = None
 
 # 動態爬蟲 rate limiter：同一 IP 每 60 秒最多觸發 3 次，防止 Yahoo Finance 封鎖
-_on_demand_rate: dict[str, list[float]] = defaultdict(list)
+# 使用 MemCache 而非全域 dict，確保 TTL 自動清理，防止記憶體無限增長
 _RATE_WINDOW  = 60
 _RATE_MAX     = 3
+
+def _check_demand_rate(client_ip: str) -> bool:
+    """若超過速率限制回傳 True。使用 cache 儲存時間戳，TTL 到期自動清理。"""
+    if not client_ip or client_ip == "unknown":
+        return False
+    key = f"rate:demand:{client_ip}"
+    timestamps: list = cache.get(key) or []
+    now = time.time()
+    timestamps = [t for t in timestamps if now - t < _RATE_WINDOW]
+    if len(timestamps) >= _RATE_MAX:
+        cache.set(key, timestamps, _RATE_WINDOW)
+        return True
+    timestamps.append(now)
+    cache.set(key, timestamps, _RATE_WINDOW)
+    return False
 
 LATEST_DAILY_JOIN = """
 LEFT JOIN (
@@ -40,6 +54,37 @@ LEFT JOIN (
     ) d2 ON d1.ticker = d2.ticker AND d1.date = d2.max_date
 ) d ON m.ticker = d.ticker
 """
+
+_ETF_DETAIL_SELECT = """
+    SELECT m.ticker, m.name, m.market,
+        COALESCE(d.current_price,0) as current_price,
+        COALESCE(d.price_change,0) as price_change,
+        COALESCE(d.price_change_percent,0) as price_change_percent,
+        COALESCE(d.volume,0) as volume,
+        COALESCE(d.asset_size,0) as asset_size,
+        COALESCE(d.nav,0) as nav,
+        COALESCE(d.discount_premium,0) as discount_premium,
+        COALESCE(d.dividend_yield,0) as dividend_yield,
+        COALESCE(d.payout_freq,'不配息') as payout_freq,
+        COALESCE(d.annual_return_1y,0) as annual_return_1y,
+        COALESCE(d.annual_return_3y,0) as annual_return_3y,
+        COALESCE(d.annual_return_5y,0) as annual_return_5y,
+        COALESCE(d.pe_ratio,0) as pe_ratio,
+        COALESCE(d.expense_ratio,0) as expense_ratio,
+        COALESCE(d.day_high,0) as day_high,
+        COALESCE(d.day_low,0) as day_low,
+        COALESCE(d.fifty_two_week_high,0) as fifty_two_week_high,
+        COALESCE(d.fifty_two_week_low,0) as fifty_two_week_low,
+        d.date as data_date
+    FROM etf_master m
+    {join}
+    WHERE m.ticker=%s
+"""
+
+def _fetch_etf_detail_row(cursor, ticker: str) -> Optional[dict]:
+    """查詢單一 ETF 詳情，避免在同一請求內重複撰寫相同的 SQL。"""
+    cursor.execute(_ETF_DETAIL_SELECT.format(join=LATEST_DAILY_JOIN), (ticker,))
+    return cursor.fetchone()
 
 
 # ── 頁面 ──
@@ -175,14 +220,9 @@ async def _on_demand_fetch(ticker: str, client_ip: str = "") -> Optional[dict]:
     """即時向 Yahoo Finance 探索未知代碼，確認後寫入 etf_master。
     rate limit：同一 IP 60 秒內最多觸發 3 次，防止 Yahoo Finance 封鎖主機 IP。
     """
-    if client_ip:
-        now = time.time()
-        timestamps = _on_demand_rate[client_ip]
-        _on_demand_rate[client_ip] = [t for t in timestamps if now - t < _RATE_WINDOW]
-        if len(_on_demand_rate[client_ip]) >= _RATE_MAX:
-            logger.warning(f"動態爬蟲 rate limit 已觸發 for {client_ip}")
-            return None
-        _on_demand_rate[client_ip].append(now)
+    if client_ip and _check_demand_rate(client_ip):
+        logger.warning(f"動態爬蟲 rate limit 已觸發 for {client_ip}")
+        return None
 
     market = "TW" if ticker[:4].isdigit() else "US"
 
@@ -237,32 +277,7 @@ async def get_etf_detail(ticker: str):
     usd_twd = get_usd_twd()
 
     with get_db() as (conn, cursor):
-        cursor.execute(f"""
-            SELECT m.ticker, m.name, m.market,
-                COALESCE(d.current_price,0) as current_price,
-                COALESCE(d.price_change,0) as price_change,
-                COALESCE(d.price_change_percent,0) as price_change_percent,
-                COALESCE(d.volume,0) as volume,
-                COALESCE(d.asset_size,0) as asset_size,
-                COALESCE(d.nav,0) as nav,
-                COALESCE(d.discount_premium,0) as discount_premium,
-                COALESCE(d.dividend_yield,0) as dividend_yield,
-                COALESCE(d.payout_freq,'不配息') as payout_freq,
-                COALESCE(d.annual_return_1y,0) as annual_return_1y,
-                COALESCE(d.annual_return_3y,0) as annual_return_3y,
-                COALESCE(d.annual_return_5y,0) as annual_return_5y,
-                COALESCE(d.pe_ratio,0) as pe_ratio,
-                COALESCE(d.expense_ratio,0) as expense_ratio,
-                COALESCE(d.day_high,0) as day_high,
-                COALESCE(d.day_low,0) as day_low,
-                COALESCE(d.fifty_two_week_high,0) as fifty_two_week_high,
-                COALESCE(d.fifty_two_week_low,0) as fifty_two_week_low,
-                d.date as data_date
-            FROM etf_master m
-            {LATEST_DAILY_JOIN}
-            WHERE m.ticker=%s
-        """, (ticker,))
-        row = cursor.fetchone()
+        row = _fetch_etf_detail_row(cursor, ticker)
 
     if not row:
         # 資料庫找不到 → 嘗試即時爬取並寫入
@@ -270,34 +285,9 @@ async def get_etf_detail(ticker: str):
         discovered = await _on_demand_fetch(ticker)
         if not discovered:
             return safe_json({"status": "error", "message": f"找不到 ETF {ticker}，請確認代碼是否正確"}, 404)
-        # 爬取後重查 DB
+        # 爬取後重查 DB（共用相同 SQL 函數）
         with get_db() as (conn, cursor):
-            cursor.execute(f"""
-                SELECT m.ticker, m.name, m.market,
-                    COALESCE(d.current_price,0) as current_price,
-                    COALESCE(d.price_change,0) as price_change,
-                    COALESCE(d.price_change_percent,0) as price_change_percent,
-                    COALESCE(d.volume,0) as volume,
-                    COALESCE(d.asset_size,0) as asset_size,
-                    COALESCE(d.nav,0) as nav,
-                    COALESCE(d.discount_premium,0) as discount_premium,
-                    COALESCE(d.dividend_yield,0) as dividend_yield,
-                    COALESCE(d.payout_freq,'不配息') as payout_freq,
-                    COALESCE(d.annual_return_1y,0) as annual_return_1y,
-                    COALESCE(d.annual_return_3y,0) as annual_return_3y,
-                    COALESCE(d.annual_return_5y,0) as annual_return_5y,
-                    COALESCE(d.pe_ratio,0) as pe_ratio,
-                    COALESCE(d.expense_ratio,0) as expense_ratio,
-                    COALESCE(d.day_high,0) as day_high,
-                    COALESCE(d.day_low,0) as day_low,
-                    COALESCE(d.fifty_two_week_high,0) as fifty_two_week_high,
-                    COALESCE(d.fifty_two_week_low,0) as fifty_two_week_low,
-                    d.date as data_date
-                FROM etf_master m
-                {LATEST_DAILY_JOIN}
-                WHERE m.ticker=%s
-            """, (ticker,))
-            row = cursor.fetchone()
+            row = _fetch_etf_detail_row(cursor, ticker)
         if not row:
             return safe_json({"status": "error", "message": f"找不到 ETF {ticker}"}, 404)
 

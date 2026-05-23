@@ -352,9 +352,15 @@ def init_db():
 
     # 效能索引（已存在則忽略）
     indexes = [
-        ("idx_user_txs",   "user_transactions", "user_id, ticker, transaction_date"),
-        ("idx_daily_date", "etf_daily_data",    "ticker, date"),
-        ("idx_master_hot", "etf_master",        "is_hot"),
+        ("idx_user_txs",        "user_transactions", "user_id, ticker, transaction_date"),
+        ("idx_daily_date",      "etf_daily_data",    "ticker, date"),
+        ("idx_master_hot",      "etf_master",        "is_hot"),
+        # 以下索引補強：各表 user_id 單獨查詢、常見篩選條件
+        ("idx_portfolio_user",  "user_portfolio",    "user_id"),
+        ("idx_watchlist_user",  "user_watchlist",    "user_id"),
+        ("idx_notif_user_read", "notifications",     "user_id, is_read"),
+        ("idx_alerts_user",     "price_alerts",      "user_id, is_active"),
+        ("idx_sessions_user",   "user_sessions",     "user_id, is_revoked"),
     ]
     with get_db() as (conn, cursor):
         for idx_name, tbl, cols in indexes:

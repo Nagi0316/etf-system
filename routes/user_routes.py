@@ -52,24 +52,44 @@ async def update_profile(body: UpdateProfileIn, current_user: dict = Depends(get
     return safe_json({"status": "success", "message": "更新成功"})
 
 
+# 圖片 magic bytes 對照表（防止偽造 content-type 上傳執行檔）
+_IMAGE_MAGIC = [
+    (b'\xff\xd8\xff',           'jpg'),   # JPEG
+    (b'\x89PNG\r\n\x1a\n',      'png'),   # PNG
+    (b'GIF87a',                  'gif'),   # GIF87
+    (b'GIF89a',                  'gif'),   # GIF89
+]
+
+def _detect_image_ext(data: bytes) -> str | None:
+    """驗證檔案 magic bytes，回傳副檔名；非圖片則回傳 None。"""
+    for magic, ext in _IMAGE_MAGIC:
+        if data[:len(magic)] == magic:
+            return ext
+    # WebP: RIFF????WEBP
+    if len(data) >= 12 and data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return 'webp'
+    return None
+
+
 @router.post("/api/user/avatar")
 async def upload_avatar(
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
 ):
     uid = current_user["id"]
-    if not file.content_type.startswith("image/"):
-        return safe_json({"status": "error", "message": "請上傳圖片檔案"}, 400)
     if file.size and file.size > 5 * 1024 * 1024:
         return safe_json({"status": "error", "message": "圖片大小不能超過 5MB"}, 400)
 
-    ext = (file.filename or "jpg").rsplit(".", 1)[-1].lower()
-    if ext not in ("jpg", "jpeg", "png", "gif", "webp"):
-        ext = "jpg"
+    content = await file.read()
+
+    # 驗證 magic bytes（不信任 content-type，防止偽造）
+    ext = _detect_image_ext(content)
+    if not ext:
+        return safe_json({"status": "error", "message": "請上傳有效的圖片檔案（JPEG/PNG/GIF/WebP）"}, 400)
+
     fname = f"avatar_{uid}_{int(time.time())}.{ext}"
     fpath = os.path.join(AVATAR_DIR, fname)
 
-    content = await file.read()
     with open(fpath, "wb") as fp:
         fp.write(content)
 

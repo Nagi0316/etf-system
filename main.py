@@ -2,17 +2,18 @@
 ETF 投資管理系統 v2.0
 完整重構版：JWT 驗證 + Google OAuth + bcrypt + 低檔加碼 + DRIP + 即時匯率
 """
-import asyncio, logging
+import asyncio, logging, time
 from contextlib import asynccontextmanager
+from typing import Callable
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from config import TEMPLATES_DIR, STATIC_DIR, APP_URL
-from database import init_db
+from database import init_db, get_db
 from etf_data import seed_etf_master, fetch_one_etf, save_etf_data
 import scheduler as sched
 
@@ -85,6 +86,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── 安全 HTTP 標頭（防 Clickjacking / MIME-sniffing / 資訊洩漏）──
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next: Callable) -> Response:
+    response = await call_next(request)
+    response.headers["X-Frame-Options"]           = "DENY"
+    response.headers["X-Content-Type-Options"]    = "nosniff"
+    response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"]          = "1; mode=block"
+    response.headers["Permissions-Policy"]        = "geolocation=(), microphone=(), camera=()"
+    return response
+
 # ── 靜態檔案 ──
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -105,6 +117,21 @@ app.include_router(watchlist_routes.router,    tags=["Watchlist"])
 app.include_router(user_routes.router,         tags=["User"])
 app.include_router(backtest_routes.router,     tags=["Backtest"])
 app.include_router(notification_routes.router, tags=["Notifications"])
+
+
+# ── 健康檢查（供 Load Balancer / 監控使用）──
+@app.get("/health")
+async def health_check():
+    """回傳系統健康狀態，包含資料庫連線與快取狀態。"""
+    from utils import safe_json
+    checks: dict = {"status": "ok", "db": "ok", "timestamp": int(time.time())}
+    try:
+        with get_db() as (conn, cursor):
+            cursor.execute("SELECT 1")
+    except Exception as e:
+        checks["db"] = f"error: {e}"
+        checks["status"] = "degraded"
+    return safe_json(checks)
 
 
 if __name__ == "__main__":

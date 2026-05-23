@@ -26,7 +26,19 @@ SQLITE_PATH = str(BASE_DIR / "etf_tracker.db")
 USE_MYSQL   = bool(DB_HOST and DB_USER and DB_PASSWORD)
 
 # ── JWT ──
-JWT_SECRET       = os.getenv("JWT_SECRET", "dev-secret-change-in-prod-" + os.urandom(16).hex())
+_raw_jwt_secret = os.getenv("JWT_SECRET", "")
+if not _raw_jwt_secret:
+    if os.getenv("ENV", "").lower() == "production":
+        raise RuntimeError(
+            "JWT_SECRET 環境變數未設定。正式環境必須設定此變數，"
+            "請在 .env 或系統環境變數中設定一個高熵隨機字串（例如：openssl rand -hex 32）。"
+        )
+    import logging as _log
+    _log.getLogger("config").warning(
+        "⚠️  JWT_SECRET 未設定，使用固定開發 Secret。切勿在正式環境使用此設定！"
+    )
+    _raw_jwt_secret = "dev-only-fixed-secret-do-not-use-in-production-32chars"
+JWT_SECRET       = _raw_jwt_secret
 JWT_ALGORITHM    = "HS256"
 JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "168"))  # 7 days
 

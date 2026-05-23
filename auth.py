@@ -121,14 +121,30 @@ GOOGLE_AUTH_URL    = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL   = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
-_oauth_states: dict[str, str] = {}  # state -> redirect_after
+_OAUTH_STATE_TTL = 300  # OAuth state 5 分鐘後過期，防止 CSRF 攻擊窗口無限開放
+
+
+def _store_oauth_state(state: str, redirect_after: str):
+    """將 OAuth state 存入有 TTL 的 cache，防止記憶體無限增長。"""
+    from cache import cache
+    cache.set(f"oauth_state:{state}", redirect_after, _OAUTH_STATE_TTL)
+
+
+def _consume_oauth_state(state: str) -> Optional[str]:
+    """取出並刪除 OAuth state（一次性使用），防止 replay 攻擊。"""
+    from cache import cache
+    key = f"oauth_state:{state}"
+    val = cache.get(key)
+    if val is not None:
+        cache.delete(key)
+    return val
 
 
 def build_google_login_url(redirect_after: str = "/") -> str:
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=503, detail="Google OAuth 未設定")
     state = uuid.uuid4().hex
-    _oauth_states[state] = redirect_after
+    _store_oauth_state(state, redirect_after)
     params = (
         f"?client_id={GOOGLE_CLIENT_ID}"
         f"&redirect_uri={GOOGLE_REDIRECT_URI}"
@@ -143,7 +159,7 @@ def build_google_login_url(redirect_after: str = "/") -> str:
 
 async def exchange_google_code(code: str, state: str) -> dict:
     """用 code 換取 Google user info"""
-    expected_redirect = _oauth_states.pop(state, None)
+    expected_redirect = _consume_oauth_state(state)
     if not expected_redirect:
         raise HTTPException(status_code=400, detail="無效或過期的 OAuth State，請重新登入")
     async with httpx.AsyncClient(timeout=15) as client:

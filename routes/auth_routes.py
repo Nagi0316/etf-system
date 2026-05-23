@@ -2,7 +2,8 @@
 routes/auth_routes.py — 登入 / 登出 / Google OAuth / 密碼變更
 所有 API 回傳 JSON；前端頁面以 template 回傳
 """
-import logging, os
+import logging, os, time
+from collections import defaultdict
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -22,6 +23,20 @@ router = APIRouter()
 templates: Jinja2Templates | None = None  # 由 main.py 注入
 
 _COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 天
+
+# ── 登入速率限制（IP 每 15 分鐘最多 10 次，防暴力破解）──
+_login_rate: dict[str, list[float]] = defaultdict(list)
+_RATE_WINDOW = 900   # 15 分鐘
+_RATE_MAX    = 10    # 最多 10 次
+
+def _is_login_rate_limited(ip: str) -> bool:
+    now = time.time()
+    timestamps = _login_rate[ip]
+    _login_rate[ip] = [t for t in timestamps if now - t < _RATE_WINDOW]
+    if len(_login_rate[ip]) >= _RATE_MAX:
+        return True
+    _login_rate[ip].append(now)
+    return False
 
 
 def _set_auth_cookies(response, token: str):
@@ -117,7 +132,10 @@ async def google_callback(code: str = "", state: str = "", error: str = ""):
 # ══════════════════════════════════════════════════════════
 
 @router.post("/api/auth/register")
-async def register(body: RegisterIn):
+async def register(request: Request, body: RegisterIn):
+    client_ip = request.client.host if request.client else "unknown"
+    if _is_login_rate_limited(client_ip):
+        return safe_json({"status": "error", "message": "請求次數過多，請 15 分鐘後再試"}, 429)
     try:
         with get_db() as (conn, cursor):
             cursor.execute("SELECT id FROM users WHERE email=%s", (body.email.lower(),))
@@ -139,7 +157,10 @@ async def register(body: RegisterIn):
 
 
 @router.post("/api/auth/login")
-async def login(body: LoginIn):
+async def login(request: Request, body: LoginIn):
+    client_ip = request.client.host if request.client else "unknown"
+    if _is_login_rate_limited(client_ip):
+        return safe_json({"status": "error", "message": "登入嘗試次數過多，請 15 分鐘後再試"}, 429)
     try:
         with get_db() as (conn, cursor):
             cursor.execute(
@@ -147,10 +168,9 @@ async def login(body: LoginIn):
                 (body.email.lower(),)
             )
             user = cursor.fetchone()
-        if not user:
+        # 統一回傳相同錯誤訊息，防止 email 枚舉攻擊
+        if not user or not user.get("password_hash"):
             return safe_json({"status": "error", "message": "信箱或密碼錯誤"}, 401)
-        if not user.get("password_hash"):
-            return safe_json({"status": "error", "message": "此帳號僅支援 Google 登入"}, 400)
         if not verify_password(body.password, user["password_hash"]):
             return safe_json({"status": "error", "message": "信箱或密碼錯誤"}, 401)
         token, _ = create_access_token(user["id"], body.email.lower())
