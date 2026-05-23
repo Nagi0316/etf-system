@@ -3,14 +3,16 @@ scheduler.py — APScheduler 排程器
 
 排程架構（Asia/Taipei 時區）：
 
-【盤中高頻】interval 每 3 分鐘執行一次，內部偵測市場是否開盤
-  台股開盤：09:00–13:30 (Mon–Fri, Asia/Taipei)
-  美股開盤：21:30–04:00 (Mon–Fri, 依 America/New_York 夏令/冬令自動調整)
-  ▸ 開盤期間：更新活躍 ETF 最新報價 + 立即檢查到價提醒
-  ▸ 盤後：跳過（以下固定排程接手）
+【盤中快速】每 2 分鐘，內部偵測市場是否開盤
+  ▸ 只抓現價：TW 走 TWSE 官方 API，US 走輕量 Yahoo chart
+  ▸ 更新完立即掃描到價提醒（延遲 ≤ 2 分鐘）
+  ▸ 不碰 dividend / history / quoteSummary，Yahoo 請求量降 ~70%
 
-【固定排程】（保底：確保非活躍時段資料不過舊）
-  07:00  _update_missing()  — 補漏掃描
+【盤中完整】每 30 分鐘，內部偵測市場是否開盤
+  ▸ 完整抓取含 dividend、5 年歷史月線、費用率、NAV 等補充資料
+
+【固定排程】
+  07:00  _update_missing()  — 補漏掃描（熱門 ETF 超過 3 天未更新）
   08:00  sync_tw_etfs()     — 同步 TWSE/TPEX 全市場代碼
   14:35  _update_active()   — 台股收盤後確認收盤價
   04:15  _update_active()   — 美股收盤後確認收盤價
@@ -78,26 +80,12 @@ def schedule_twse_sync():
         asyncio.run_coroutine_threadsafe(_run_twse_sync(), MAIN_LOOP)
 
 
-def schedule_alert_check():
-    """觸發獨立的到價提醒掃描（不依賴 _update_active，可單獨高頻執行）。"""
-    if MAIN_LOOP and MAIN_LOOP.is_running():
-        asyncio.run_coroutine_threadsafe(_check_price_alerts(), MAIN_LOOP)
-
-
-def schedule_market_tick():
-    """盤中高頻 tick：更新報價 + 立即檢查到價提醒。僅在任一市場開盤時執行。"""
+def schedule_fast_price_tick():
+    """盤中快速報價 tick：只更新現價 + 立即掃描到價提醒。僅開盤時執行。"""
     if not _is_any_market_open():
         return
     if MAIN_LOOP and MAIN_LOOP.is_running():
-        asyncio.run_coroutine_threadsafe(_market_tick(), MAIN_LOOP)
-
-
-def schedule_alert_tick():
-    """盤中高頻 alert tick：僅掃描到價提醒（不抓新報價，速度快）。僅開盤時執行。"""
-    if not _is_any_market_open():
-        return
-    if MAIN_LOOP and MAIN_LOOP.is_running():
-        asyncio.run_coroutine_threadsafe(_check_price_alerts(), MAIN_LOOP)
+        asyncio.run_coroutine_threadsafe(_fast_price_tick(), MAIN_LOOP)
 
 
 # ──────────────────────────────────────────────
@@ -178,14 +166,78 @@ async def _update_active():
 
 
 # ──────────────────────────────────────────────
-#  盤中 tick（每 3 分鐘）：更新報價 + 即時到價提醒
+#  盤中快速報價 tick（每 2 分鐘）
+#  只抓現價，不碰 Yahoo 補充資料，降低 Yahoo 429 風險
+# ──────────────────────────────────────────────
+
+async def _fast_price_tick():
+    """盤中高頻：只更新現價（TW 走 TWSE 官方 API，US 走輕量 Yahoo chart）。
+    60 檔預估耗時 30-50 秒，遠低於原本的 140-280 秒。
+    更新完成後立即掃描到價提醒，實現 2 分鐘以內的 alert 延遲。
+    """
+    tw_open = _is_tw_market_open()
+    us_open = _is_us_market_open()
+    if not (tw_open or us_open):
+        return
+
+    from etf_data import fetch_price_only, save_price_only
+
+    pool = _get_active_pool()
+    if not pool:
+        return
+
+    active_pool = [
+        e for e in pool
+        if (e["market"] == "TW" and tw_open) or (e["market"] == "US" and us_open)
+    ]
+    if not active_pool:
+        return
+
+    logger.debug(f"⚡ 快速報價 tick：{len(active_pool)} 檔（TW={'開' if tw_open else '收'} US={'開' if us_open else '收'}）")
+
+    # TW 用 TWSE 官方 API，輕量可加大批次；US 仍走 Yahoo，保守並發
+    tw_pool = [e for e in active_pool if e["market"] == "TW"]
+    us_pool = [e for e in active_pool if e["market"] == "US"]
+
+    updated_any = False
+
+    async def _process_batch(batch, batch_size, sleep_range):
+        nonlocal updated_any
+        for i in range(0, len(batch), batch_size):
+            chunk = batch[i:i + batch_size]
+            results = await asyncio.gather(
+                *[asyncio.to_thread(fetch_price_only, e["ticker"], e["market"]) for e in chunk],
+                return_exceptions=True,
+            )
+            for etf, result in zip(chunk, results):
+                if isinstance(result, Exception) or not result:
+                    continue
+                try:
+                    save_price_only(result)
+                    updated_any = True
+                except Exception as e:
+                    logger.debug(f"  fast save {etf['ticker']}: {e}")
+            if i + batch_size < len(batch):
+                await asyncio.sleep(random.uniform(*sleep_range))
+
+    if tw_pool:
+        await _process_batch(tw_pool, batch_size=6, sleep_range=(1.0, 2.0))
+    if us_pool:
+        await _process_batch(us_pool, batch_size=3, sleep_range=(3.0, 5.0))
+
+    if updated_any:
+        await _check_price_alerts()
+        logger.debug("⚡ 快速報價 tick 完成，到價提醒已掃描")
+
+
+# ──────────────────────────────────────────────
+#  盤中完整資料 tick（每 30 分鐘）：含補充資料
 # ──────────────────────────────────────────────
 
 async def _market_tick():
-    """盤中高頻 tick：
-    1. 只更新「有人在意」的 ETF（庫存 + 自選 + 熱門）
-    2. 更新完成後立即掃描全部到價提醒
-    目標：盤中到價提醒延遲 ≤ 3 分鐘
+    """盤中完整資料更新（每 30 分鐘）：
+    抓取完整 ETF 資料含 dividend、歷史月線、費用率等補充資料。
+    現價更新由 _fast_price_tick（每 2 分鐘）負責，此函式不重複掃描 alert。
     """
     tw_open = _is_tw_market_open()
     us_open = _is_us_market_open()
@@ -228,10 +280,8 @@ async def _market_tick():
                 logger.debug(f"  tick save {etf['ticker']}: {e}")
         await asyncio.sleep(random.uniform(3, 5))
 
-    # 更新完成後立即掃描到價提醒（確保用到最新報價）
     if updated_any:
-        await _check_price_alerts()
-        logger.debug("⏱ 盤中 tick 完成，到價提醒已掃描")
+        logger.debug("⏱ 盤中完整更新完成")
 
 
 # ──────────────────────────────────────────────
@@ -382,38 +432,42 @@ def start_scheduler() -> BackgroundScheduler:
     sch = BackgroundScheduler(timezone="Asia/Taipei")
 
     # ════════════════════════════════════════
-    #  盤中高頻（interval，內部判斷是否開盤）
+    #  盤中排程（interval，內部判斷是否開盤）
     # ════════════════════════════════════════
 
-    # 每 3 分鐘：更新報價 + 立即掃描到價提醒（開盤期間）
+    # 每 2 分鐘：快速報價更新 + 到價提醒掃描（開盤期間）
+    # 只走 TWSE 官方 API（TW）或輕量 Yahoo chart（US），不碰 dividend/history
     sch.add_job(
-        lambda: schedule_market_tick(),
-        "interval", minutes=3,
-        id="market_tick", max_instances=1,
+        lambda: schedule_fast_price_tick(),
+        "interval", minutes=2,
+        id="fast_price_tick", max_instances=1,
     )
 
-    # 每 2 分鐘：獨立掃描到價提醒（從 DB 取最新價，不抓外部 API，速度快）
-    # 雙重保障：即使 market_tick 正在執行，alert 仍能獨立觸發
+    # 每 30 分鐘：完整資料更新含 dividend/history/費用率（開盤期間）
     sch.add_job(
-        lambda: schedule_alert_tick(),
-        "interval", minutes=2,
-        id="alert_tick", max_instances=1,
+        lambda: (
+            _is_any_market_open() and
+            MAIN_LOOP and MAIN_LOOP.is_running() and
+            asyncio.run_coroutine_threadsafe(_market_tick(), MAIN_LOOP)
+        ),
+        "interval", minutes=30,
+        id="full_data_tick", max_instances=1,
     )
 
     # ════════════════════════════════════════
     #  固定排程（保底 / 低頻維護）
     # ════════════════════════════════════════
 
-    # 每日 07:00 補漏掃描（盤前，兩市場均未開盤）
+    # 每日 07:00 補漏掃描（盤前）
     sch.add_job(lambda: schedule_missing(),   CronTrigger(hour=7,  minute=0),  max_instances=1)
 
     # 每日 08:00 同步 TWSE/TPEX 全市場代碼
     sch.add_job(lambda: schedule_twse_sync(), CronTrigger(hour=8,  minute=0),  max_instances=1)
 
-    # 14:35 台股收盤後確認收盤價（盤中 tick 已涵蓋，此為保底）
+    # 14:35 台股收盤後完整更新收盤資料
     sch.add_job(lambda: schedule_update(),    CronTrigger(hour=14, minute=35), max_instances=1)
 
-    # 04:15 美股收盤後確認收盤價（美東 16:15，夏令對應台灣 04:15）
+    # 04:15 美股收盤後完整更新收盤資料（美東 16:15，夏令對應台灣 04:15）
     sch.add_job(lambda: schedule_update(),    CronTrigger(hour=4,  minute=15), max_instances=1)
 
     # 快取維護（每 30 分鐘）
@@ -422,10 +476,11 @@ def start_scheduler() -> BackgroundScheduler:
     sch.start()
     logger.info(
         "✅ 排程器已啟動\n"
-        "   【盤中高頻】每 3 分鐘更新報價 + 每 2 分鐘掃描到價提醒（開盤期間）\n"
+        "   【盤中快速】每 2 分鐘更新現價 + 掃描到價提醒（開盤期間）\n"
+        "   【盤中完整】每 30 分鐘更新含 dividend/history 補充資料\n"
         "   【台股】09:00–13:30 Asia/Taipei\n"
         "   【美股】09:30–16:00 America/New_York（DST-aware）\n"
         "   07:00 補漏掃描 | 08:00 TWSE 同步\n"
-        "   14:35 台股收盤保底 | 04:15 美股收盤保底 | 每30分清快取"
+        "   14:35 台股收盤完整更新 | 04:15 美股收盤完整更新 | 每30分清快取"
     )
     return sch

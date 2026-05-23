@@ -843,6 +843,78 @@ def save_etf_data(data: dict):
         cache.delete_prefix("rank:")
 
 
+# ══════════════════════════════════════════════════════════
+#  快速報價路徑（盤中高頻用，只抓現價，不碰 Yahoo 補充資料）
+# ══════════════════════════════════════════════════════════
+
+def fetch_price_only(ticker: str, market: str) -> Optional[dict]:
+    """只抓現價，不抓 dividend/history/quoteSummary。
+    TW 股走 TWSE 官方 API（穩定、毫秒級）；US 股走輕量 Yahoo chart（10d/1d）。
+    用於盤中 2 分鐘快速更新，比完整 fetch 快 5-7 倍，Yahoo 請求量降 ~70%。
+    """
+    if market == "TW":
+        quote = _fetch_tw_realtime_perfect(ticker)
+        if not quote:
+            return None
+        return {
+            "ticker": ticker, "market": market,
+            "current_price": quote["current_price"],
+            "price_change": quote["price_change"],
+            "price_change_percent": quote["price_change_percent"],
+            "day_high": quote["day_high"],
+            "day_low": quote["day_low"],
+            "volume": quote["volume"],
+        }
+    else:
+        quote = _fetch_us_quote(ticker)
+        if not quote:
+            return None
+        return {
+            "ticker": ticker, "market": market,
+            **quote,
+        }
+
+
+def save_price_only(data: dict):
+    """只更新報價欄位（price/change/high/low/volume），保留 DB 中已有的補充資料。
+    與 save_etf_data 的差異：不碰 dividend_yield、expense_ratio、annual_return 等欄位。
+    """
+    today  = datetime.now().date()
+    ticker = data.get("ticker", "")
+    cp     = safe_float(data.get("current_price"))
+
+    with get_db() as (conn, cursor):
+        cursor.execute("""
+            INSERT INTO etf_daily_data
+              (ticker, date, current_price, price_change, price_change_percent,
+               day_high, day_low, volume)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            ON DUPLICATE KEY UPDATE
+              current_price=VALUES(current_price),
+              price_change=VALUES(price_change),
+              price_change_percent=VALUES(price_change_percent),
+              day_high=VALUES(day_high),
+              day_low=VALUES(day_low),
+              volume=VALUES(volume)
+        """, (
+            ticker, today, cp,
+            safe_float(data.get("price_change")),
+            safe_float(data.get("price_change_percent")),
+            safe_float(data.get("day_high", cp)),
+            safe_float(data.get("day_low", cp)),
+            int(safe_float(data.get("volume", 0))),
+        ))
+        conn.commit()
+
+    cache.delete(f"detail:{ticker}")
+    market = data.get("market", "")
+    if market:
+        for rank_type in ("volume", "asset", "return", "yield"):
+            cache.delete(f"rank:{rank_type}:{market}")
+    else:
+        cache.delete_prefix("rank:")
+
+
 # ── 需要 pandas ──
 try:
     import pandas as pd

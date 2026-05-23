@@ -129,7 +129,9 @@ def push_notification(user_id: int, ntype: str, title: str, content: str, ticker
 
 
 def check_price_alerts(ticker: str, current_price: float):
-    """排程器呼叫：檢查到價提醒並推送通知"""
+    """排程器呼叫：檢查到價提醒並推送通知。
+    單一 DB 連線完成讀取、批次插入通知、批次更新狀態，避免 N×3 次連線開銷。
+    """
     with get_db() as (conn, cursor):
         cursor.execute(
             "SELECT pa.*, m.name FROM price_alerts pa "
@@ -139,21 +141,31 @@ def check_price_alerts(ticker: str, current_price: float):
         )
         alerts = cursor.fetchall()
 
-    for alert in alerts:
-        triggered = False
-        if alert["alert_type"] == "above" and current_price >= float(alert["target_price"]):
-            triggered = True
-        elif alert["alert_type"] == "below" and current_price <= float(alert["target_price"]):
-            triggered = True
+        triggered_ids = []
+        for alert in alerts:
+            hit = (
+                (alert["alert_type"] == "above" and current_price >= float(alert["target_price"])) or
+                (alert["alert_type"] == "below" and current_price <= float(alert["target_price"]))
+            )
+            if not hit:
+                continue
 
-        if triggered:
             direction = "突破" if alert["alert_type"] == "above" else "跌破"
             title   = f"📈 {alert.get('name', ticker)} ({ticker}) {direction}目標價"
             content = (
                 f"{alert.get('name', ticker)} 目前價格 {current_price}，"
                 f"已{direction}您設定的目標價 {float(alert['target_price'])}。"
             )
-            push_notification(alert["user_id"], "price_alert", title, content, ticker)
-            with get_db() as (conn, cursor):
-                cursor.execute("UPDATE price_alerts SET is_triggered=1 WHERE id=%s", (alert["id"],))
-                conn.commit()
+            cursor.execute(
+                "INSERT INTO notifications (user_id,type,title,content,ticker) VALUES (%s,%s,%s,%s,%s)",
+                (alert["user_id"], "price_alert", title, content, ticker)
+            )
+            triggered_ids.append(alert["id"])
+
+        if triggered_ids:
+            placeholders = ",".join(["%s"] * len(triggered_ids))
+            cursor.execute(
+                f"UPDATE price_alerts SET is_triggered=1 WHERE id IN ({placeholders})",
+                triggered_ids
+            )
+            conn.commit()
