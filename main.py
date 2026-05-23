@@ -146,6 +146,141 @@ async def health_check():
     return safe_json(checks)
 
 
+@app.get("/health/detail")
+async def health_detail():
+    """詳細健康狀態：顯示活躍 ETF 的資料新鮮度，方便發現「悄悄壞掉」的問題。
+
+    staleness 分級：
+      fresh      — 最後資料日距今 ≤ 1 天（正常）
+      stale      — 2–3 天（可能是假日，觀察）
+      very_stale — 4–7 天（需注意）
+      critical   — > 7 天或完全沒資料（需要處理）
+
+    整體 status：
+      ok       — 全部 fresh 或 stale（週末合理範圍）
+      warning  — 有 very_stale
+      degraded — 有 critical 或 DB 異常
+    """
+    from datetime import date as _date
+    from utils import safe_json
+
+    today = _date.today()
+    db_ok = True
+
+    try:
+        with get_db() as (conn, cursor):
+            # 活躍池：熱門 + 用戶自選 + 用戶庫存（排除已下市）
+            cursor.execute("""
+                SELECT DISTINCT m.ticker, m.market
+                FROM etf_master m
+                WHERE m.is_delisted = 0
+                  AND (
+                    m.is_hot = 1
+                    OR m.ticker IN (
+                        SELECT DISTINCT ticker FROM user_watchlist
+                        UNION
+                        SELECT DISTINCT ticker FROM user_portfolio WHERE shares > 0
+                    )
+                  )
+                ORDER BY m.ticker
+            """)
+            pool = cursor.fetchall()
+
+            if not pool:
+                return safe_json({
+                    "status": "ok",
+                    "checked_at": today.isoformat(),
+                    "note": "活躍池為空（尚無熱門/自選/庫存 ETF）",
+                    "etfs": [],
+                })
+
+            tickers = [r["ticker"] for r in pool]
+            fmt = ",".join(["%s"] * len(tickers))
+
+            # 每個 ticker 最新的資料日期
+            cursor.execute(
+                f"SELECT ticker, MAX(date) AS last_date "
+                f"FROM etf_daily_data WHERE ticker IN ({fmt}) GROUP BY ticker",
+                tickers,
+            )
+            date_map = {r["ticker"]: r["last_date"] for r in cursor.fetchall()}
+
+    except Exception as e:
+        return safe_json({
+            "status": "degraded",
+            "checked_at": today.isoformat(),
+            "db": f"error: {e}",
+            "etfs": [],
+        }, 500)
+
+    # 計算新鮮度
+    etf_rows = []
+    counts = {"fresh": 0, "stale": 0, "very_stale": 0, "critical": 0}
+
+    for r in pool:
+        ticker = r["ticker"]
+        last_date = date_map.get(ticker)
+
+        if last_date is None:
+            days_ago = None
+            level = "critical"
+        else:
+            if isinstance(last_date, str):
+                last_date = _date.fromisoformat(last_date[:10])
+            days_ago = (today - last_date).days
+            if   days_ago <= 1: level = "fresh"
+            elif days_ago <= 3: level = "stale"
+            elif days_ago <= 7: level = "very_stale"
+            else:               level = "critical"
+
+        counts[level] += 1
+        etf_rows.append({
+            "ticker":    ticker,
+            "market":    r["market"],
+            "last_date": last_date.isoformat() if last_date else None,
+            "days_ago":  days_ago,
+            "status":    level,
+        })
+
+    # 整體狀態
+    if counts["critical"] > 0:
+        overall = "degraded"
+    elif counts["very_stale"] > 0:
+        overall = "warning"
+    else:
+        overall = "ok"
+
+    # 需要注意的清單（按嚴重程度排序）
+    level_order = {"critical": 0, "very_stale": 1, "stale": 2, "fresh": 3}
+    etf_rows.sort(key=lambda x: (level_order[x["status"]], x["ticker"]))
+
+    needs_attention = [
+        e["ticker"] for e in etf_rows
+        if e["status"] in ("critical", "very_stale")
+    ]
+
+    most_recent = max(
+        (e["last_date"] for e in etf_rows if e["last_date"]),
+        default=None,
+    )
+
+    return safe_json({
+        "status":          overall,
+        "checked_at":      today.isoformat(),
+        "db":              "ok",
+        "summary": {
+            "total":      len(pool),
+            "fresh":      counts["fresh"],
+            "stale":      counts["stale"],
+            "very_stale": counts["very_stale"],
+            "critical":   counts["critical"],
+        },
+        "last_update":     most_recent,
+        "needs_attention": needs_attention,
+        "etfs":            etf_rows,
+    })
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, reload_excludes=["*.db"])
