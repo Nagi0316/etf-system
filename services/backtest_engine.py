@@ -181,9 +181,10 @@ def _summarize(transactions: list, total_invested: float, total_shares: float, h
         "total_profit": round(total_profit, 2),
         "total_return": round(total_return, 2),
         "annual_return": round(annual_return, 2),
-        "return_1y": round(annual_return, 2),
-        "return_3y": round(annual_return, 2) if years >= 3 else 0.0,
-        "return_5y": round(annual_return, 2) if years >= 5 else 0.0,
+        # return_1y/3y/5y 為整段期間年化，僅在對應期間足夠時才有意義
+        # 前端統一使用 annual_return；此處僅供下載報表用
+        "return_3y": round(annual_return, 2) if years >= 3 else None,
+        "return_5y": round(annual_return, 2) if years >= 5 else None,
         "final_price": round(final_price, 2),
         "total_shares": round(total_shares, 4),
         "years_span": round(years, 2),

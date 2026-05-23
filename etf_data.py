@@ -96,26 +96,32 @@ _yf_crumb_cookies: dict = {}
 _crumb_lock = threading.Lock()
 
 def _refresh_yahoo_crumb() -> bool:
+    """取得 Yahoo Finance crumb 認證。
+    網路呼叫在鎖外執行，鎖只用於最後寫入共享狀態（避免鎖定期間所有讀取者阻塞）。
+    """
     global _yf_crumb, _yf_crumb_cookies
-    with _crumb_lock:
-        for attempt in range(3):
-            try:
-                s = _new_session()
-                s.headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                r1 = s.get("https://fc.yahoo.com", timeout=8)
-                if r1.status_code not in (200, 302, 303):
-                    time.sleep(5)
-                    continue
-                r2 = s.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=8)
-                if r2.status_code == 200 and r2.text and r2.text.strip() not in ("", "null"):
-                    _yf_crumb = r2.text.strip()
-                    _yf_crumb_cookies = dict(s.cookies)
-                    logger.debug("Yahoo crumb 取得成功")
-                    return True
-            except Exception as e:
-                logger.debug(f"crumb refresh attempt {attempt+1}: {e}")
-            time.sleep(10 * (attempt + 1))
-        return False
+    for attempt in range(3):
+        try:
+            s = _new_session()
+            s.headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            r1 = s.get("https://fc.yahoo.com", timeout=8)
+            if r1.status_code not in (200, 302, 303):
+                time.sleep(5)
+                continue
+            r2 = s.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=8)
+            if r2.status_code == 200 and r2.text and r2.text.strip() not in ("", "null"):
+                crumb = r2.text.strip()
+                cookies = dict(s.cookies)
+                # 只在寫入共享狀態時短暫持鎖（毫秒級），不在網路 I/O 期間持鎖
+                with _crumb_lock:
+                    _yf_crumb = crumb
+                    _yf_crumb_cookies = cookies
+                logger.debug("Yahoo crumb 取得成功")
+                return True
+        except Exception as e:
+            logger.debug(f"crumb refresh attempt {attempt+1}: {e}")
+        time.sleep(10 * (attempt + 1))
+    return False
 
 
 def _yahoo_ticker(ticker: str, market: str) -> str:
@@ -278,20 +284,21 @@ def _best_freq(yf_count: int, ticker: str) -> str:
             else yf_freq)
 
 
-def _annualized_return(closes: list, years: float) -> float:
+def _annualized_return(closes: list, years: float) -> Optional[float]:
+    """回傳年化報酬率（%）。資料不足（< 5 筆）時回傳 None，讓呼叫端可區分「計算結果為 0」與「資料不足」。"""
     if not closes or len(closes) < 5:
-        return 0.0
+        return None   # 明確回傳 None，由 save_etf_data 存入 DB NULL，前端顯示「—」
     try:
         p0, p1 = float(closes[0]), float(closes[-1])
         if p0 <= 0:
-            return 0.0
+            return None
         total = (p1 - p0) / p0
         if years < 1:
             return round(total * 100, 2)
         return round(((1 + total) ** (1 / years) - 1) * 100, 2)
     except Exception as e:
         logger.debug(f"annualized_return calc: {e}")
-        return 0.0
+        return None
 
 
 # ══════════════════════════════════════════════════════════
@@ -438,13 +445,16 @@ def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
 
 
 def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
-    """取得台股 ETF 配息資料，回傳 (dividend_yield_pct, payout_freq)。
+    """取得台股 ETF 配息資料，回傳 (dividend_yield_pct, payout_freq, confirmed)。
+
+    confirmed=True  → API 成功回應（即使 dividend=0 也可信，可覆蓋 DB 舊值）
+    confirmed=False → 所有 API 失敗，回傳靜態備援值，不應覆蓋 DB 中的合理舊值
 
     來源優先順序：
     1. Yahoo Finance chart events — 個別配息事件，可準確計算頻率
     2. TWSE TWT48U — 每筆為「年度彙總」，只取最近年度金額估算殖利率；
        頻率無法從此端點判斷，改用靜態備援 KNOWN_PAYOUT_FREQ
-    3. 靜態備援 — 確保 payout_freq 不因爬取失敗而標成「不配息」
+    3. 靜態備援 (confirmed=False) — 確保 payout_freq 不因爬取失敗而標成「不配息」
     """
     primary = _yahoo_ticker(ticker, "TW")
     alt     = f"{ticker}.TWO" if primary.endswith(".TW") else f"{ticker}.TW"
@@ -466,7 +476,10 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
                         dy   = round(sum(recent) / current_price * 100, 4)
                         # 取 Yahoo 事件數 與 靜態備援 兩者中頻率等級較高者（防止漏抓或升頻）
                         freq = _best_freq(len(recent), ticker)
-                        return dy, freq
+                        return dy, freq, True  # confirmed=True：Yahoo 明確確認有配息
+                    # Yahoo 成功回應但 recent=0 → 已確認近 12 個月無配息事件
+                    freq = KNOWN_PAYOUT_FREQ.get(ticker, "不配息")
+                    return 0.0, freq, True  # confirmed=True：可信賴的 0（非 API 失敗）
         except Exception as e:
             logger.debug(f"TW dividend Yahoo {yt}: {e}")
         _jitter(0.5, 1.5)
@@ -489,27 +502,26 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
                             dy   = round(div_amt / current_price * 100, 4)
                             # TWSE TWT48U 無法判斷頻率，直接用靜態備援
                             freq = KNOWN_PAYOUT_FREQ.get(ticker) or "年配"
-                            return dy, freq
+                            return dy, freq, True  # confirmed=True：TWSE 官方確認
                     except (ValueError, TypeError):
                         continue
         except Exception as e:
             logger.debug(f"TW dividend TWSE {ticker}: {e}")
 
-    # 3. 靜態備援：至少確保頻率標示正確，殖利率填 0 表示未知
+    # 3. 靜態備援（confirmed=False）：所有 API 失敗，回傳估算值但不覆蓋 DB 舊值
     if ticker in KNOWN_PAYOUT_FREQ:
         freq = KNOWN_PAYOUT_FREQ[ticker]
-        # 4. 最終 fallback：用靜態年配息金額 ÷ 現價 估算殖利率（當 Yahoo/TWSE 均失敗時）
         if ticker in KNOWN_ANNUAL_DIVIDEND and current_price > 0:
             approx_dy = round(KNOWN_ANNUAL_DIVIDEND[ticker] / current_price * 100, 4)
-            return approx_dy, freq
-        return 0.0, freq
+            return approx_dy, freq, False  # confirmed=False：靜態估算，不可覆蓋 DB
 
-    # 4. 無任何紀錄：嘗試靜態年配息估算
+        return 0.0, freq, False
+
     if ticker in KNOWN_ANNUAL_DIVIDEND and current_price > 0:
         approx_dy = round(KNOWN_ANNUAL_DIVIDEND[ticker] / current_price * 100, 4)
-        return approx_dy, "不配息"
+        return approx_dy, "不配息", False
 
-    return 0.0, "不配息"
+    return 0.0, "不配息", False
 
 
 def _fetch_tw_history(ticker: str) -> list:
@@ -664,7 +676,7 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
         return None
     price = quote["current_price"]
 
-    div_yield, payout_freq = _fetch_tw_dividend(ticker, price)
+    div_yield, payout_freq, div_confirmed = _fetch_tw_dividend(ticker, price)
     history_closes = _fetch_tw_history(ticker)
 
     # 計算年化報酬需要「起點 + N 個月」共 N+1 筆，故 cutoff 用 -(N+1)
@@ -710,6 +722,7 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
         'expense_ratio': detail.get("expense_ratio") or KNOWN_EXPENSE_RATIO.get(ticker, 0),
         'dividend_yield': div_yield,
         'payout_freq': payout_freq or "不配息",
+        'dividend_confirmed': div_confirmed,  # True=API 明確確認（可覆蓋 DB 即使值為 0）
         'annual_return_1y': ann_1y,
         'annual_return_3y': ann_3y,
         'annual_return_5y': ann_5y,
@@ -738,7 +751,7 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         return None
 
     price = quote["current_price"]
-    history, div_yield, payout_freq = [], 0.0, "不配息"
+    history, div_yield, payout_freq, div_confirmed = [], 0.0, "不配息", False
     try:
         url = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=5y&interval=1mo&events=dividends"
         r = _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{ticker}"), url, timeout=6)
@@ -746,6 +759,7 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
             res = r.json().get("chart", {}).get("result", [{}])[0]
             history = [safe_float(c) for c in (res.get("indicators", {}).get("quote", [{}])[0].get("close") or []) if c is not None]
             events  = res.get("events", {}).get("dividends", {})
+            div_confirmed = True  # Yahoo 成功回應，div_yield 值可信（即使為 0）
             if events:
                 cutoff = time.time() - 365 * 86400
                 recent = [v["amount"] for v in events.values() if v.get("date", 0) >= cutoff]
@@ -789,9 +803,10 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         'volume': quote["volume"], 'asset_size': asset_size, 'nav': nav,
         'pe_ratio': pe_ratio, 'expense_ratio': expense_ratio,
         'dividend_yield': div_yield, 'payout_freq': payout_freq,
-        'annual_return_1y': float(ann_1y) if ann_1y == ann_1y else 0.0,
-        'annual_return_3y': float(ann_3y) if ann_3y == ann_3y else 0.0,
-        'annual_return_5y': float(ann_5y) if ann_5y == ann_5y else 0.0,
+        'dividend_confirmed': div_confirmed,  # True=Yahoo 明確確認（可覆蓋 DB 即使值為 0）
+        'annual_return_1y': ann_1y,  # None = 資料不足（存 DB NULL，前端顯示「—」）
+        'annual_return_3y': ann_3y,
+        'annual_return_5y': ann_5y,
     }
 
 
@@ -811,6 +826,12 @@ def save_etf_data(data: dict):
         nav = safe_float(nav_raw) or cp
         dp  = round((cp - nav) / nav * 100, 2) if nav > 0 and abs(cp - nav) > 0.001 else 0.0
 
+    # dividend_confirmed=True → API 已明確確認（yield=0 也可信，應覆蓋 DB）
+    # dividend_confirmed=False → API 失敗，用靜態估算；yield=0 時傳 NULL 避免清空 DB 舊值
+    div_confirmed = data.get("dividend_confirmed", False)
+    raw_yield     = data.get("dividend_yield")
+    dy_to_store   = raw_yield if (div_confirmed or (raw_yield and float(raw_yield) > 0)) else None
+
     with get_db() as (conn, cursor):
         cursor.execute("""
             INSERT INTO etf_daily_data
@@ -825,24 +846,26 @@ def save_etf_data(data: dict):
               current_price=VALUES(current_price), price_change=VALUES(price_change),
               price_change_percent=VALUES(price_change_percent),
               volume=VALUES(volume), discount_premium=VALUES(discount_premium),
-              -- 殖利率：新值 > 0 才更新（避免爬取失敗覆蓋正確值）
-              dividend_yield=IF(VALUES(dividend_yield)>0,
+              -- 殖利率：IS NOT NULL 才更新
+              --   confirmed=True  且 yield=0 → NULL→NULL，仍更新為 0（正確清零）
+              --   confirmed=False 且 yield=0 → 傳 NULL，保留 DB 舊值（API 失敗保護）
+              dividend_yield=IF(VALUES(dividend_yield) IS NOT NULL,
                                 VALUES(dividend_yield),
                                 COALESCE(dividend_yield,0)),
               -- 配息頻率：新值非「不配息」才更新（確保已知頻率不被清空）
               payout_freq=IF(VALUES(payout_freq)!='不配息',
                              VALUES(payout_freq),
                              COALESCE(payout_freq,'不配息')),
-              -- 年化報酬：新值非 0 才更新（避免爬取失敗清空歷史計算結果）
-              annual_return_1y=IF(VALUES(annual_return_1y)!=0,
+              -- 年化報酬：新值 IS NOT NULL 才更新（NULL = 資料不足，保留 DB 舊值）
+              annual_return_1y=IF(VALUES(annual_return_1y) IS NOT NULL,
                                   VALUES(annual_return_1y),
-                                  COALESCE(annual_return_1y,0)),
-              annual_return_3y=IF(VALUES(annual_return_3y)!=0,
+                                  annual_return_1y),
+              annual_return_3y=IF(VALUES(annual_return_3y) IS NOT NULL,
                                   VALUES(annual_return_3y),
-                                  COALESCE(annual_return_3y,0)),
-              annual_return_5y=IF(VALUES(annual_return_5y)!=0,
+                                  annual_return_3y),
+              annual_return_5y=IF(VALUES(annual_return_5y) IS NOT NULL,
                                   VALUES(annual_return_5y),
-                                  COALESCE(annual_return_5y,0)),
+                                  annual_return_5y),
               pe_ratio=IF(VALUES(pe_ratio)>0, VALUES(pe_ratio), pe_ratio),
               expense_ratio=IF(VALUES(expense_ratio)>0, VALUES(expense_ratio), expense_ratio),
               asset_size=IF(VALUES(asset_size)>0, VALUES(asset_size), asset_size),
@@ -856,10 +879,10 @@ def save_etf_data(data: dict):
             safe_float(data.get("price_change_percent")),
             safe_float(data.get("volume")), safe_float(data.get("asset_size")),
             nav, dp,
-            data.get("dividend_yield"), data.get("payout_freq", "不配息"),
-            safe_float(data.get("annual_return_1y")),
-            safe_float(data.get("annual_return_3y")),
-            safe_float(data.get("annual_return_5y")),
+            dy_to_store, data.get("payout_freq", "不配息"),
+            data.get("annual_return_1y"),  # None → NULL（IS NOT NULL 邏輯區分「資料不足」與「計算值」）
+            data.get("annual_return_3y"),
+            data.get("annual_return_5y"),
             safe_float(data.get("pe_ratio")),
             safe_float(data.get("expense_ratio")),
             safe_float(data.get("day_high")),

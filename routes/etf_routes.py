@@ -64,9 +64,9 @@ _ETF_DETAIL_SELECT = """
         COALESCE(d.discount_premium,0) as discount_premium,
         COALESCE(d.dividend_yield,0) as dividend_yield,
         COALESCE(d.payout_freq,'不配息') as payout_freq,
-        COALESCE(d.annual_return_1y,0) as annual_return_1y,
-        COALESCE(d.annual_return_3y,0) as annual_return_3y,
-        COALESCE(d.annual_return_5y,0) as annual_return_5y,
+        d.annual_return_1y,   -- NULL = 資料不足（前端顯示「—」）
+        d.annual_return_3y,
+        d.annual_return_5y,
         COALESCE(d.pe_ratio,0) as pe_ratio,
         COALESCE(d.expense_ratio,0) as expense_ratio,
         COALESCE(d.day_high,0) as day_high,
@@ -245,7 +245,7 @@ async def _on_demand_fetch(ticker: str, client_ip: str = "") -> Optional[dict]:
                 "price_change_percent": data.get("price_change_percent", 0),
                 "dividend_yield": data.get("dividend_yield", 0),
                 "payout_freq": data.get("payout_freq", ""),
-                "annual_return_1y": data.get("annual_return_1y", 0),
+                "annual_return_1y": data.get("annual_return_1y"),  # None 保留，前端 retFmt 顯示「—」
             }
         except Exception as e:
             logger.warning(f"_on_demand_fetch {ticker}: {e}")
@@ -317,8 +317,8 @@ def _maybe_background_refresh(ticker: str, row: dict):
         is_stale = (not data_date) or ((_date.today() - data_date).days >= 1)
     except Exception:
         is_stale = True
-    missing_returns = (float(row.get("annual_return_1y", 0)) == 0.0 and
-                       float(row.get("annual_return_3y", 0)) == 0.0)
+    missing_returns = (not row.get("annual_return_1y") and
+                       not row.get("annual_return_3y"))
     if not (is_stale or missing_returns):
         return
 
