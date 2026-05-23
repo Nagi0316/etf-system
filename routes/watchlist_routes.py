@@ -2,7 +2,7 @@
 routes/watchlist_routes.py — ETF 自選清單
 """
 import logging
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile, File
 
 from auth import get_current_user
 from models import WatchlistAddIn
@@ -66,6 +66,62 @@ async def add_watchlist(body: WatchlistAddIn, current_user: dict = Depends(get_c
         cursor.execute("INSERT INTO user_watchlist (user_id,ticker) VALUES (%s,%s)", (uid, ticker))
         conn.commit()
     return safe_json({"status": "success", "message": f"已加入自選：{ticker}"})
+
+
+@router.post("/api/watchlist/import-csv")
+async def import_watchlist_csv(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """從 CSV 批次匯入自選股。前端已解析好 tickers，每行一個代碼。"""
+    uid = current_user["id"]
+    content = await file.read()
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = content.decode("big5", errors="replace")
+
+    tickers = []
+    for line in text.splitlines():
+        t = line.strip().upper().strip('"').strip("'")
+        if t and 2 <= len(t) <= 10 and t.replace(".", "").isalnum():
+            tickers.append(t)
+    tickers = list(dict.fromkeys(tickers))  # 去重保序
+
+    if not tickers:
+        return safe_json({"status": "error", "message": "未找到有效的 ETF 代碼"}, 400)
+
+    added = skipped = 0
+    with get_db() as (conn, cursor):
+        for ticker in tickers:
+            market = "TW" if ticker[:4].isdigit() else "US"
+            # 確保 etf_master 有此代碼
+            cursor.execute("SELECT ticker FROM etf_master WHERE ticker=%s", (ticker,))
+            if not cursor.fetchone():
+                cursor.execute(
+                    "INSERT OR REPLACE INTO etf_master (ticker, name, market) VALUES (%s, %s, %s)",
+                    (ticker, ticker, market),
+                )
+            # 加入自選股
+            cursor.execute(
+                "SELECT id FROM user_watchlist WHERE user_id=%s AND ticker=%s", (uid, ticker)
+            )
+            if cursor.fetchone():
+                skipped += 1
+            else:
+                cursor.execute(
+                    "INSERT INTO user_watchlist (user_id, ticker) VALUES (%s, %s)", (uid, ticker)
+                )
+                added += 1
+        conn.commit()
+
+    return safe_json({
+        "status": "success",
+        "added": added,
+        "skipped": skipped,
+        "total": len(tickers),
+        "message": f"匯入完成：新增 {added} 支，跳過 {skipped} 支",
+    })
 
 
 @router.delete("/api/watchlist/remove/{ticker}")
