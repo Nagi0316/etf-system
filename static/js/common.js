@@ -68,22 +68,36 @@ const Auth = {
     return { 'Content-Type': 'application/json', ...extra };
   },
 
-  async fetch(url, opts = {}) {
-    opts.headers = this.headers(opts.headers || {});
-    opts.credentials = 'include';  // 自動附帶 HttpOnly cookie
-    const resp = await fetch(url, opts);
-    if (resp.status === 401) {
-      this.clearToken();
-      window.location.href = '/auth';
-      return null;
+  async fetch(url, opts = {}, timeoutMs = 10000) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    opts.headers    = this.headers(opts.headers || {});
+    opts.credentials = 'include';
+    opts.signal     = ctrl.signal;
+    try {
+      const resp = await fetch(url, opts);
+      if (resp.status === 401) {
+        this.clearToken();
+        window.location.href = '/auth';
+        return null;
+      }
+      return resp;
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        console.warn(`[timeout] ${url}`);
+        return null;
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
     }
-    return resp;
   },
 
-  async fetchJson(url, opts = {}) {
-    const resp = await this.fetch(url, opts);
+  async fetchJson(url, opts = {}, timeoutMs = 10000) {
+    const resp = await this.fetch(url, opts, timeoutMs);
     if (!resp) return null;
-    return resp.json();
+    try { return await resp.json(); }
+    catch { return null; }
   },
 
   logout() {
@@ -96,7 +110,7 @@ const Auth = {
 };
 
 // ══════════════════════════════════════════════════════
-//  使用者資訊顯示
+//  使用者資訊顯示（profile + 通知 並行抓取）
 // ══════════════════════════════════════════════════════
 async function loadUserInfo(containerId = 'user-info') {
   const container = document.getElementById(containerId);
@@ -109,13 +123,19 @@ async function loadUserInfo(containerId = 'user-info') {
   }
 
   try {
-    const data = await Auth.fetchJson('/api/user/profile');
-    if (!data || data.status !== 'success') {
+    // 並行抓取 profile + 未讀通知數，避免串行等待
+    const [profileData, notifData] = await Promise.all([
+      Auth.fetchJson('/api/user/profile'),
+      Auth.fetchJson('/api/notifications?unread_only=true', {}, 6000),
+    ]);
+
+    if (!profileData || profileData.status !== 'success') {
       Auth.clearToken();
       container.innerHTML = `<a href="/auth" class="btn-primary text-sm px-3 py-1.5 rounded-lg">登入</a>`;
       return;
     }
-    const u = data.data;
+
+    const u = profileData.data;
     // XSS 防護：所有使用者資料透過 _escHtml 轉義後才插入 HTML
     const safeName   = _escHtml(u.username || 'User');
     const safeEmail  = _escHtml(u.email || '');
@@ -149,28 +169,16 @@ async function loadUserInfo(containerId = 'user-info') {
         </div>
       </div>`;
 
-    loadUnreadCount();
+    // 更新通知紅點
+    const cnt = notifData?.unread_count || 0;
+    const badge = document.getElementById('notif-badge');
+    if (badge) {
+      if (cnt > 0) { badge.textContent = cnt > 9 ? '9+' : cnt; badge.classList.remove('hidden'); }
+      else { badge.classList.add('hidden'); }
+    }
   } catch (e) {
     console.warn('loadUserInfo error:', e);
   }
-}
-
-async function loadUnreadCount() {
-  if (!Auth.isLoggedIn()) return;
-  try {
-    const data = await Auth.fetchJson('/api/notifications?unread_only=true');
-    if (!data) return;
-    const cnt = data.unread_count || 0;
-    const badge = document.getElementById('notif-badge');
-    if (badge) {
-      if (cnt > 0) {
-        badge.textContent = cnt > 9 ? '9+' : cnt;
-        badge.classList.remove('hidden');
-      } else {
-        badge.classList.add('hidden');
-      }
-    }
-  } catch (e) { /* ignore */ }
 }
 
 // ══════════════════════════════════════════════════════

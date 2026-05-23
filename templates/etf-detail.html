@@ -277,11 +277,14 @@ async function loadETFDetail() {
     if (result.status === 'success') {
       etfData = result.data;
       renderData();
-      loadPriceHistory(currentTicker, '1Y');
-      checkWatchlistStatus(currentTicker);
-      loadDipAlert(currentTicker);
       document.getElementById('loading').classList.add('hidden');
       document.getElementById('content').classList.remove('hidden');
+      // 三個次要 API 並行，不阻塞主畫面顯示
+      Promise.all([
+        loadPriceHistory(currentTicker, '1Y'),
+        checkWatchlistStatus(currentTicker),
+        loadDipAlert(currentTicker),
+      ]);
 
       // 若關鍵欄位缺失（爬取曾失敗），立即在背景強制重抓並刷新顯示
       const d = etfData;
@@ -521,11 +524,11 @@ function changePeriod(p) {
   if (currentTicker) loadPriceHistory(currentTicker, p.toUpperCase());
 }
 
-// 自選股
+// 自選股（輕量單一 ticker 查詢，避免下載整份清單）
 async function checkWatchlistStatus(ticker) {
   if (!Auth.isLoggedIn()) return;
-  const data = await Auth.fetchJson('/api/watchlist');
-  if (data?.status === 'success') { inWatchlist = (data.data||[]).some(i => i.ticker === ticker); updateWatchlistBtn(); }
+  const data = await Auth.fetchJson(`/api/watchlist/check/${ticker}`);
+  if (data?.status === 'success') { inWatchlist = data.in_watchlist; updateWatchlistBtn(); }
 }
 function updateWatchlistBtn() {
   const btn = document.getElementById('watchlist-btn');

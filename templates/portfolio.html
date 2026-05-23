@@ -20,8 +20,8 @@
       <div class="hidden md:flex gap-1">
         <a href="/etf-list"  class="px-3 py-1.5 text-sm rounded-lg text-slate-500 dark:text-slate-400 hover:text-indigo-600">ETF精選</a>
         <a href="/watchlist" class="px-3 py-1.5 text-sm rounded-lg text-slate-500 dark:text-slate-400 hover:text-indigo-600">自選股</a>
-        <a href="/portfolio" class="px-3 py-1.5 text-sm rounded-lg bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 font-medium">庫存</a>
         <a href="/backtest"  class="px-3 py-1.5 text-sm rounded-lg text-slate-500 dark:text-slate-400 hover:text-indigo-600">回測</a>
+        <a href="/portfolio" class="px-3 py-1.5 text-sm rounded-lg bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 font-medium">庫存</a>
       </div>
     </div>
     <div class="flex items-center gap-2">
@@ -313,8 +313,7 @@ document.getElementById('m-price').addEventListener('input', updateTotal);
 document.getElementById('trade-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
-loadPortfolio();
-loadTransactions();
+Promise.all([loadPortfolio(), loadTransactions()]);
 </script>
 </body>
 </html>

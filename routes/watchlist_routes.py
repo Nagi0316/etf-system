@@ -68,6 +68,19 @@ async def add_watchlist(body: WatchlistAddIn, current_user: dict = Depends(get_c
     return safe_json({"status": "success", "message": f"已加入自選：{ticker}"})
 
 
+@router.get("/api/watchlist/check/{ticker}")
+async def check_watchlist(ticker: str, current_user: dict = Depends(get_current_user)):
+    """輕量查詢：單一 ticker 是否在自選清單中。"""
+    uid = current_user["id"]
+    with get_db() as (conn, cursor):
+        cursor.execute(
+            "SELECT 1 FROM user_watchlist WHERE user_id=%s AND ticker=%s",
+            (uid, ticker.upper())
+        )
+        exists = cursor.fetchone() is not None
+    return safe_json({"status": "success", "in_watchlist": exists})
+
+
 @router.delete("/api/watchlist/remove/{ticker}")
 async def remove_watchlist(ticker: str, current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
