@@ -1,51 +1,18 @@
-<!DOCTYPE html>
-<html lang="zh-TW" class="">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ETF 精選 — ETF 投資管理系統</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config={darkMode:'class'}</script>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-  <link href="/static/css/main.css" rel="stylesheet">
-  <style>
-    .rank-1 { background:linear-gradient(135deg,#FFD700,#FDB931); color:#1a1a1a; }
-    .rank-2 { background:linear-gradient(135deg,#C0C0C0,#E8E8E8); color:#1a1a1a; }
-    .rank-3 { background:linear-gradient(135deg,#CD7F32,#B87333); color:#fff; }
-    .rank-other { background:#f1f5f9; color:#64748b; }
-    .dark .rank-other { background:#334155; color:#94a3b8; }
-    .rank-badge { width:26px; height:26px; display:flex; align-items:center; justify-content:center; border-radius:50%; font-weight:700; font-size:.75rem; flex-shrink:0; }
-  </style>
-</head>
-<body class="bg-slate-50 dark:bg-slate-900 pb-mobile">
+{% extends "base.html" %}
+{% block title %}ETF 精選 — ETF 投資管理系統{% endblock %}
 
-<nav class="navbar">
-  <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
-    <div class="flex items-center gap-6">
-      <a href="/" class="flex items-center gap-2 font-bold text-indigo-600 dark:text-indigo-400 text-base">
-        <i class="fas fa-chart-line"></i>ETF投資系統
-      </a>
-      <div class="hidden md:flex gap-1">
-        <a href="/etf-list"  class="px-3 py-1.5 text-sm rounded-md bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 font-medium">ETF精選</a>
-        <a href="/watchlist" class="px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600">自選股</a>
-        <a href="/backtest"  class="px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600">回測</a>
-        <a href="/portfolio" class="px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600">庫存</a>
-      </div>
-    </div>
-    <div class="flex items-center gap-3">
-      <div class="relative hidden md:block">
-        <input id="search-input" type="text" placeholder="搜尋代碼或名稱…"
-          class="input pl-8 pr-3 py-1.5 text-sm w-52">
-        <button id="search-btn" type="button"
-          class="fas fa-search absolute left-2.5 top-2.5 text-xs text-slate-400 hover:text-indigo-500 cursor-pointer bg-transparent border-0 p-0"
-          aria-label="搜尋"></button>
-      </div>
-      <button onclick="toggleDarkMode()" id="dark-toggle" class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"><i class="fas fa-moon"></i></button>
-      <div id="user-area"></div>
-    </div>
-  </div>
-</nav>
+{% block extra_head %}
+<style>
+  .rank-1 { background:linear-gradient(135deg,#FFD700,#FDB931); color:#1a1a1a; }
+  .rank-2 { background:linear-gradient(135deg,#C0C0C0,#E8E8E8); color:#1a1a1a; }
+  .rank-3 { background:linear-gradient(135deg,#CD7F32,#B87333); color:#fff; }
+  .rank-other { background:#f1f5f9; color:#64748b; }
+  .dark .rank-other { background:#334155; color:#94a3b8; }
+  .rank-badge { width:26px; height:26px; display:flex; align-items:center; justify-content:center; border-radius:50%; font-weight:700; font-size:.75rem; flex-shrink:0; }
+</style>
+{% endblock %}
 
+{% block content %}
 <div class="max-w-7xl mx-auto px-4 py-6">
   <div class="flex items-center justify-between mb-5 flex-wrap gap-3">
     <div>
@@ -93,27 +60,9 @@
     </div>
   </div>
 </div>
+{% endblock %}
 
-<nav class="bottom-nav">
-  <a href="/"><i class="fas fa-home"></i>首頁</a>
-  <a href="/etf-list" class="active"><i class="fas fa-chart-bar"></i>ETF</a>
-  <a href="/watchlist"><i class="fas fa-star"></i>自選</a>
-  <a href="/portfolio"><i class="fas fa-wallet"></i>庫存</a>
-  <a href="/profile"><i class="fas fa-user"></i>我的</a>
-</nav>
-
-<!-- 搜尋結果 Modal -->
-<div id="search-modal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
-  <div class="card w-full max-w-sm p-5">
-    <div class="flex justify-between items-center mb-3">
-      <h3 class="font-bold text-slate-800 dark:text-white text-sm">搜尋結果</h3>
-      <button onclick="document.getElementById('search-modal').style.display='none'" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"><i class="fas fa-times"></i></button>
-    </div>
-    <div id="search-results-list" class="space-y-2 max-h-80 overflow-y-auto"></div>
-  </div>
-</div>
-
-<script src="/static/js/common.js"></script>
+{% block scripts %}
 <script>
 let currentRanking = 'volume', currentMarket = 'TW', allEtfData = [];
 
@@ -142,7 +91,6 @@ function fmtVol(v, market) {
   if (v >= 1e6) return (v/1e6).toFixed(1)+'M';
   return v.toLocaleString();
 }
-
 
 function switchMarket(m) {
   currentMarket = m;
@@ -184,7 +132,6 @@ function renderTable(data, type) {
     tbody.innerHTML = `<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">${allEtfData.length ? '此市場暫無資料' : '數據抓取中，請稍後重新整理頁面'}</td></tr>`;
     return;
   }
-
   tbody.innerHTML = rows.map((item, i) => {
     const rank = i + 1;
     const bCls = rank===1?'rank-1':rank===2?'rank-2':rank===3?'rank-3':'rank-other';
@@ -193,7 +140,6 @@ function renderTable(data, type) {
     const price  = item.current_price ? item.current_price.toFixed(2) : '-';
     const yld    = parseFloat(item.dividend_yield) || 0;
     const yldTxt = yld > 0 ? yld.toFixed(2)+'%' : '-';
-
     let rankVal = '-';
     if (type === 'volume')      rankVal = fmtVol(item.volume || 0, item.market);
     else if (type === 'return') {
@@ -202,7 +148,6 @@ function renderTable(data, type) {
     } else if (type === 'yield') {
       rankVal = `<span class="${yld>0?'text-emerald-600 dark:text-emerald-400 font-medium':'text-slate-400'}">${yldTxt}</span>`;
     }
-
     return `
     <tr class="table-row cursor-pointer animate-fade-in" onclick="location.href='/etf-detail/${item.ticker}'">
       <td class="px-4 py-3.5"><div class="rank-badge ${bCls}">${rank}</div></td>
@@ -237,65 +182,9 @@ async function addWatchlist(ticker, name, market) {
   showToast(data?.status==='success' ? `已加入 ${ticker}` : (data?.message||'加入失敗'), data?.status==='success');
 }
 
-// 搜尋
-let searchTimer;
-const _searchInput = document.getElementById('search-input');
-
-async function doSearch(q) {
-  const data = await fetch(`/api/etf/search/dynamic?q=${encodeURIComponent(q)}`).then(r=>r.json()).catch(()=>null);
-  if (data?.status==='success' && data.data?.length) {
-    if (data.data.length === 1) { location.href = `/etf-detail/${data.data[0].ticker}`; return; }
-    document.getElementById('search-results-list').innerHTML = data.data.slice(0,8).map(item => `
-      <div onclick="location.href='/etf-detail/${item.ticker}'"
-        class="flex justify-between items-center p-3 rounded-lg border border-slate-100 dark:border-slate-700 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700">
-        <div>
-          <span class="font-bold text-indigo-600 dark:text-indigo-400 text-sm">${item.ticker}</span>
-          <div class="text-xs text-slate-400">${item.name||''}</div>
-        </div>
-        <div class="text-right">
-          <div class="font-medium text-sm tabular-nums text-slate-800 dark:text-slate-200">${item.current_price?item.current_price.toFixed(2):'-'}</div>
-          <div class="text-xs tabular-nums ${(item.price_change_percent||0)>=0?'text-red-500':'text-green-500'}">
-            ${(item.price_change_percent||0)>=0?'+':''}${(item.price_change_percent||0).toFixed(2)}%
-          </div>
-        </div>
-      </div>`).join('');
-    document.getElementById('search-modal').style.display = 'flex';
-  } else if (q.length > 1) {
-    showToast('找不到相關 ETF', false);
-  }
-}
-
-function _fireSearch() {
-  const q = _searchInput?.value.trim();
-  if (!q) { document.getElementById('search-modal').style.display='none'; return; }
-  clearTimeout(searchTimer);
-  doSearch(q);
-}
-
-// 即時篩選（350 ms debounce）
-_searchInput?.addEventListener('input', e => {
-  clearTimeout(searchTimer);
-  const q = e.target.value.trim();
-  if (!q) { document.getElementById('search-modal').style.display='none'; return; }
-  searchTimer = setTimeout(() => doSearch(q), 350);
-});
-
-// Enter 鍵 → 立即搜尋
-_searchInput?.addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); _fireSearch(); }
-});
-
-// 放大鏡按鈕點擊 → 立即搜尋
-document.getElementById('search-btn')?.addEventListener('click', _fireSearch);
-
-document.getElementById('search-modal')?.addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.style.display='none'; });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { document.getElementById('search-modal').style.display='none'; } });
-
 document.addEventListener('DOMContentLoaded', () => {
-  loadUserInfo('user-area');
   switchRanking('volume');
   setInterval(() => switchRanking(currentRanking), 300000);
 });
 </script>
-</body>
-</html>
+{% endblock %}

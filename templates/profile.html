@@ -1,28 +1,7 @@
-<!DOCTYPE html>
-<html lang="zh-TW" class="">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>會員中心 — ETF 投資管理系統</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config={darkMode:'class'}</script>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-  <link href="/static/css/main.css" rel="stylesheet">
-</head>
-<body class="bg-slate-50 dark:bg-slate-900 pb-mobile">
+{% extends "base.html" %}
+{% block title %}會員中心 — ETF 投資管理系統{% endblock %}
 
-<nav class="navbar">
-  <div class="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
-    <div class="flex items-center gap-4">
-      <a href="/" class="text-indigo-600 dark:text-indigo-400"><i class="fas fa-arrow-left"></i></a>
-      <span class="font-bold text-slate-800 dark:text-white">會員中心</span>
-    </div>
-    <div class="flex items-center gap-2">
-      <button onclick="toggleDarkMode()" id="dark-toggle" class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"><i class="fas fa-moon"></i></button>
-    </div>
-  </div>
-</nav>
-
+{% block content %}
 <div class="max-w-2xl mx-auto px-4 py-6 space-y-4">
 
   <!-- 未登入 -->
@@ -45,7 +24,6 @@
             <div id="user-avatar"
               class="w-16 h-16 bg-white dark:bg-slate-700 rounded-xl shadow border-2 border-white dark:border-slate-700 flex items-center justify-center text-2xl text-indigo-600 font-bold overflow-hidden">
             </div>
-            <!-- 只有非 Google 用戶才顯示上傳頭貼 -->
             <label id="avatar-label" class="hidden absolute -bottom-1 -right-1 bg-indigo-600 text-white w-5 h-5 rounded-full items-center justify-center cursor-pointer hover:bg-indigo-700">
               <i class="fas fa-camera text-[9px]"></i>
               <input type="file" id="avatar-input" class="hidden" accept="image/*" onchange="handleAvatarUpload(this)">
@@ -135,14 +113,6 @@
   </div><!-- /loggedin -->
 </div>
 
-<nav class="bottom-nav">
-  <a href="/"><i class="fas fa-home"></i>首頁</a>
-  <a href="/etf-list"><i class="fas fa-chart-bar"></i>ETF</a>
-  <a href="/watchlist"><i class="fas fa-star"></i>自選</a>
-  <a href="/portfolio"><i class="fas fa-wallet"></i>庫存</a>
-  <a href="/profile" class="active"><i class="fas fa-user"></i>我的</a>
-</nav>
-
 <!-- 編輯 Modal -->
 <div id="editModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
   <div class="card w-full max-w-sm p-6">
@@ -195,8 +165,9 @@
     <button onclick="changePassword()" class="btn-primary w-full justify-center mt-4">更新密碼</button>
   </div>
 </div>
+{% endblock %}
 
-<script src="/static/js/common.js"></script>
+{% block scripts %}
 <script>
 let profileData = null;
 
@@ -218,10 +189,8 @@ async function loadProfile() {
   document.getElementById('user-phone').textContent  = u.phone    || '未設定';
   document.getElementById('user-joined').textContent = u.created_at ? u.created_at.split('T')[0] : '-';
   document.getElementById('user-budget').textContent = u.monthly_budget
-    ? `NT$ ${Number(u.monthly_budget).toLocaleString()}`
-    : '未設定';
+    ? `NT$ ${Number(u.monthly_budget).toLocaleString()}` : '未設定';
 
-  // 頭貼
   const av = document.getElementById('user-avatar');
   const avatar = u.display_avatar || u.google_picture || u.avatar;
   if (avatar) {
@@ -230,7 +199,6 @@ async function loadProfile() {
     av.textContent = (u.username || '?')[0].toUpperCase();
   }
 
-  // Google badge & 頭貼上傳開關
   if (u.auth_provider === 'google') {
     document.getElementById('google-badge').classList.remove('hidden');
     document.getElementById('change-pw-btn').classList.add('hidden');
@@ -238,7 +206,6 @@ async function loadProfile() {
     document.getElementById('avatar-label').classList.remove('hidden');
     document.getElementById('avatar-label').style.display = 'flex';
   }
-
   loadAssets();
 }
 
@@ -269,9 +236,8 @@ async function saveProfile() {
     method: 'PUT',
     body: JSON.stringify({ username, phone, monthly_budget })
   });
-  if (data?.status === 'success') {
-    showToast('已更新'); closeEditModal(); loadProfile();
-  } else showToast(data?.message || '更新失敗', false);
+  if (data?.status === 'success') { showToast('已更新'); closeEditModal(); loadProfile(); }
+  else showToast(data?.message || '更新失敗', false);
 }
 
 function openSecurityModal() { document.getElementById('securityModal').style.display = 'flex'; }
@@ -299,11 +265,7 @@ async function handleAvatarUpload(input) {
   if (file.size > 5 * 1024 * 1024) { showToast('圖片不能超過 5MB', false); return; }
   const fd = new FormData();
   fd.append('file', file);
-  const res = await fetch('/api/user/avatar', {
-    method: 'POST',
-    credentials: 'include',
-    body: fd
-  });
+  const res = await fetch('/api/user/avatar', { method:'POST', credentials:'include', body:fd });
   const data = await res.json();
   if (data?.status === 'success') {
     showToast('頭貼已更新');
@@ -320,5 +282,4 @@ document.addEventListener('keydown', e => {
 
 document.addEventListener('DOMContentLoaded', loadProfile);
 </script>
-</body>
-</html>
+{% endblock %}

@@ -1,49 +1,18 @@
-<!DOCTYPE html>
-<html lang="zh-TW" class="">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ETF 詳情 — ETF 投資管理系統</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config={darkMode:'class'}</script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-  <link href="/static/css/main.css" rel="stylesheet">
-  <style>
-    .period-btn { padding:.25rem .6rem; border-radius:.375rem; font-size:.75rem; font-weight:500; color:#94a3b8; transition:all .15s; }
-    .period-btn:hover { background:#eef2ff; color:#4f46e5; }
-    .period-btn.active { background:#eef2ff; color:#4f46e5; font-weight:700; }
-    .dark .period-btn:hover { background:#312e81; color:#a5b4fc; }
-    .dark .period-btn.active { background:#312e81; color:#a5b4fc; }
-  </style>
-</head>
-<body class="bg-slate-50 dark:bg-slate-900 pb-mobile">
+{% extends "base.html" %}
+{% block title %}ETF 詳情 — ETF 投資管理系統{% endblock %}
 
-<nav class="navbar">
-  <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
-    <div class="flex items-center gap-6">
-      <a href="/" class="flex items-center gap-2 font-bold text-indigo-600 dark:text-indigo-400 text-base">
-        <i class="fas fa-chart-line"></i>ETF投資系統
-      </a>
-      <div class="hidden md:flex gap-1">
-        <a href="/etf-list"  class="px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600">ETF精選</a>
-        <a href="/watchlist" class="px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600">自選股</a>
-        <a href="/backtest"  class="px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600">回測</a>
-        <a href="/portfolio" class="px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600">庫存</a>
-      </div>
-    </div>
-    <div class="flex items-center gap-3">
-      <div class="relative hidden md:block">
-        <input type="text" id="search-input" placeholder="搜尋 ETF…"
-          class="input pl-9 pr-4 py-1.5 text-sm w-48">
-        <i class="fas fa-search absolute left-3 top-2.5 text-slate-400 text-xs pointer-events-none"></i>
-      </div>
-      <button onclick="toggleDarkMode()" id="dark-toggle" class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"><i class="fas fa-moon"></i></button>
-      <div id="user-area"></div>
-    </div>
-  </div>
-</nav>
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  .period-btn { padding:.25rem .6rem; border-radius:.375rem; font-size:.75rem; font-weight:500; color:#94a3b8; transition:all .15s; }
+  .period-btn:hover { background:#eef2ff; color:#4f46e5; }
+  .period-btn.active { background:#eef2ff; color:#4f46e5; font-weight:700; }
+  .dark .period-btn:hover { background:#312e81; color:#a5b4fc; }
+  .dark .period-btn.active { background:#312e81; color:#a5b4fc; }
+</style>
+{% endblock %}
 
+{% block content %}
 <div class="max-w-7xl mx-auto px-4 py-6">
 
   <!-- 載入中 -->
@@ -93,8 +62,7 @@
             class="px-3 py-2 rounded-lg text-sm font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 hover:text-indigo-600 transition-all">
             <i class="fas fa-sync-alt"></i>
           </button>
-          <button onclick="openTradeModal()"
-            class="btn-primary text-sm py-2 px-3">
+          <button onclick="openTradeModal()" class="btn-primary text-sm py-2 px-3">
             <i class="fas fa-exchange-alt mr-1.5"></i>交易
           </button>
         </div>
@@ -104,9 +72,13 @@
     <!-- 今日行情 4 格 -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
       <div class="card p-4">
-        <p class="text-xs text-slate-400 mb-1">現價</p>
+        <div class="flex items-center justify-between mb-1">
+          <p class="text-xs text-slate-400">現價</p>
+          <span id="live-badge" class="hidden text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-400 font-medium animate-pulse">● LIVE</span>
+        </div>
         <p id="current-price" class="text-2xl font-bold text-slate-800 dark:text-white tabular-nums">-</p>
         <p id="price-change" class="text-xs mt-1">-</p>
+        <p id="last-updated" class="text-[10px] text-slate-300 dark:text-slate-600 mt-1 hidden"></p>
       </div>
       <div class="card p-4">
         <p class="text-xs text-slate-400 mb-1">今日成交量</p>
@@ -206,14 +178,6 @@
   </div><!-- /content -->
 </div>
 
-<nav class="bottom-nav">
-  <a href="/"><i class="fas fa-home"></i>首頁</a>
-  <a href="/etf-list"><i class="fas fa-chart-bar"></i>ETF</a>
-  <a href="/watchlist"><i class="fas fa-star"></i>自選</a>
-  <a href="/portfolio"><i class="fas fa-wallet"></i>庫存</a>
-  <a href="/profile"><i class="fas fa-user"></i>我的</a>
-</nav>
-
 <!-- 交易 Modal -->
 <div id="tradeModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
   <div class="card w-full max-w-md p-6">
@@ -241,10 +205,10 @@
     </div>
   </div>
 </div>
+{% endblock %}
 
-<script src="/static/js/common.js"></script>
+{% block scripts %}
 <script>
-// expense_ratio 統一使用小數格式（與後端 DB 一致）：0.0046 = 0.46%
 const STATIC_INFO = {
   '0050':  {'issuer':'元大投信',  'listing_date':'2003-06-25','expense_ratio':0.0046},
   '0056':  {'issuer':'元大投信',  'listing_date':'2007-12-26','expense_ratio':0.0066},
@@ -263,7 +227,7 @@ const STATIC_INFO = {
 };
 
 let etfData = null, priceChart = null, inWatchlist = false, currentPeriod = '1Y', currentTicker = '';
-let _chartReqId = 0;   // 防止並發請求互搶圖表
+let _chartReqId = 0;
 
 async function loadETFDetail() {
   const parts = window.location.pathname.split('/');
@@ -284,17 +248,14 @@ async function loadETFDetail() {
       renderData();
       document.getElementById('loading').classList.add('hidden');
       document.getElementById('content').classList.remove('hidden');
-      // 三個次要 API 並行，不阻塞主畫面顯示
       Promise.all([
         loadPriceHistory(currentTicker, '1Y'),
         checkWatchlistStatus(currentTicker),
         loadDipAlert(currentTicker),
       ]).then(() => {
-        // 主圖表載入完後，在背景靜默探測其他 period 是否有資料，把空的按鈕藏掉
         probeAllPeriods(currentTicker);
       });
 
-      // 若關鍵欄位缺失（爬取曾失敗），立即在背景強制重抓並刷新顯示
       const d = etfData;
       const missingReturns = !parseFloat(d.annual_return_1y) && !parseFloat(d.annual_return_3y) && !parseFloat(d.annual_return_5y);
       if (missingReturns) {
@@ -366,7 +327,7 @@ function renderData() {
     document.getElementById('volume-unit').textContent = '股';
   }
 
-  const prevClose = price > 0 ? Math.round((price - (parseFloat(d.price_change) || 0)) * 100) / 100 : 0;
+  const prevClose = price > 0 ? Math.round((price - chgAmt) * 100) / 100 : 0;
   document.getElementById('prev-close').textContent = prevClose > 0 ? prevClose.toFixed(2) : '-';
 
   const dh = parseFloat(d.day_high) || 0;
@@ -374,7 +335,6 @@ function renderData() {
   document.getElementById('day-range').textContent = (dh > 0 && dl > 0 && dh !== dl)
     ? dl.toFixed(2) + ' – ' + dh.toFixed(2) : '-';
 
-  // expense_ratio 在 DB 與 STATIC_INFO 中統一為小數格式（0.0046 = 0.46%），顯示時乘以 100
   let er = parseFloat(d.expense_ratio) || 0;
   if (er <= 0 && stat.expense_ratio) er = stat.expense_ratio;
   document.getElementById('expense-ratio').textContent = er > 0 ? (er * 100).toFixed(2) + '%' : '-';
@@ -385,8 +345,6 @@ function renderData() {
   document.getElementById('wk52-low').textContent  = l52 > 0 ? l52.toFixed(2) : '-';
 
   const retFmt = v => {
-    // null/undefined/NaN = 無資料（DB NULL 或新 ETF 歷史不足）
-    // 0 也視為無資料（DB 可能存有升版前的舊 0 值）；真實 0% 報酬極為罕見
     if (v === null || v === undefined || isNaN(v) || v === 0) return '<span class="text-slate-400">-</span>';
     return `<span class="${v>=0?'text-red-500':'text-green-500'} font-semibold">${v>=0?'+':''}${v.toFixed(2)}%</span>`;
   };
@@ -398,26 +356,24 @@ function renderData() {
   const yld = parseFloat(d.dividend_yield) || 0;
   document.getElementById('dividend-yield').textContent = yld > 0 ? yld.toFixed(2)+'%' : '-';
 
-
+  // 第一次渲染完成 → 顯示更新時間 + 啟動盤中自動更新
+  const nowStr = new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
+  const updEl = document.getElementById('last-updated');
+  if (updEl) { updEl.textContent = `更新 ${nowStr}`; updEl.classList.remove('hidden'); }
+  if (!_liveTimer) _startLiveRefresh();
 }
 
-// 低檔加碼
 async function loadDipAlert(ticker) {
   const data = await fetch(`/api/etf/dip-alert/${ticker}`).then(r=>r.json()).catch(()=>null);
   if (!data?.data?.triggered) return;
   const alert = data.data;
-
-  // 頂部警示
   document.getElementById('dip-alert-section').classList.remove('hidden');
   document.getElementById('dip-alert-title').textContent = `⚠️ ${alert.etf_name || ticker} 低檔加碼訊號`;
   document.getElementById('dip-alert-desc').textContent = `最大跌幅 ${alert.main_drop_pct?.toFixed(1)}%，建議加碼比例 ${alert.recommendation?.extra_pct}%`;
-
   const tags = document.getElementById('dip-alert-tags');
   tags.innerHTML = (alert.triggers || []).map(t =>
     `<span class="text-[11px] px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 font-medium">${t.period || ''}跌 ${t.drop_pct?.toFixed(1)}%</span>`
   ).join('');
-
-  // 詳情區
   document.getElementById('dip-analysis-section').classList.remove('hidden');
   const rec = alert.recommendation || {};
   document.getElementById('dip-analysis-content').innerHTML = `
@@ -429,24 +385,14 @@ async function loadDipAlert(ticker) {
       </div>
     </div>
     <div class="grid grid-cols-3 gap-3 text-center">
-      <div class="card p-3">
-        <p class="text-xs text-slate-400 mb-1">最大跌幅</p>
-        <p class="font-bold text-red-500 tabular-nums">${alert.main_drop_pct?.toFixed(1)}%</p>
-      </div>
-      <div class="card p-3">
-        <p class="text-xs text-slate-400 mb-1">建議加碼</p>
-        <p class="font-bold text-indigo-600 dark:text-indigo-400 tabular-nums">+${rec.extra_pct}%</p>
-      </div>
-      <div class="card p-3">
-        <p class="text-xs text-slate-400 mb-1">觸發條件</p>
-        <p class="font-bold text-slate-700 dark:text-slate-300">${(alert.triggers||[]).length} 個</p>
-      </div>
+      <div class="card p-3"><p class="text-xs text-slate-400 mb-1">最大跌幅</p><p class="font-bold text-red-500 tabular-nums">${alert.main_drop_pct?.toFixed(1)}%</p></div>
+      <div class="card p-3"><p class="text-xs text-slate-400 mb-1">建議加碼</p><p class="font-bold text-indigo-600 dark:text-indigo-400 tabular-nums">+${rec.extra_pct}%</p></div>
+      <div class="card p-3"><p class="text-xs text-slate-400 mb-1">觸發條件</p><p class="font-bold text-slate-700 dark:text-slate-300">${(alert.triggers||[]).length} 個</p></div>
     </div>`;
 }
 
-// 圖表
-// 記錄哪些 period 已確認有資料，哪些沒有
-const _periodStatus = {};   // 'ok' | 'fail' | undefined
+// ── 圖表 ──
+const _periodStatus = {};
 
 function _hidePeriodBtn(period) {
   document.querySelectorAll('.period-btn').forEach(b => {
@@ -454,13 +400,11 @@ function _hidePeriodBtn(period) {
   });
 }
 
-// 靜默探測所有 period，把沒資料的按鈕藏起來（不影響主圖表載入）
-// 以 300ms 的延遲錯開，避免初次載入時同時打爆後端 API
 async function probeAllPeriods(ticker) {
-  const ALL_PERIODS = ['1D','5D','1M','6M','YTD','5Y','ALL']; // 排除 1Y (主圖表已探測)
+  const ALL_PERIODS = ['1D','5D','1M','6M','YTD','5Y','ALL'];
   for (const p of ALL_PERIODS) {
-    if (_periodStatus[p] === 'ok') continue;  // 已知有資料，跳過
-    await new Promise(res => setTimeout(res, 250));  // 錯開請求，避免同時打後端
+    if (_periodStatus[p] === 'ok') continue;
+    await new Promise(res => setTimeout(res, 250));
     fetch(`/api/etf/price-history/${ticker}?period=${p}`)
       .then(r => r.json())
       .then(d => {
@@ -478,16 +422,14 @@ async function probeAllPeriods(ticker) {
 }
 
 async function loadPriceHistory(ticker, period = '1Y') {
-  const reqId = ++_chartReqId;   // 每次呼叫取得唯一 ID，過期的回應直接丟棄
-  // 顯示載入中狀態
+  const reqId = ++_chartReqId;
   const canvas = document.getElementById('price-chart');
   canvas.style.display = 'none';
   document.getElementById('no-chart-msg').classList.add('hidden');
   document.getElementById('chart-loading').classList.remove('hidden');
-
   try {
     const data = await fetch(`/api/etf/price-history/${ticker}?period=${period}`).then(r=>r.json());
-    if (reqId !== _chartReqId) return;   // 已有更新的請求，放棄此次結果
+    if (reqId !== _chartReqId) return;
     document.getElementById('chart-loading').classList.add('hidden');
     const prices   = data.prices || data.data?.prices;
     const labels   = data.labels || data.data?.labels;
@@ -508,7 +450,6 @@ async function loadPriceHistory(ticker, period = '1Y') {
         return;
       }
     }
-    // 此 period 沒有資料 — 標記並隱藏按鈕
     _periodStatus[period] = 'fail';
     _hidePeriodBtn(period);
     showNoChart();
@@ -522,7 +463,6 @@ async function loadPriceHistory(ticker, period = '1Y') {
 }
 
 function showNoChart() {
-  // 用 style.display 確保優先級高於 Chart.js 設定的 inline style
   const canvas = document.getElementById('price-chart');
   canvas.style.display = 'none';
   canvas.classList.add('hidden');
@@ -531,20 +471,17 @@ function showNoChart() {
 
 function drawChart(labels, prices, isFallback = false, isIntraday = false) {
   const canvas = document.getElementById('price-chart');
-  // 用 style.display 清除 Chart.js 可能設定的 inline display:block
   canvas.style.display = '';
   canvas.classList.remove('hidden');
   document.getElementById('no-chart-msg').classList.add('hidden');
   if (!isFallback) document.getElementById('chart-note').classList.add('hidden');
   if (priceChart) priceChart.destroy();
-
   const ctx = canvas.getContext('2d');
   const last = prices[prices.length-1], first = prices[0];
   const trendColor = last >= first ? '#ef4444' : '#22c55e';
   const gradient = ctx.createLinearGradient(0, 0, 0, 200);
   gradient.addColorStop(0, trendColor + '33');
   gradient.addColorStop(1, 'rgba(255,255,255,0)');
-
   priceChart = new Chart(ctx, {
     type: 'line',
     data: { labels, datasets: [{ data: prices, borderColor: trendColor, borderWidth: 2,
@@ -555,15 +492,12 @@ function drawChart(labels, prices, isFallback = false, isIntraday = false) {
         tooltip: { backgroundColor:'rgba(30,41,59,.9)', padding:8,
           callbacks: { label: c => `價格: ${c.raw.toFixed(2)}` } } },
       scales: {
-        x: {
-          display: true,
-          grid: { display: false },
+        x: { display: true, grid: { display: false },
           ticks: { color: '#94a3b8', font: { size: 9 }, maxTicksLimit: isIntraday ? 8 : 6, maxRotation: 0,
             callback: function(val, idx) {
               const lbl = this.getLabelForValue(val);
               if (!lbl) return '';
               if (isIntraday) return lbl;
-              // 非盤中只顯示年月，減少擁擠
               const parts = lbl.split('-');
               return parts.length >= 2 ? parts[0] + '/' + parts[1] : lbl;
             }
@@ -583,12 +517,12 @@ function changePeriod(p) {
   if (currentTicker) loadPriceHistory(currentTicker, p.toUpperCase());
 }
 
-// 自選股（輕量單一 ticker 查詢，避免下載整份清單）
 async function checkWatchlistStatus(ticker) {
   if (!Auth.isLoggedIn()) return;
   const data = await Auth.fetchJson(`/api/watchlist/check/${ticker}`);
   if (data?.status === 'success') { inWatchlist = data.in_watchlist; updateWatchlistBtn(); }
 }
+
 function updateWatchlistBtn() {
   const btn = document.getElementById('watchlist-btn');
   if (inWatchlist) {
@@ -599,6 +533,7 @@ function updateWatchlistBtn() {
     btn.className = 'px-3 py-2 rounded-lg text-sm font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all';
   }
 }
+
 async function forceRefresh() {
   if (!Auth.isLoggedIn()) { showToast('請先登入', false); return; }
   const btn = document.getElementById('refresh-btn');
@@ -608,7 +543,6 @@ async function forceRefresh() {
   if (!ticker) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt"></i>'; return; }
   const data = await Auth.fetchJson(`/api/etf/force-refresh/${ticker}`, { method: 'POST' });
   if (data?.status === 'success' || data?.status === 'processing') {
-    // 背景計算中 → 顯示倒數 Toast，10 秒後自動重載
     const reloadDelay = data.status === 'processing' ? 10000 : 1500;
     const msg = data.status === 'processing'
       ? `⏳ ${ticker} 計算中，${reloadDelay/1000} 秒後自動重新整理…`
@@ -631,7 +565,6 @@ async function toggleWatchlist() {
   else showToast(data?.message || '操作失敗', false);
 }
 
-// 交易 Modal
 function openTradeModal() {
   if (!Auth.isLoggedIn()) { showToast('請先登入', false); setTimeout(()=>location.href='/auth',1000); return; }
   document.getElementById('modal-title').textContent = `${etfData.ticker} — 交易`;
@@ -645,7 +578,6 @@ function openTradeModal() {
 }
 function closeTradeModal() { document.getElementById('tradeModal').style.display = 'none'; }
 
-// 即時計算總額
 ['trade-shares','trade-price','trade-commission'].forEach(id => {
   document.getElementById(id)?.addEventListener('input', () => {
     const s = parseFloat(document.getElementById('trade-shares').value) || 0;
@@ -675,18 +607,79 @@ async function saveTrade(btn) {
   else showToast(data?.message || '交易失敗', false);
 }
 
-// 搜尋
-document.getElementById('search-input')?.addEventListener('keypress', async e => {
-  if (e.key !== 'Enter') return;
-  const q = e.target.value.trim(); if (!q) return;
-  const data = await fetch(`/api/etf/search/dynamic?q=${encodeURIComponent(q)}`).then(r=>r.json()).catch(()=>null);
-  if (data?.status==='success' && data.data.length > 0) location.href = `/etf-detail/${data.data[0].ticker}`;
-  else showToast('找不到相關 ETF', false);
-});
-
 document.getElementById('tradeModal').addEventListener('click', e => { if (e.target === e.currentTarget) closeTradeModal(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTradeModal(); });
-document.addEventListener('DOMContentLoaded', () => { loadUserInfo('user-area'); loadETFDetail(); });
+
+// ── 即時自動更新（盤中每 60 秒更新現價）──────────────────────
+let _liveTimer = null;
+
+function _isTradingHours(market) {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun, 6=Sat
+  if (day === 0 || day === 6) return false;
+
+  // 台灣時間 (UTC+8)
+  const utc8Hour   = ((now.getUTCHours() + 8) % 24) + now.getUTCMinutes() / 60;
+  if (market === 'TW') {
+    // 台股 09:00–13:30 UTC+8
+    return utc8Hour >= 9 && utc8Hour < 13.5;
+  } else {
+    // 美股 21:30–次日04:00 UTC+8 (夏令) — 寬鬆判斷：20:00–05:00
+    return utc8Hour >= 20 || utc8Hour < 5;
+  }
+}
+
+async function _liveRefreshPrice() {
+  if (!currentTicker || !etfData) return;
+  try {
+    const res = await fetch(`/api/etf/detail/${currentTicker}`);
+    if (!res.ok) return;
+    const result = await res.json();
+    if (result.status !== 'success') return;
+    const d = result.data;
+    etfData = { ...etfData, ...d };   // 僅更新價格相關欄位
+
+    // 更新現價
+    const price  = parseFloat(d.current_price) || 0;
+    const chgAmt = parseFloat(d.price_change) || 0;
+    const chgPct = parseFloat(d.price_change_percent) || 0;
+    const up     = chgPct >= 0;
+    if (price > 0) {
+      document.getElementById('current-price').textContent = price.toFixed(2);
+      document.getElementById('price-change').innerHTML =
+        `<span class="${up?'text-red-500':'text-green-500'} font-semibold">${up?'▲':'▼'} ${Math.abs(chgAmt).toFixed(2)} (${up?'+':''}${chgPct.toFixed(2)}%)</span>`;
+    }
+    // 更新日內高低
+    const dH = parseFloat(d.day_high) || price;
+    const dL = parseFloat(d.day_low)  || price;
+    if (dH > 0) document.getElementById('day-high').textContent = dH.toFixed(2);
+    if (dL > 0) document.getElementById('day-low').textContent  = dL.toFixed(2);
+    // 更新成交量
+    const vol = parseInt(d.volume) || 0;
+    if (vol > 0) {
+      if (d.market === 'TW') {
+        const lots = Math.round(vol / 1000);
+        document.getElementById('volume').textContent = lots >= 10000 ? (lots/10000).toFixed(1)+' 萬' : lots.toLocaleString();
+      } else {
+        document.getElementById('volume').textContent = vol >= 1e6 ? (vol/1e6).toFixed(2)+'M' : vol.toLocaleString();
+      }
+    }
+    // 更新最後更新時間
+    const nowStr = new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const el = document.getElementById('last-updated');
+    if (el) { el.textContent = `更新 ${nowStr}`; el.classList.remove('hidden'); }
+  } catch(e) { /* silent fail — 不因網路問題中斷頁面 */ }
+}
+
+function _startLiveRefresh() {
+  if (!etfData) return;
+  if (_isTradingHours(etfData.market)) {
+    document.getElementById('live-badge')?.classList.remove('hidden');
+    _liveTimer = setInterval(_liveRefreshPrice, 60000);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadETFDetail);
+// _startLiveRefresh 在 loadETFDetail → renderData 完成後呼叫（見 renderData 底部）
 </script>
-</body>
-</html>
+{% endblock %}

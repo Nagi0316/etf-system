@@ -1,30 +1,17 @@
-<!DOCTYPE html>
-<html lang="zh-TW" class="">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>通知中心 — ETF 投資管理系統</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config={darkMode:'class'}</script>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-  <link href="/static/css/main.css" rel="stylesheet">
-</head>
-<body class="bg-slate-50 dark:bg-slate-900 pb-mobile">
+{% extends "base.html" %}
+{% block title %}通知中心 — ETF 投資管理系統{% endblock %}
 
-<nav class="navbar">
-  <div class="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
-    <div class="flex items-center gap-4">
-      <a href="/" class="text-indigo-600 dark:text-indigo-400"><i class="fas fa-arrow-left"></i></a>
-      <span class="font-bold text-slate-800 dark:text-white">通知中心</span>
-    </div>
-    <div class="flex items-center gap-3">
-      <button onclick="markAllRead()" class="text-xs text-indigo-500 hover:text-indigo-700">全部已讀</button>
-      <button onclick="toggleDarkMode()" id="dark-toggle" class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"><i class="fas fa-moon"></i></button>
-    </div>
-  </div>
-</nav>
-
+{% block content %}
 <div class="max-w-3xl mx-auto px-4 py-6">
+
+  <!-- 標題列 -->
+  <div class="flex items-center justify-between mb-5">
+    <h1 class="text-xl font-bold text-slate-800 dark:text-white">通知中心</h1>
+    <button onclick="markAllRead()" class="text-xs text-indigo-500 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 px-3 py-1.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition">
+      <i class="fas fa-check-double mr-1"></i>全部已讀
+    </button>
+  </div>
+
   <!-- 篩選 -->
   <div class="flex gap-2 mb-5 overflow-x-auto pb-1">
     <button onclick="filterType('all')" data-f="all" class="filter-btn px-3 py-1.5 text-xs rounded-full bg-indigo-600 text-white whitespace-nowrap">全部</button>
@@ -65,16 +52,9 @@
     <button onclick="loadMore()" class="text-sm text-indigo-500 hover:text-indigo-700 dark:text-indigo-400">載入更多</button>
   </div>
 </div>
+{% endblock %}
 
-<nav class="bottom-nav">
-  <a href="/"><i class="fas fa-home"></i>首頁</a>
-  <a href="/etf-list"><i class="fas fa-chart-bar"></i>ETF</a>
-  <a href="/watchlist"><i class="fas fa-star"></i>自選</a>
-  <a href="/portfolio"><i class="fas fa-wallet"></i>庫存</a>
-  <a href="/profile"><i class="fas fa-user"></i>我的</a>
-</nav>
-
-<script src="/static/js/common.js"></script>
+{% block scripts %}
 <script>
 let page = 1, currentFilter = 'all', allNotifs = [];
 
@@ -120,7 +100,6 @@ function renderNotifs() {
     </div>
   `).join('');
 
-  // 標記已讀（點擊展開）
   list.filter(n => !n.is_read).forEach(n => {
     const el = document.getElementById(`notif-${n.id}`);
     if (el) el.addEventListener('click', () => markRead(n.id, el), { once: true });
@@ -180,7 +159,6 @@ function formatTime(ts) {
   return `${Math.floor(diff/86400)} 天前`;
 }
 
-// 到價提醒
 async function loadAlerts() {
   if (!Auth.isLoggedIn()) return;
   const data = await Auth.fetchJson('/api/price-alerts');
@@ -223,5 +201,4 @@ async function deleteAlert(id) {
 loadNotifications();
 loadAlerts();
 </script>
-</body>
-</html>
+{% endblock %}

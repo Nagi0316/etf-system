@@ -226,9 +226,8 @@ function fmtMoney(n, currency = 'TWD') {
   return `$${v.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
 }
 
-// 初始化頁面
+// 初始化頁面（深色模式按鈕圖示；loadUserInfo 由 base.html 統一呼叫，不在此重複）
 document.addEventListener('DOMContentLoaded', () => {
-  loadUserInfo();
   const btn = document.getElementById('dark-toggle');
   if (btn) {
     btn.innerHTML = document.documentElement.classList.contains('dark')

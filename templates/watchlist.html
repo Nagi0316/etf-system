@@ -1,36 +1,7 @@
-<!DOCTYPE html>
-<html lang="zh-TW" class="">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>自選股 — ETF 投資管理系統</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config={darkMode:'class'}</script>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-  <link href="/static/css/main.css" rel="stylesheet">
-</head>
-<body class="bg-slate-50 dark:bg-slate-900 pb-mobile">
+{% extends "base.html" %}
+{% block title %}自選股 — ETF 投資管理系統{% endblock %}
 
-<nav class="navbar">
-  <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
-    <div class="flex items-center gap-6">
-      <a href="/" class="flex items-center gap-2 font-bold text-indigo-600 dark:text-indigo-400 text-base">
-        <i class="fas fa-chart-line"></i>ETF投資系統
-      </a>
-      <div class="hidden md:flex gap-1">
-        <a href="/etf-list"  class="px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400">ETF精選</a>
-        <a href="/watchlist" class="px-3 py-1.5 text-sm rounded-md bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 font-medium">自選股</a>
-        <a href="/backtest"  class="px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600">回測</a>
-        <a href="/portfolio" class="px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600">庫存</a>
-      </div>
-    </div>
-    <div class="flex items-center gap-3">
-      <button onclick="toggleDarkMode()" id="dark-toggle" class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"><i class="fas fa-moon"></i></button>
-      <div id="user-area"></div>
-    </div>
-  </div>
-</nav>
-
+{% block content %}
 <div class="max-w-7xl mx-auto px-4 py-6">
   <div class="flex items-center justify-between mb-5 flex-wrap gap-3">
     <div>
@@ -90,14 +61,6 @@
   </div>
 </div>
 
-<nav class="bottom-nav">
-  <a href="/"><i class="fas fa-home"></i>首頁</a>
-  <a href="/etf-list"><i class="fas fa-chart-bar"></i>ETF</a>
-  <a href="/watchlist" class="active"><i class="fas fa-star"></i>自選</a>
-  <a href="/portfolio"><i class="fas fa-wallet"></i>庫存</a>
-  <a href="/profile"><i class="fas fa-user"></i>我的</a>
-</nav>
-
 <!-- 新增 Modal -->
 <div id="addModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
   <div class="card w-full max-w-sm p-6">
@@ -114,8 +77,9 @@
     </div>
   </div>
 </div>
+{% endblock %}
 
-<script src="/static/js/common.js"></script>
+{% block scripts %}
 <script>
 let currentMarket = 'all', watchlistData = [];
 
@@ -155,7 +119,6 @@ function renderWatchlist() {
   const tbody = document.getElementById('watchlist-body');
   const empty = document.getElementById('empty-state');
   const wrap  = document.getElementById('table-wrap');
-
   if (!watchlistData.length) {
     wrap.classList.add('hidden');
     empty.classList.remove('hidden');
@@ -164,12 +127,10 @@ function renderWatchlist() {
   const rows = currentMarket === 'all' ? watchlistData : watchlistData.filter(d => d.market === currentMarket);
   wrap.classList.remove('hidden');
   empty.classList.add('hidden');
-
   if (!rows.length) {
     tbody.innerHTML = `<tr><td colspan="6" class="px-4 py-14 text-center text-slate-400 text-sm">此市場無自選股</td></tr>`;
     return;
   }
-
   tbody.innerHTML = rows.map(item => {
     const chg = item.price_change_percent || 0;
     const up  = chg >= 0;
@@ -237,10 +198,6 @@ async function removeFromWatchlist(ticker) {
 document.getElementById('addModal').addEventListener('click', e => { if (e.target === e.currentTarget) closeAddModal(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAddModal(); });
 
-document.addEventListener('DOMContentLoaded', () => {
-  loadUserInfo('user-area');
-  loadWatchlist();
-});
+document.addEventListener('DOMContentLoaded', loadWatchlist);
 </script>
-</body>
-</html>
+{% endblock %}

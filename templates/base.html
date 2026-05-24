@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}ETF 投資管理系統{% endblock %}</title>
+  <!-- 防止深色模式 FOUC：必須在所有 CSS 之前執行 -->
+  <script>(function(){var t=localStorage.getItem('theme');var p=window.matchMedia('(prefers-color-scheme:dark)').matches;if(t==='dark'||(t===null&&p))document.documentElement.classList.add('dark');}());</script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config={darkMode:'class'}</script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  <link href="/static/css/main.css" rel="stylesheet">
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="bg-slate-50 dark:bg-slate-900 pb-mobile">
+
+<!-- ── Navbar ── -->
+<nav class="navbar">
+  <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
+    <div class="flex items-center gap-6">
+      <a href="/" class="flex items-center gap-2 font-bold text-indigo-600 dark:text-indigo-400 text-base shrink-0">
+        <i class="fas fa-chart-line"></i><span class="hide-mobile">ETF投資系統</span>
+      </a>
+      <div class="hidden md:flex gap-1">
+        <a href="/etf-list"  class="nav-link px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-path="/etf-list">ETF精選</a>
+        <a href="/watchlist" class="nav-link px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-path="/watchlist">自選股</a>
+        <a href="/backtest"  class="nav-link px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-path="/backtest">回測</a>
+        <a href="/portfolio" class="nav-link px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-path="/portfolio">庫存</a>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <!-- 全站搜尋 -->
+      <div class="relative hidden md:block">
+        <input type="text" id="search-input" placeholder="搜尋 ETF…" autocomplete="off"
+          class="input pl-9 pr-4 w-48 text-sm">
+        <button id="search-btn" type="button"
+          class="fas fa-search absolute left-3 top-2.5 text-slate-400 text-xs hover:text-indigo-500 cursor-pointer bg-transparent border-0 p-0"
+          aria-label="搜尋"></button>
+        <div id="search-dropdown"
+          class="hidden absolute top-full left-0 right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 max-h-72 overflow-y-auto"></div>
+      </div>
+      <!-- 手機搜尋按鈕 -->
+      <button id="mobile-search-btn" class="md:hidden p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
+        <i class="fas fa-search text-sm"></i>
+      </button>
+      <button onclick="toggleDarkMode()" id="dark-toggle"
+        class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
+        <i class="fas fa-moon"></i>
+      </button>
+      <div id="user-info"></div>
+    </div>
+  </div>
+  <!-- 手機搜尋欄（展開） -->
+  <div id="mobile-search-bar" class="hidden md:hidden border-t border-slate-200 dark:border-slate-700 px-4 py-2">
+    <div class="relative">
+      <input type="text" id="mobile-search-input" placeholder="搜尋 ETF 代碼或名稱…" autocomplete="off"
+        class="input pl-9 pr-4 w-full text-sm">
+      <i class="fas fa-search absolute left-3 top-2.5 text-slate-400 text-xs"></i>
+      <div id="mobile-search-dropdown"
+        class="hidden absolute top-full left-0 right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 max-h-60 overflow-y-auto"></div>
+    </div>
+  </div>
+</nav>
+
+{% block content %}{% endblock %}
+
+<!-- ── 底部導航（手機） ── -->
+<nav class="bottom-nav">
+  <a href="/" data-path="/"><i class="fas fa-home"></i>首頁</a>
+  <a href="/etf-list"  data-path="/etf-list"><i class="fas fa-chart-bar"></i>ETF</a>
+  <a href="/watchlist" data-path="/watchlist"><i class="fas fa-star"></i>自選</a>
+  <a href="/backtest"  data-path="/backtest"><i class="fas fa-flask"></i>回測</a>
+  <a href="/portfolio" data-path="/portfolio"><i class="fas fa-briefcase"></i>庫存</a>
+</nav>
+
+<script src="/static/js/common.js"></script>
+<script>
+// ── 初始化 ──
+document.addEventListener('DOMContentLoaded', () => {
+  loadUserInfo('user-info');
+  _initActiveNav();
+  _initSearch();
+  _initMobileSearch();
+});
+
+// ── Active 導航高亮 ──
+function _initActiveNav() {
+  const path = window.location.pathname;
+  // 桌面 navbar
+  document.querySelectorAll('.nav-link').forEach(a => {
+    const dp = a.dataset.path;
+    if (dp && (path === dp || (dp !== '/' && path.startsWith(dp)))) {
+      a.classList.add('bg-indigo-50', 'dark:bg-indigo-900/40', 'text-indigo-600', 'dark:text-indigo-400', 'font-medium');
+      a.classList.remove('text-slate-500', 'dark:text-slate-400');
+    }
+  });
+  // 底部 nav
+  document.querySelectorAll('.bottom-nav a').forEach(a => {
+    const dp = a.dataset.path;
+    if (dp && (path === dp || (dp !== '/' && path.startsWith(dp)))) {
+      a.classList.add('active');
+    }
+  });
+}
+
+// ── 全站搜尋 ──
+let _searchTimer;
+function _initSearch() {
+  const input = document.getElementById('search-input');
+  const btn   = document.getElementById('search-btn');
+  const drop  = document.getElementById('search-dropdown');
+  if (!input) return;
+
+  function _fire() {
+    const q = input.value.trim();
+    if (!q) { drop.classList.add('hidden'); return; }
+    clearTimeout(_searchTimer);
+    _doSearch(q, drop);
+  }
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    if (!q) { drop.classList.add('hidden'); return; }
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(() => _doSearch(q, drop), 220);
+  });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); _fire(); } });
+  btn?.addEventListener('click', _fire);
+  document.addEventListener('click', e => {
+    if (!input.contains(e.target) && !drop.contains(e.target)) drop.classList.add('hidden');
+  });
+}
+
+// ── 手機搜尋 ──
+function _initMobileSearch() {
+  const mBtn   = document.getElementById('mobile-search-btn');
+  const mBar   = document.getElementById('mobile-search-bar');
+  const mInput = document.getElementById('mobile-search-input');
+  const mDrop  = document.getElementById('mobile-search-dropdown');
+  if (!mBtn) return;
+  mBtn.addEventListener('click', () => {
+    mBar.classList.toggle('hidden');
+    if (!mBar.classList.contains('hidden')) mInput?.focus();
+  });
+  let _mTimer;
+  mInput?.addEventListener('input', () => {
+    const q = mInput.value.trim();
+    if (!q) { mDrop.classList.add('hidden'); return; }
+    clearTimeout(_mTimer);
+    _mTimer = setTimeout(() => _doSearch(q, mDrop), 220);
+  });
+  mInput?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); _doSearch(mInput.value.trim(), mDrop); }
+  });
+}
+
+// ── 共用搜尋 API ──
+async function _doSearch(q, dropEl) {
+  if (!q || !dropEl) return;
+  dropEl.innerHTML = `<div class="p-3 text-center text-slate-400 text-sm"><span class="spinner"></span></div>`;
+  dropEl.classList.remove('hidden');
+  try {
+    const data = await fetch(`/api/etf/search?q=${encodeURIComponent(q)}`).then(r => r.json());
+    if (!data?.data?.length) {
+      dropEl.innerHTML = `<div class="p-3 text-center text-slate-400 text-sm">找不到「${q}」</div>`;
+      return;
+    }
+    dropEl.innerHTML = data.data.slice(0, 8).map(e => {
+      const pct = parseFloat(e.price_change_percent) || 0;
+      const col = pct >= 0 ? 'text-red-500' : 'text-green-500';
+      const sign = pct >= 0 ? '+' : '';
+      return `<a href="/etf-detail/${e.ticker}"
+        class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-sm border-b border-slate-50 dark:border-slate-700/50 last:border-0">
+        <div class="min-w-0">
+          <span class="font-bold text-slate-800 dark:text-white mr-2">${e.ticker}</span>
+          <span class="text-slate-500 dark:text-slate-400 text-xs truncate">${e.name || ''}</span>
+        </div>
+        <span class="${col} text-xs font-medium ml-2 shrink-0">${sign}${pct.toFixed(2)}%</span>
+      </a>`;
+    }).join('');
+  } catch {
+    dropEl.innerHTML = `<div class="p-3 text-center text-red-400 text-sm">搜尋失敗</div>`;
+  }
+}
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,36 +1,7 @@
-<!DOCTYPE html>
-<html lang="zh-TW" class="">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>投資庫存 — ETF 投資管理系統</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config={darkMode:'class'}</script>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-  <link href="/static/css/main.css" rel="stylesheet">
-</head>
-<body class="bg-slate-50 dark:bg-slate-900 pb-mobile">
+{% extends "base.html" %}
+{% block title %}投資庫存 — ETF 投資管理系統{% endblock %}
 
-<nav class="navbar">
-  <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
-    <div class="flex items-center gap-4">
-      <a href="/" class="flex items-center gap-2 font-bold text-indigo-600 dark:text-indigo-400 text-lg">
-        <i class="fas fa-chart-line"></i><span class="hide-mobile">ETF投資系統</span>
-      </a>
-      <div class="hidden md:flex gap-1">
-        <a href="/etf-list"  class="px-3 py-1.5 text-sm rounded-lg text-slate-500 dark:text-slate-400 hover:text-indigo-600">ETF精選</a>
-        <a href="/watchlist" class="px-3 py-1.5 text-sm rounded-lg text-slate-500 dark:text-slate-400 hover:text-indigo-600">自選股</a>
-        <a href="/backtest"  class="px-3 py-1.5 text-sm rounded-lg text-slate-500 dark:text-slate-400 hover:text-indigo-600">回測</a>
-        <a href="/portfolio" class="px-3 py-1.5 text-sm rounded-lg bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 font-medium">庫存</a>
-      </div>
-    </div>
-    <div class="flex items-center gap-2">
-      <button onclick="toggleDarkMode()" id="dark-toggle" class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"><i class="fas fa-moon"></i></button>
-      <div id="user-info"></div>
-    </div>
-  </div>
-</nav>
-
+{% block content %}
 <div class="max-w-7xl mx-auto px-4 py-6">
 
   <!-- 總覽卡片 -->
@@ -134,16 +105,9 @@
     </div>
   </div>
 </div>
+{% endblock %}
 
-<nav class="bottom-nav">
-  <a href="/"><i class="fas fa-home"></i>首頁</a>
-  <a href="/etf-list"><i class="fas fa-chart-bar"></i>ETF</a>
-  <a href="/watchlist"><i class="fas fa-star"></i>自選</a>
-  <a href="/portfolio" class="active"><i class="fas fa-wallet"></i>庫存</a>
-  <a href="/profile"><i class="fas fa-user"></i>我的</a>
-</nav>
-
-<script src="/static/js/common.js"></script>
+{% block scripts %}
 <script>
 async function checkLogin() {
   if (!Auth.isLoggedIn()) { window.location.href = '/auth'; return false; }
@@ -156,7 +120,6 @@ async function loadPortfolio() {
   if (!data) return;
   const s = data.summary || {};
   const usdRate = s.usd_twd_rate || 32;
-
   document.getElementById('s-value').textContent = `NT$ ${parseInt(s.total_value_twd || 0).toLocaleString()}`;
   document.getElementById('s-rate').textContent = `USD/TWD: ${usdRate}`;
   const pf = parseFloat(s.total_profit_twd || 0);
@@ -172,11 +135,9 @@ async function loadPortfolio() {
     document.getElementById('portfolio-card').innerHTML = `<div class="text-center py-12 text-slate-400"><i class="fas fa-wallet text-3xl mb-3"></i><br>尚無持倉，<button onclick="openTradeModal('','buy')" class="text-indigo-500 hover:underline">新增第一筆</button></div>`;
     return;
   }
-
   const tickers = [...new Set(rows.map(r => r.ticker))];
   const sel = document.getElementById('filter-ticker');
   sel.innerHTML = '<option value="">全部</option>' + tickers.map(t => `<option>${t}</option>`).join('');
-
   document.getElementById('portfolio-card').innerHTML = `
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
@@ -267,7 +228,6 @@ async function deleteTx(id) {
   else showToast(data?.message || '刪除失敗', false);
 }
 
-// Modal
 function openTradeModal(ticker, type) {
   document.getElementById('m-ticker').value = ticker || '';
   document.getElementById('m-type').value = type || 'buy';
@@ -280,6 +240,7 @@ function openTradeModal(ticker, type) {
   document.getElementById('trade-modal').classList.remove('hidden');
 }
 function closeModal() { document.getElementById('trade-modal').classList.add('hidden'); }
+
 function updateTotal() {
   const s = parseFloat(document.getElementById('m-shares').value) || 0;
   const p = parseFloat(document.getElementById('m-price').value) || 0;
@@ -289,6 +250,7 @@ function updateTotal() {
     box.classList.remove('hidden');
   } else box.classList.add('hidden');
 }
+
 async function submitTrade() {
   const body = {
     ticker: document.getElementById('m-ticker').value.trim().toUpperCase(),
@@ -307,7 +269,6 @@ async function submitTrade() {
   else showToast(data?.message || '新增失敗', false);
 }
 
-// 綁定一次，不在 openTradeModal 重複綁定
 document.getElementById('m-shares').addEventListener('input', updateTotal);
 document.getElementById('m-price').addEventListener('input', updateTotal);
 document.getElementById('trade-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal(); });
@@ -315,5 +276,4 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal()
 
 Promise.all([loadPortfolio(), loadTransactions()]);
 </script>
-</body>
-</html>
+{% endblock %}
