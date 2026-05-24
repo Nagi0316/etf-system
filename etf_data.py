@@ -152,8 +152,12 @@ def _refresh_yahoo_crumb() -> bool:
 
 
 def _yahoo_ticker(ticker: str, market: str) -> str:
+    """回傳 Yahoo Finance 格式的代碼。
+    台股債券 ETF（如 00679B）雖代碼以 B 結尾，但均在 TWSE 上市，用 .TW 而非 .TWO。
+    .TWO 是 TPEX（上櫃）後綴，台股 ETF 幾乎全在 TWSE，一律用 .TW。
+    """
     if market == "TW":
-        return f"{ticker}.TWO" if ticker.upper().endswith("B") else f"{ticker}.TW"
+        return f"{ticker}.TW"
     return ticker
 
 
@@ -785,9 +789,11 @@ def _fetch_us_quote(ticker: str) -> Optional[dict]:
     url = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=10d&interval=1d"
     referer = f"https://finance.yahoo.com/quote/{ticker}"
     try:
+        # CF Proxy 優先（Railway IP 被 Yahoo 封鎖）→ 直連 fallback
         s = _new_session(referer)
         s.headers["Origin"] = "https://finance.yahoo.com"
-        r = _get_with_retry(s, url, timeout=6, max_attempts=3)
+        r = (_cf_yahoo_get(url, timeout=15)
+             or _get_with_retry(s, url, timeout=6, max_attempts=3))
         if not r or r.status_code != 200:
             return None
         j = r.json()
@@ -1080,7 +1086,9 @@ def save_etf_data(data: dict):
     cache.delete(f"detail:{ticker}")
     market = data.get("market", "")
     if market:
-        for rank_type in ("volume", "asset", "return", "yield"):
+        # combined 是前端主排行榜的快取 key，必須一起清除
+        cache.delete(f"rank:combined:{market}")
+        for rank_type in ("volume", "return", "yield"):
             cache.delete(f"rank:{rank_type}:{market}")
     else:
         cache.delete_prefix("rank:")
@@ -1152,7 +1160,8 @@ def save_price_only(data: dict):
     cache.delete(f"detail:{ticker}")
     market = data.get("market", "")
     if market:
-        for rank_type in ("volume", "asset", "return", "yield"):
+        cache.delete(f"rank:combined:{market}")
+        for rank_type in ("volume", "return", "yield"):
             cache.delete(f"rank:{rank_type}:{market}")
     else:
         cache.delete_prefix("rank:")

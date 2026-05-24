@@ -24,8 +24,9 @@ async def backtest_page(request: Request):
 
 
 def _yahoo_ticker(ticker: str, market: str) -> str:
+    """台股 ETF 債券型（00679B 等）在 TWSE 上市，一律用 .TW，不用 .TWO（OTC）。"""
     if market == "TW":
-        return f"{ticker}.TWO" if ticker.upper().endswith("B") else f"{ticker}.TW"
+        return f"{ticker}.TW"
     return ticker
 
 

@@ -300,6 +300,7 @@ async def _update_missing():
     from database import get_db
 
     try:
+        # TiDB/MySQL 不支援 NULLS FIRST，使用 ISNULL() DESC 讓 NULL 優先
         with get_db() as (conn, cursor):
             cursor.execute("""
                 SELECT m.ticker, m.market
@@ -314,34 +315,13 @@ async def _update_missing():
                       d.last_date IS NULL
                       OR d.last_date < DATE_SUB(CURDATE(), INTERVAL 3 DAY)
                   )
-                ORDER BY d.last_date ASC NULLS FIRST
+                ORDER BY ISNULL(d.last_date) DESC, d.last_date ASC
                 LIMIT 30
             """)
             rows = cursor.fetchall()
-    except Exception:
-        # TiDB / MySQL 不支援 NULLS FIRST，fallback 寫法
-        try:
-            with get_db() as (conn, cursor):
-                cursor.execute("""
-                    SELECT m.ticker, m.market
-                    FROM etf_master m
-                    LEFT JOIN (
-                        SELECT ticker, MAX(date) AS last_date
-                        FROM etf_daily_data
-                        GROUP BY ticker
-                    ) d ON m.ticker = d.ticker
-                    WHERE m.is_hot = 1
-                      AND (
-                          d.last_date IS NULL
-                          OR d.last_date < DATE_SUB(CURDATE(), INTERVAL 3 DAY)
-                      )
-                    ORDER BY ISNULL(d.last_date) DESC, d.last_date ASC
-                    LIMIT 30
-                """)
-                rows = cursor.fetchall()
-        except Exception as e:
-            logger.warning(f"_update_missing 查詢失敗: {e}")
-            return
+    except Exception as e:
+        logger.warning(f"_update_missing 查詢失敗: {e}")
+        return
 
     if not rows:
         logger.info("★ 補漏掃描：所有熱門 ETF 資料均已是近期，略過")

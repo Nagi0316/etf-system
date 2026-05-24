@@ -144,8 +144,9 @@ _RANK_SELECT = """
 
 _RANK_ORDER = {
     "volume": "d.volume DESC",
-    "return": "COALESCE(d.annual_return_1y,0) DESC",
-    "yield":  "COALESCE(d.dividend_yield,0)  DESC",
+    # NULL 排最後（資料不足）→ 有值的從高到低排
+    "return": "d.annual_return_1y IS NULL ASC, COALESCE(d.annual_return_1y,0) DESC",
+    "yield":  "d.dividend_yield   IS NULL ASC, COALESCE(d.dividend_yield,0)   DESC",
 }
 
 
@@ -354,14 +355,21 @@ async def force_refresh_etf(ticker: str, request: Request, background_tasks: Bac
     market = "TW" if ticker[:4].isdigit() else "US"
     current_price = 0.0
     try:
+        # etf_master 只有 market 欄，current_price 在 etf_daily_data
         with get_db() as (conn, cursor):
-            cursor.execute(
-                "SELECT market, current_price FROM etf_master WHERE ticker=%s LIMIT 1", (ticker,)
-            )
+            cursor.execute("SELECT market FROM etf_master WHERE ticker=%s LIMIT 1", (ticker,))
             row = cursor.fetchone()
             if row:
                 market = row["market"]
-                current_price = float(row.get("current_price") or 0)
+            # 從 etf_daily_data 取最新現價（etf_master 沒有此欄）
+            cursor.execute(
+                "SELECT current_price FROM etf_daily_data "
+                "WHERE ticker=%s AND current_price>0 ORDER BY date DESC LIMIT 1",
+                (ticker,),
+            )
+            prow = cursor.fetchone()
+            if prow:
+                current_price = float(prow["current_price"] or 0)
     except Exception:
         pass
 
@@ -369,7 +377,7 @@ async def force_refresh_etf(ticker: str, request: Request, background_tasks: Bac
 
     if market == "TW":
         def _bg_tw():
-            """背景任務：並行抓 TWSE 歷史收盤 → 計算年化報酬 + 52W H/L → 更新 DB"""
+            """背景任務：並行抓 TWSE 歷史收盤 → 計算年化報酬 + 52W H/L → 更新 etf_daily_data"""
             import concurrent.futures
             from dateutil.relativedelta import relativedelta as _rd
             from etf_data import _fetch_tw_realtime_perfect, _fetch_52week_hl_db
@@ -399,39 +407,51 @@ async def force_refresh_etf(ticker: str, request: Request, background_tasks: Bac
                     p5y = f5y.result(timeout=25)
 
                 # 3. 計算年化報酬
-                updates: dict = {}
-                if p1y and p1y > 0:
-                    updates["annual_return_1y"] = round((price / p1y - 1) * 100, 2)
-                if p3y and p3y > 0:
-                    updates["annual_return_3y"] = round(((price / p3y) ** (1 / 3) - 1) * 100, 2)
-                if p5y and p5y > 0:
-                    updates["annual_return_5y"] = round(((price / p5y) ** (1 / 5) - 1) * 100, 2)
+                ann_1y = round((price / p1y - 1) * 100, 2)              if p1y and p1y > 0 else None
+                ann_3y = round(((price / p3y) ** (1 / 3) - 1) * 100, 2) if p3y and p3y > 0 else None
+                ann_5y = round(((price / p5y) ** (1 / 5) - 1) * 100, 2) if p5y and p5y > 0 else None
 
                 # 4. 52 週高低（從 DB 歷史 current_price 計算）
                 wk52_h, wk52_l = _fetch_52week_hl_db(ticker, price)
-                if wk52_h > 0 and wk52_l > 0:
-                    updates["week52_high"] = wk52_h
-                    updates["week52_low"]  = wk52_l
 
-                # 5. 更新現價
-                if realtime:
-                    updates["current_price"]          = price
-                    updates["price_change"]            = realtime.get("price_change", 0)
-                    updates["price_change_percent"]    = realtime.get("price_change_percent", 0)
-
-                # 6. 寫入 DB
-                if updates:
-                    set_clause = ", ".join(f"{k} = %s" for k in updates)
-                    vals = list(updates.values()) + [ticker]
-                    with get_db() as (conn, cursor):
+                # 5. 寫入 etf_daily_data（正確的表）
+                today_str = date.today().isoformat()
+                with get_db() as (conn, cursor):
+                    # 先確保今天有一筆基礎記錄
+                    cursor.execute(
+                        "INSERT INTO etf_daily_data (ticker, date, current_price, "
+                        "price_change, price_change_percent) "
+                        "VALUES (%s, %s, %s, %s, %s) "
+                        "ON DUPLICATE KEY UPDATE "
+                        "current_price=IF(VALUES(current_price)>0,VALUES(current_price),current_price)",
+                        (ticker, today_str, price,
+                         realtime.get("price_change", 0) if realtime else 0,
+                         realtime.get("price_change_percent", 0) if realtime else 0),
+                    )
+                    # 更新年化報酬與 52W H/L
+                    set_parts, vals = [], []
+                    if ann_1y is not None:
+                        set_parts.append("annual_return_1y=%s"); vals.append(ann_1y)
+                    if ann_3y is not None:
+                        set_parts.append("annual_return_3y=%s"); vals.append(ann_3y)
+                    if ann_5y is not None:
+                        set_parts.append("annual_return_5y=%s"); vals.append(ann_5y)
+                    if wk52_h > 0:
+                        set_parts.append("fifty_two_week_high=%s"); vals.append(wk52_h)
+                    if wk52_l > 0:
+                        set_parts.append("fifty_two_week_low=%s");  vals.append(wk52_l)
+                    if set_parts:
                         cursor.execute(
-                            f"UPDATE etf_master SET {set_clause} WHERE ticker = %s", vals
+                            f"UPDATE etf_daily_data SET {', '.join(set_parts)} "
+                            f"WHERE ticker=%s AND date=%s",
+                            vals + [ticker, today_str],
                         )
-                        conn.commit()
+                    conn.commit()
 
                 cache.delete(f"detail:{ticker}")
                 cache.delete_prefix("search:")
-                logger.info(f"✅ force_refresh {ticker} 完成: ann={updates.get('annual_return_1y')} 52W={wk52_h}/{wk52_l}")
+                cache.delete_prefix("rank:")
+                logger.info(f"✅ force_refresh {ticker} 完成: 1y={ann_1y}% 3y={ann_3y}% 52W={wk52_h}/{wk52_l}")
 
             except Exception as e:
                 logger.error(f"force_refresh {ticker} 背景任務失敗: {e}")
@@ -543,9 +563,12 @@ def _maybe_background_refresh(ticker: str, row: dict):
             _refresh_in_progress.discard(ticker)
 
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(_do())
+        # asyncio.get_event_loop() 在 Python 3.10+ 非 async 上下文中已廢棄
+        # 改用 get_running_loop()；若無 running loop（單元測試等）則靜默略過
+        loop = asyncio.get_running_loop()
+        asyncio.ensure_future(_do(), loop=loop)
+    except RuntimeError:
+        pass  # 無 running loop，略過背景更新（不影響主流程）
     except Exception:
         pass
 
