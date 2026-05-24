@@ -3,12 +3,10 @@ database.py — 資料庫連線管理、初始化、Schema Migration
 支援 TiDB Cloud (MySQL 8) 及本地 SQLite 自動切換
 
 連線策略：
-  MySQL/TiDB — MySQLConnectionPool（pool_size=5）
-    ‣ 避免每次 API 請求都建立新的 TiDB SSL 連線（原本每次 ~150ms overhead）
-    ‣ 連線池重用連線，overhead 降至 ~1ms
-  SQLite — 每次建立新連線（WAL 模式支援並發讀取）
+  MySQL/TiDB — 每次請求建立新連線（TiDB Serverless SSL ~150ms，但穩定無池耗盡風險）
+  SQLite     — 每次建立新連線（WAL 模式支援並發讀取）
 """
-import time, logging, threading
+import time, logging
 from contextlib import contextmanager
 from typing import Optional
 from config import (
@@ -19,71 +17,27 @@ from config import (
 logger = logging.getLogger(__name__)
 _DB_RETRIES = 3
 
-# ── MySQL 連線池（全域單例，執行緒安全）──
-_mysql_pool      = None
-_mysql_pool_lock = threading.Lock()
-
-
-def _get_mysql_pool():
-    """取得（或建立）MySQL 連線池。pool_size=5 對 TiDB Serverless 足夠。"""
-    global _mysql_pool
-    if _mysql_pool is not None:
-        return _mysql_pool
-    with _mysql_pool_lock:
-        if _mysql_pool is not None:
-            return _mysql_pool
-        import mysql.connector.pooling as _pooling, certifi
-        pool_params: dict = dict(
-            host=DB_HOST, port=int(DB_PORT),
-            user=DB_USER, password=DB_PASSWORD,
-            database=DB_NAME,
-            connection_timeout=15,
-            autocommit=False,
-            charset="utf8mb4",
-            collation="utf8mb4_unicode_ci",
-            use_unicode=True,
-        )
-        if "tidbcloud.com" in DB_HOST or str(DB_PORT) == "4000":
-            pool_params.update(
-                ssl_ca=certifi.where(),
-                ssl_verify_cert=True,
-                ssl_verify_identity=True,
-            )
-        _mysql_pool = _pooling.MySQLConnectionPool(
-            pool_name="etf_pool",
-            pool_size=5,
-            pool_reset_session=True,
-            **pool_params,
-        )
-        logger.info("✅ MySQL 連線池已建立（pool_size=5）")
-    return _mysql_pool
-
 
 def _get_mysql_conn():
-    """從連線池取得連線；若池耗盡則退回新建連線。"""
+    """建立並回傳 MySQL/TiDB 直接連線。"""
     import mysql.connector, certifi
-    try:
-        pool = _get_mysql_pool()
-        return pool.get_connection()
-    except Exception:
-        # pool 耗盡或初始化失敗：退回直接建立連線（保持向下相容）
-        params = dict(
-            host=DB_HOST, port=DB_PORT,
-            user=DB_USER, password=DB_PASSWORD,
-            database=DB_NAME,
-            connection_timeout=15,
-            autocommit=False,
-            charset="utf8mb4",
-            collation="utf8mb4_unicode_ci",
-            use_unicode=True,
+    params = dict(
+        host=DB_HOST, port=DB_PORT,
+        user=DB_USER, password=DB_PASSWORD,
+        database=DB_NAME,
+        connection_timeout=15,
+        autocommit=False,
+        charset="utf8mb4",
+        collation="utf8mb4_unicode_ci",
+        use_unicode=True,
+    )
+    if "tidbcloud.com" in DB_HOST or str(DB_PORT) == "4000":
+        params.update(
+            ssl_ca=certifi.where(),
+            ssl_verify_cert=True,
+            ssl_verify_identity=True,
         )
-        if "tidbcloud.com" in DB_HOST or str(DB_PORT) == "4000":
-            params.update(
-                ssl_ca=certifi.where(),
-                ssl_verify_cert=True,
-                ssl_verify_identity=True,
-            )
-        return mysql.connector.connect(**params)
+    return mysql.connector.connect(**params)
 
 
 def _get_sqlite_conn():
