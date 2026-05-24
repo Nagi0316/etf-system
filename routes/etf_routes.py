@@ -970,6 +970,66 @@ async def force_update():
     return safe_json({"status": "success", "message": "已觸發全量更新"})
 
 
+@router.get("/api/fx/usdtwd")
+async def get_usdtwd_rate():
+    """公開匯率端點（無需登入），供首頁 / 公開頁面顯示 USD/TWD。"""
+    from services.exchange_rate import get_usd_twd, get_fx_age_seconds
+    try:
+        rate = await asyncio.to_thread(get_usd_twd)
+        age  = get_fx_age_seconds()
+        return safe_json({
+            "status":      "success",
+            "rate":        round(float(rate), 4),
+            "age_seconds": round(age, 0) if age is not None else None,
+        })
+    except Exception as e:
+        return safe_json({"status": "error", "message": str(e)}, 500)
+
+
+# ── ETF 評分 ──
+
+@router.get("/api/etf/score/{ticker}")
+async def get_etf_score(ticker: str):
+    """ETF 綜合健康評分（0-100 + A~F 等第）。
+    評分維度：報酬力 / 配息力 / 成本效率 / 穩定性 / 動能（同市場相互比較）。
+    """
+    ticker = ticker.upper().strip()
+    from services.etf_score import score_etf
+    result = await asyncio.to_thread(score_etf, ticker)
+    if not result:
+        return safe_json({"status": "error", "message": f"無法計算 {ticker} 評分（可能尚無資料）"}, 404)
+    return safe_json({"status": "success", "data": result})
+
+
+@router.get("/api/etf/scores/top")
+async def get_top_scores(market: str = "TW", limit: int = 10):
+    """取同市場中評分最高的 ETF 清單（首頁 / 排行榜用）。"""
+    market = market.upper() if market.upper() in ("TW", "US") else "TW"
+    limit  = max(5, min(limit, 30))
+    cache_key = f"etf_scores_top:{market}:{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return safe_json({"status": "success", "data": cached})
+
+    try:
+        with get_db() as (conn, cursor):
+            cursor.execute("""
+                SELECT m.ticker
+                FROM etf_master m
+                WHERE m.is_hot=1 AND m.market=%s AND m.is_delisted=0
+            """, (market,))
+            tickers = [r["ticker"] for r in cursor.fetchall()]
+
+        from services.etf_score import score_batch
+        scores = await asyncio.to_thread(score_batch, tickers)
+        ranked = sorted(scores.values(), key=lambda x: x["score"], reverse=True)[:limit]
+        cache.set(cache_key, ranked, 1800)
+        return safe_json({"status": "success", "data": ranked})
+    except Exception as e:
+        logger.error(f"get_top_scores error: {e}", exc_info=True)
+        return safe_json({"status": "error", "message": str(e)}, 500)
+
+
 # ── 新增 ETF ──
 
 @router.post("/api/etf/add-to-master")

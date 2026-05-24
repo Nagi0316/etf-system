@@ -170,6 +170,15 @@
       <div id="result-summary" class="hidden space-y-4">
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3" id="kpi-cards"></div>
 
+        <!-- 風險指標卡片 -->
+        <div id="risk-section" class="hidden card p-4">
+          <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3 flex items-center gap-2">
+            <i class="fas fa-shield-alt text-purple-500"></i>風險分析指標
+            <span class="text-[10px] normal-case font-normal text-slate-400 ml-1">（基於歷史日收益計算，無風險利率 2%）</span>
+          </h4>
+          <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3" id="risk-cards"></div>
+        </div>
+
         <div id="strategy-note-box" class="hidden strategy-box">
           <h4 class="font-bold text-slate-800 dark:text-white text-sm mb-2" id="strategy-note-title"></h4>
           <p class="text-xs text-slate-600 dark:text-slate-300 mb-1" id="strategy-note-desc"></p>
@@ -358,6 +367,87 @@ async function runCompare() {
   }
 }
 
+function renderRiskMetrics(d) {
+  const section = document.getElementById('risk-section');
+  if (!section) return;
+
+  const metrics = [
+    {
+      label: '最大回撤',
+      val:   d.max_drawdown,
+      fmt:   v => v.toFixed(2) + '%',
+      color: v => v < -20 ? 'text-red-600' : v < -10 ? 'text-orange-500' : 'text-yellow-600',
+      icon:  'fa-arrow-down',
+      tip:   '歷史上從最高點到最低點的最大跌幅，越小越穩健',
+    },
+    {
+      label: '年化波動率',
+      val:   d.volatility,
+      fmt:   v => v.toFixed(2) + '%',
+      color: v => v > 30 ? 'text-red-600' : v > 18 ? 'text-orange-500' : 'text-green-600',
+      icon:  'fa-wave-square',
+      tip:   '每日報酬率的標準差年化後的結果，越低越穩定',
+    },
+    {
+      label: '夏普比率',
+      val:   d.sharpe_ratio,
+      fmt:   v => v.toFixed(2),
+      color: v => v >= 1 ? 'text-green-600' : v >= 0.5 ? 'text-blue-500' : 'text-orange-500',
+      icon:  'fa-balance-scale',
+      tip:   '每單位風險獲得的超額報酬，> 1 為優秀，> 0.5 可接受',
+    },
+    {
+      label: '索提諾比率',
+      val:   d.sortino_ratio,
+      fmt:   v => v.toFixed(2),
+      color: v => v >= 1.5 ? 'text-green-600' : v >= 0.8 ? 'text-blue-500' : 'text-orange-500',
+      icon:  'fa-chart-bar',
+      tip:   '只考量下行風險的夏普，> 1.5 為優秀',
+    },
+    {
+      label: '卡瑪比率',
+      val:   d.calmar_ratio,
+      fmt:   v => v.toFixed(2),
+      color: v => v >= 0.5 ? 'text-green-600' : v >= 0.2 ? 'text-blue-500' : 'text-orange-500',
+      icon:  'fa-tachometer-alt',
+      tip:   '年化報酬 / |最大回撤|，越高代表風險收益比越好',
+    },
+    {
+      label: '月勝率',
+      val:   d.win_rate_monthly,
+      fmt:   v => v.toFixed(1) + '%',
+      color: v => v >= 60 ? 'text-green-600' : v >= 50 ? 'text-blue-500' : 'text-orange-500',
+      icon:  'fa-trophy',
+      tip:   '每月收盤價高於上月的比例，> 60% 為優秀',
+    },
+  ];
+
+  const hasAny = metrics.some(m => m.val != null);
+  if (!hasAny) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+
+  document.getElementById('risk-cards').innerHTML = metrics.map(m => {
+    if (m.val == null) return `
+      <div class="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 text-center">
+        <div class="flex items-center justify-center gap-1 mb-1">
+          <i class="fas ${m.icon} text-slate-300 text-xs"></i>
+          <span class="text-[11px] text-slate-400">${m.label}</span>
+        </div>
+        <div class="text-base font-bold text-slate-300">—</div>
+      </div>`;
+    const colorCls = m.color(m.val);
+    return `
+      <div class="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 text-center" title="${m.tip}">
+        <div class="flex items-center justify-center gap-1 mb-1">
+          <i class="fas ${m.icon} ${colorCls} text-xs"></i>
+          <span class="text-[11px] text-slate-500 dark:text-slate-400">${m.label}</span>
+        </div>
+        <div class="text-base font-bold ${colorCls}">${m.fmt(m.val)}</div>
+        <div class="text-[9px] text-slate-400 mt-0.5 leading-tight">${m.tip.split('，')[0]}</div>
+      </div>`;
+  }).join('');
+}
+
 function renderSingleResult(d, ticker) {
   const kpis = [
     { label:'總投入', value: fmtMoney(d.total_invested), icon:'fa-coins', color:'text-blue-500' },
@@ -373,6 +463,8 @@ function renderSingleResult(d, ticker) {
       </div>
       <div class="text-lg font-bold text-slate-800 dark:text-white">${k.value}</div>
     </div>`).join('');
+
+  renderRiskMetrics(d);
 
   const noteBox = document.getElementById('strategy-note-box');
   if (d.strategy_note) {

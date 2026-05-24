@@ -1,93 +1,410 @@
 {% extends "base.html" %}
 {% block title %}ETF 投資管理系統{% endblock %}
 
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+.pulse-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+.pulse-dot.open  { background:#22c55e; animation:pulse 2s infinite; }
+.pulse-dot.close { background:#94a3b8; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+.mover-row:hover { background:rgba(99,102,241,.04); }
+.grade-pill {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:2rem; height:2rem; border-radius:.5rem;
+  font-weight:800; font-size:.85rem;
+}
+.hero-stat { border-left:3px solid rgba(255,255,255,.3); padding-left:1rem; }
+</style>
+{% endblock %}
+
 {% block content %}
-<!-- ── Hero ── -->
+
+<!-- ══ Hero ══════════════════════════════════════════════════════ -->
 <div class="gradient-hero text-white">
-  <div class="max-w-7xl mx-auto px-4 py-16 md:py-24">
-    <div class="text-center">
-      <h1 class="text-3xl md:text-5xl font-bold mb-4">ETF 投資管理系統</h1>
-      <p class="text-lg md:text-xl text-indigo-100 mb-8">智慧追蹤 · 精準回測 · 輕鬆管理您的 ETF 投資組合</p>
-      <div class="flex justify-center gap-3 flex-wrap">
-        <a href="/etf-list" class="bg-white text-indigo-600 px-6 py-3 rounded-xl font-bold hover:bg-indigo-50 transition shadow-lg text-sm md:text-base">
-          <i class="fas fa-chart-bar mr-2"></i>探索 ETF
-        </a>
-        <a href="/backtest" class="border-2 border-white px-6 py-3 rounded-xl font-bold hover:bg-white hover:text-indigo-600 transition text-sm md:text-base">
-          <i class="fas fa-flask mr-2"></i>存股回測
-        </a>
-      </div>
-    </div>
-  </div>
-</div>
+  <div class="max-w-7xl mx-auto px-4 py-10 md:py-16">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-8">
 
-<!-- ── 功能卡片 ── -->
-<div class="max-w-7xl mx-auto px-4 pb-12">
-  <h2 class="text-lg font-bold text-slate-800 dark:text-white mb-6 pt-8">核心功能</h2>
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-    <a href="/etf-list" class="card p-5 text-center hover:border-indigo-300 dark:hover:border-indigo-600 transition group">
-      <div class="w-12 h-12 rounded-xl bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center mx-auto mb-3 group-hover:bg-indigo-200 transition">
-        <i class="fas fa-chart-bar text-indigo-600 dark:text-indigo-400 text-xl"></i>
-      </div>
-      <h3 class="font-semibold text-slate-800 dark:text-white text-sm">ETF 精選</h3>
-      <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">台股 + 美股即時行情</p>
-    </a>
-    <a href="/backtest" class="card p-5 text-center hover:border-purple-300 dark:hover:border-purple-600 transition group">
-      <div class="w-12 h-12 rounded-xl bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center mx-auto mb-3">
-        <i class="fas fa-flask text-purple-600 dark:text-purple-400 text-xl"></i>
-      </div>
-      <h3 class="font-semibold text-slate-800 dark:text-white text-sm">存股回測</h3>
-      <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">DRIP + 低檔加碼策略</p>
-    </a>
-    <a href="/watchlist" class="card p-5 text-center hover:border-orange-300 dark:hover:border-orange-600 transition group">
-      <div class="w-12 h-12 rounded-xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center mx-auto mb-3">
-        <i class="fas fa-star text-orange-500 dark:text-orange-400 text-xl"></i>
-      </div>
-      <h3 class="font-semibold text-slate-800 dark:text-white text-sm">自選股</h3>
-      <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">追蹤喜愛的 ETF</p>
-    </a>
-    <a href="/portfolio" class="card p-5 text-center hover:border-green-300 dark:hover:border-green-600 transition group">
-      <div class="w-12 h-12 rounded-xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto mb-3">
-        <i class="fas fa-wallet text-green-600 dark:text-green-400 text-xl"></i>
-      </div>
-      <h3 class="font-semibold text-slate-800 dark:text-white text-sm">投資庫存</h3>
-      <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">損益 + 台幣換算</p>
-    </a>
-  </div>
-</div>
-
-<!-- ── 策略說明 ── -->
-<div class="max-w-7xl mx-auto px-4 pb-16">
-  <div class="strategy-box">
-    <div class="flex items-start gap-4">
-      <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center flex-shrink-0">
-        <i class="fas fa-lightbulb text-white"></i>
-      </div>
-      <div>
-        <h3 class="font-bold text-slate-800 dark:text-white mb-2">定期定額 + 低檔加碼策略</h3>
-        <p class="text-sm text-slate-600 dark:text-slate-300 mb-3">
-          當市場大跌時進行額外加碼，搭配長期持有與股息再投入，可提升長期複利效果。
-        </p>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-          <div class="bg-white/60 dark:bg-slate-800/60 rounded-lg p-3">
-            <div class="text-indigo-600 dark:text-indigo-400 font-bold mb-1">📈 長期回測</div>
-            <div class="text-slate-600 dark:text-slate-300 text-xs">定期定額搭配低檔加碼，長期報酬率可能比單純定期定額提升 20%～60%</div>
-          </div>
-          <div class="bg-white/60 dark:bg-slate-800/60 rounded-lg p-3">
-            <div class="text-green-600 dark:text-green-400 font-bold mb-1">💹 報酬提升</div>
-            <div class="text-slate-600 dark:text-slate-300 text-xs">原年化 10% → 搭配低檔加碼後約 12%～16%</div>
-          </div>
-          <div class="bg-white/60 dark:bg-slate-800/60 rounded-lg p-3">
-            <div class="text-purple-600 dark:text-purple-400 font-bold mb-1">⚡ 金字塔加碼</div>
-            <div class="text-slate-600 dark:text-slate-300 text-xs">跌越多、加碼越多：20日跌10%→加25%，30%以上→加100%</div>
-          </div>
+      <!-- 左側文案 -->
+      <div class="md:max-w-xl">
+        <div class="flex items-center gap-2 mb-3">
+          <span id="tw-status" class="flex items-center gap-1.5 text-xs bg-white/15 px-2.5 py-1 rounded-full">
+            <span class="pulse-dot close" id="tw-dot"></span>台股
+          </span>
+          <span id="us-status" class="flex items-center gap-1.5 text-xs bg-white/15 px-2.5 py-1 rounded-full">
+            <span class="pulse-dot close" id="us-dot"></span>美股
+          </span>
+          <span id="fx-badge" class="text-xs bg-white/15 px-2.5 py-1 rounded-full hidden">
+            <i class="fas fa-dollar-sign text-[9px] mr-1"></i>USD/TWD <span id="fx-rate">—</span>
+          </span>
         </div>
-        <div class="mt-3">
-          <a href="/backtest" class="btn-primary text-sm">
-            <i class="fas fa-play"></i> 立即回測策略
+        <h1 class="text-3xl md:text-4xl font-black mb-3 leading-tight">
+          智慧 ETF<br>投資分析平台
+        </h1>
+        <p class="text-indigo-100 mb-6 text-sm md:text-base leading-relaxed">
+          台股 + 美股即時報價 · 定期定額回測 · Sharpe/Sortino 風險評分<br class="hidden md:block">
+          投資組合管理 · ETF 健康評分 · 低檔加碼訊號
+        </p>
+        <div class="flex flex-wrap gap-3">
+          <a href="/etf-list" class="bg-white text-indigo-600 px-5 py-2.5 rounded-xl font-bold hover:bg-indigo-50 transition shadow text-sm">
+            <i class="fas fa-chart-bar mr-1.5"></i>探索 ETF
+          </a>
+          <a href="/backtest" class="border-2 border-white/70 px-5 py-2.5 rounded-xl font-bold hover:bg-white/10 transition text-sm">
+            <i class="fas fa-flask mr-1.5"></i>存股回測
           </a>
         </div>
       </div>
+
+      <!-- 右側統計數字 -->
+      <div class="grid grid-cols-2 gap-4 md:gap-5 md:min-w-[280px]">
+        <div class="hero-stat">
+          <div class="text-2xl font-black" id="stat-etf-count">—</div>
+          <div class="text-xs text-indigo-200 mt-0.5">追蹤 ETF 數</div>
+        </div>
+        <div class="hero-stat">
+          <div class="text-2xl font-black" id="stat-tw-count">—</div>
+          <div class="text-xs text-indigo-200 mt-0.5">台股 ETF</div>
+        </div>
+        <div class="hero-stat">
+          <div class="text-2xl font-black" id="stat-us-count">—</div>
+          <div class="text-xs text-indigo-200 mt-0.5">美股 ETF</div>
+        </div>
+        <div class="hero-stat">
+          <div class="text-2xl font-black" id="stat-divs-count">—</div>
+          <div class="text-xs text-indigo-200 mt-0.5">真實配息紀錄</div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
+
+<!-- ══ Market Pulse ═══════════════════════════════════════════════ -->
+<div class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+    <!-- TW 漲幅排行 -->
+    <div class="card overflow-hidden">
+      <div class="flex items-center justify-between px-4 pt-4 pb-2 border-b border-slate-100 dark:border-slate-700">
+        <h2 class="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-red-500 inline-block"></span>台股今日漲幅
+        </h2>
+        <a href="/etf-list" class="text-xs text-indigo-500 hover:underline">全部 →</a>
+      </div>
+      <div id="tw-movers" class="divide-y divide-slate-50 dark:divide-slate-700/50">
+        <div class="p-6 text-center text-slate-400 text-sm"><span class="spinner mr-2"></span>載入中…</div>
+      </div>
+    </div>
+
+    <!-- US 漲幅排行 -->
+    <div class="card overflow-hidden">
+      <div class="flex items-center justify-between px-4 pt-4 pb-2 border-b border-slate-100 dark:border-slate-700">
+        <h2 class="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>美股今日漲幅
+        </h2>
+        <a href="/etf-list" class="text-xs text-indigo-500 hover:underline">全部 →</a>
+      </div>
+      <div id="us-movers" class="divide-y divide-slate-50 dark:divide-slate-700/50">
+        <div class="p-6 text-center text-slate-400 text-sm"><span class="spinner mr-2"></span>載入中…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ ETF 健康評分榜 ══════════════════════════════════════════ -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+    <div class="card overflow-hidden">
+      <div class="flex items-center justify-between px-4 pt-4 pb-2 border-b border-slate-100 dark:border-slate-700">
+        <h2 class="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+          <i class="fas fa-star-half-alt text-amber-500 text-xs"></i>台股 ETF 評分榜
+        </h2>
+        <span class="text-[10px] text-slate-400">報酬·配息·費用·穩定·動能 綜合評分</span>
+      </div>
+      <div id="tw-scores" class="divide-y divide-slate-50 dark:divide-slate-700/50">
+        <div class="p-6 text-center text-slate-400 text-sm"><span class="spinner mr-2"></span>計算中…</div>
+      </div>
+    </div>
+
+    <div class="card overflow-hidden">
+      <div class="flex items-center justify-between px-4 pt-4 pb-2 border-b border-slate-100 dark:border-slate-700">
+        <h2 class="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+          <i class="fas fa-star-half-alt text-amber-500 text-xs"></i>美股 ETF 評分榜
+        </h2>
+        <span class="text-[10px] text-slate-400">報酬·配息·費用·穩定·動能 綜合評分</span>
+      </div>
+      <div id="us-scores" class="divide-y divide-slate-50 dark:divide-slate-700/50">
+        <div class="p-6 text-center text-slate-400 text-sm"><span class="spinner mr-2"></span>計算中…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 核心功能入口 ═══════════════════════════════════════════ -->
+  <div>
+    <h2 class="text-sm font-bold text-slate-700 dark:text-slate-300 mb-3">核心功能</h2>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <a href="/etf-list" class="card p-4 text-center hover:border-indigo-300 dark:hover:border-indigo-600 transition group">
+        <div class="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center mx-auto mb-2.5 group-hover:scale-110 transition-transform">
+          <i class="fas fa-chart-bar text-indigo-600 dark:text-indigo-400"></i>
+        </div>
+        <div class="text-xs font-semibold text-slate-800 dark:text-white">ETF 精選</div>
+        <div class="text-[11px] text-slate-400 mt-0.5">台股 + 美股排行</div>
+      </a>
+      <a href="/backtest" class="card p-4 text-center hover:border-purple-300 dark:hover:border-purple-600 transition group">
+        <div class="w-10 h-10 rounded-xl bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center mx-auto mb-2.5 group-hover:scale-110 transition-transform">
+          <i class="fas fa-flask text-purple-600 dark:text-purple-400"></i>
+        </div>
+        <div class="text-xs font-semibold text-slate-800 dark:text-white">存股回測</div>
+        <div class="text-[11px] text-slate-400 mt-0.5">DRIP + 風險指標</div>
+      </a>
+      <a href="/watchlist" class="card p-4 text-center hover:border-orange-300 dark:hover:border-orange-600 transition group">
+        <div class="w-10 h-10 rounded-xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center mx-auto mb-2.5 group-hover:scale-110 transition-transform">
+          <i class="fas fa-star text-orange-500 dark:text-orange-400"></i>
+        </div>
+        <div class="text-xs font-semibold text-slate-800 dark:text-white">自選股</div>
+        <div class="text-[11px] text-slate-400 mt-0.5">追蹤 + 到價提醒</div>
+      </a>
+      <a href="/portfolio" class="card p-4 text-center hover:border-green-300 dark:hover:border-green-600 transition group">
+        <div class="w-10 h-10 rounded-xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto mb-2.5 group-hover:scale-110 transition-transform">
+          <i class="fas fa-wallet text-green-600 dark:text-green-400"></i>
+        </div>
+        <div class="text-xs font-semibold text-slate-800 dark:text-white">投資庫存</div>
+        <div class="text-[11px] text-slate-400 mt-0.5">損益 + 已實現盈虧</div>
+      </a>
+    </div>
+  </div>
+
+  <!-- ══ 功能亮點條（差異化） ════════════════════════════════════ -->
+  <div class="card p-4 md:p-5">
+    <h2 class="text-sm font-bold text-slate-700 dark:text-slate-300 mb-4">系統亮點</h2>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      <div class="flex items-start gap-3 p-3 rounded-xl bg-indigo-50 dark:bg-indigo-900/20">
+        <div class="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-800 flex items-center justify-center flex-shrink-0">
+          <i class="fas fa-shield-alt text-indigo-600 dark:text-indigo-300 text-sm"></i>
+        </div>
+        <div>
+          <div class="text-xs font-bold text-slate-800 dark:text-white mb-0.5">Sharpe / Sortino / 最大回撤</div>
+          <div class="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">回測結果含 6 項風險指標，讓你評估「不只是報酬率」，真正看懂風險收益比</div>
+        </div>
+      </div>
+      <div class="flex items-start gap-3 p-3 rounded-xl bg-amber-50 dark:bg-amber-900/20">
+        <div class="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-800 flex items-center justify-center flex-shrink-0">
+          <i class="fas fa-star-half-alt text-amber-600 dark:text-amber-300 text-sm"></i>
+        </div>
+        <div>
+          <div class="text-xs font-bold text-slate-800 dark:text-white mb-0.5">ETF 健康評分（0-100）</div>
+          <div class="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">報酬力、配息力、費用效率、穩定性、動能五維度評分，同市場相互比較更客觀</div>
+        </div>
+      </div>
+      <div class="flex items-start gap-3 p-3 rounded-xl bg-green-50 dark:bg-green-900/20">
+        <div class="w-8 h-8 rounded-lg bg-green-100 dark:bg-green-800 flex items-center justify-center flex-shrink-0">
+          <i class="fas fa-coins text-green-600 dark:text-green-300 text-sm"></i>
+        </div>
+        <div>
+          <div class="text-xs font-bold text-slate-800 dark:text-white mb-0.5">真實配息事件 DRIP</div>
+          <div class="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">回測時優先使用真實歷史配息紀錄，不再用殖利率推估，計算結果更貼近實際</div>
+        </div>
+      </div>
+      <div class="flex items-start gap-3 p-3 rounded-xl bg-purple-50 dark:bg-purple-900/20">
+        <div class="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-800 flex items-center justify-center flex-shrink-0">
+          <i class="fas fa-search text-purple-600 dark:text-purple-300 text-sm"></i>
+        </div>
+        <div>
+          <div class="text-xs font-bold text-slate-800 dark:text-white mb-0.5">本地索引即時搜尋</div>
+          <div class="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">ETF 清單預載至瀏覽器，搜尋無需等待 API，0 延遲過濾台美數百支 ETF</div>
+        </div>
+      </div>
+      <div class="flex items-start gap-3 p-3 rounded-xl bg-sky-50 dark:bg-sky-900/20">
+        <div class="w-8 h-8 rounded-lg bg-sky-100 dark:bg-sky-800 flex items-center justify-center flex-shrink-0">
+          <i class="fas fa-bell text-sky-600 dark:text-sky-300 text-sm"></i>
+        </div>
+        <div>
+          <div class="text-xs font-bold text-slate-800 dark:text-white mb-0.5">低檔加碼 + 到價提醒</div>
+          <div class="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">偵測 20/60 日跌幅自動觸發加碼訊號，並支援個人化目標價警報通知</div>
+        </div>
+      </div>
+      <div class="flex items-start gap-3 p-3 rounded-xl bg-rose-50 dark:bg-rose-900/20">
+        <div class="w-8 h-8 rounded-lg bg-rose-100 dark:bg-rose-800 flex items-center justify-center flex-shrink-0">
+          <i class="fas fa-database text-rose-600 dark:text-rose-300 text-sm"></i>
+        </div>
+        <div>
+          <div class="text-xs font-bold text-slate-800 dark:text-white mb-0.5">三層冪等防護機制</div>
+          <div class="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">前端鎖定 + 5s 快取 + DB UNIQUE 鍵，徹底杜絕重複交易寫入，金融級資料安全</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ══ 市場開盤狀態 ════════════════════════════════════════
+function _marketStatus() {
+  const now  = new Date();
+  const day  = now.getDay();
+  const utc8 = ((now.getUTCHours() + 8) % 24) + now.getUTCMinutes() / 60;
+  const twOpen = day >= 1 && day <= 5 && utc8 >= 9 && utc8 < 13.5;
+  const usOpen = day >= 1 && day <= 5 && (utc8 >= 21.5 || utc8 < 4);
+  return { twOpen, usOpen };
+}
+
+function _renderMarketBadge() {
+  const { twOpen, usOpen } = _marketStatus();
+  const twDot = document.getElementById('tw-dot');
+  const usDot = document.getElementById('us-dot');
+  const twEl  = document.getElementById('tw-status');
+  const usEl  = document.getElementById('us-status');
+  if (twDot) { twDot.className = `pulse-dot ${twOpen ? 'open' : 'close'}`; }
+  if (twEl)  { twEl.lastElementChild && (twEl.lastElementChild.textContent = ''); twEl.innerHTML = `<span class="pulse-dot ${twOpen?'open':'close'}"></span>台股 ${twOpen?'開盤中':'已收盤'}`; }
+  if (usDot) { usDot.className = `pulse-dot ${usOpen ? 'open' : 'close'}`; }
+  if (usEl)  { usEl.innerHTML = `<span class="pulse-dot ${usOpen?'open':'close'}"></span>美股 ${usOpen?'開盤中':'已收盤'}`; }
+}
+
+// ══ 今日漲幅排行 ════════════════════════════════════════
+async function loadMovers() {
+  try {
+    const [tw, us] = await Promise.all([
+      fetch('/api/etf/rankings/combined?market=TW').then(r => r.json()).catch(() => null),
+      fetch('/api/etf/rankings/combined?market=US').then(r => r.json()).catch(() => null),
+    ]);
+    renderMovers('tw-movers', tw?.volume?.slice(0, 6) || [], 'TW');
+    renderMovers('us-movers', us?.volume?.slice(0, 6) || [], 'US');
+
+    // FX 匯率
+    try {
+      const fx = await fetch('/api/etf/detail/USDTWD').then(r => r.json()).catch(() => null);
+      // 從 summary API 取匯率
+    } catch {}
+  } catch(e) {
+    console.warn('movers load error', e);
+  }
+}
+
+function renderMovers(elId, rows, market) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!rows || !rows.length) {
+    el.innerHTML = `<div class="p-4 text-center text-slate-400 text-xs">暫無資料</div>`;
+    return;
+  }
+  // 依漲跌幅排序（高到低），取前6
+  const sorted = [...rows].sort((a, b) => (parseFloat(b.price_change_percent)||0) - (parseFloat(a.price_change_percent)||0));
+  el.innerHTML = sorted.slice(0, 6).map(item => {
+    const chg = parseFloat(item.price_change_percent) || 0;
+    const chgCls = chg >= 0 ? 'text-red-500' : 'text-green-500';
+    const chgBg  = chg >= 0 ? 'bg-red-50 dark:bg-red-900/20' : 'bg-green-50 dark:bg-green-900/20';
+    const price  = parseFloat(item.current_price);
+    return `<a href="/etf-detail/${item.ticker}"
+      class="mover-row flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors">
+      <div class="flex-1 min-w-0">
+        <span class="font-bold text-sm text-slate-800 dark:text-white mr-1.5">${item.ticker}</span>
+        <span class="text-xs text-slate-400 truncate">${item.name || ''}</span>
+      </div>
+      <div class="flex items-center gap-2 flex-shrink-0 ml-2">
+        <span class="text-xs tabular-nums text-slate-600 dark:text-slate-300">${price > 0 ? price.toFixed(2) : '—'}</span>
+        <span class="text-xs font-bold tabular-nums px-1.5 py-0.5 rounded ${chgBg} ${chgCls}">
+          ${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%
+        </span>
+      </div>
+    </a>`;
+  }).join('');
+}
+
+// ══ ETF 評分榜 ══════════════════════════════════════════
+async function loadScores() {
+  try {
+    const [tw, us] = await Promise.all([
+      fetch('/api/etf/scores/top?market=TW&limit=6').then(r => r.json()).catch(() => null),
+      fetch('/api/etf/scores/top?market=US&limit=6').then(r => r.json()).catch(() => null),
+    ]);
+    renderScoreList('tw-scores', tw?.data || []);
+    renderScoreList('us-scores', us?.data || []);
+  } catch(e) {
+    ['tw-scores','us-scores'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = `<div class="p-4 text-center text-slate-400 text-xs">評分計算中…</div>`;
+    });
+  }
+}
+
+function renderScoreList(elId, items) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!items.length) { el.innerHTML = `<div class="p-4 text-center text-slate-400 text-xs">暫無資料</div>`; return; }
+  el.innerHTML = items.map((item, idx) => {
+    const gradeColors = { A:'#16a34a', B:'#2563eb', C:'#d97706', D:'#dc2626', F:'#64748b' };
+    const c = gradeColors[item.grade] || '#64748b';
+    const r1y = item.meta?.annual_return_1y;
+    const yld = item.meta?.dividend_yield;
+    return `<a href="/etf-detail/${item.ticker}"
+      class="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors">
+      <span class="text-[11px] text-slate-400 w-4 text-center">${idx + 1}</span>
+      <span class="grade-pill text-white text-xs flex-shrink-0" style="background:${c}">${item.grade}</span>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-1.5">
+          <span class="font-bold text-sm text-slate-800 dark:text-white">${item.ticker}</span>
+          <span class="text-xs font-bold" style="color:${c}">${item.score}</span>
+        </div>
+        <div class="flex gap-3 mt-0.5">
+          ${r1y != null ? `<span class="text-[10px] ${r1y>=0?'text-red-500':'text-green-500'}">${r1y>=0?'+':''}${r1y.toFixed(1)}% 1Y</span>` : ''}
+          ${yld > 0 ? `<span class="text-[10px] text-emerald-600 dark:text-emerald-400">${yld.toFixed(2)}% 殖利率</span>` : ''}
+        </div>
+      </div>
+      <!-- 迷你評分條 -->
+      <div class="w-16 hidden md:block">
+        <div class="w-full h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+          <div class="h-full rounded-full" style="width:${item.score}%;background:${c};transition:width .6s"></div>
+        </div>
+      </div>
+    </a>`;
+  }).join('');
+}
+
+// ══ 統計數字（從 ETF index 取） ═══════════════════════════
+async function loadStats() {
+  try {
+    const d = await fetch('/api/etf/index').then(r => r.json()).catch(() => null);
+    if (!d?.data) return;
+    const all = d.data;
+    const tw  = all.filter(e => e.market === 'TW').length;
+    const us  = all.filter(e => e.market === 'US').length;
+    document.getElementById('stat-etf-count').textContent = all.length;
+    document.getElementById('stat-tw-count').textContent  = tw;
+    document.getElementById('stat-us-count').textContent  = us;
+    window._ETF_IDX = all;   // 供 navbar 搜尋共用
+  } catch {}
+  // 配息事件數
+  try {
+    const h = await fetch('/api/health/data').then(r => r.json()).catch(() => null);
+    const cnt = h?.summary?.etfs_with_real_dividends;
+    if (cnt != null) {
+      const el = document.getElementById('stat-divs-count');
+      if (el) el.textContent = cnt + ' 支';
+    }
+  } catch {}
+}
+
+// ══ FX 徽章 ════════════════════════════════════════════
+async function loadFx() {
+  try {
+    const d = await fetch('/api/fx/usdtwd').then(r => r.json()).catch(() => null);
+    const rate = d?.rate;
+    if (rate && rate > 0) {
+      document.getElementById('fx-rate').textContent = rate.toFixed(2);
+      document.getElementById('fx-badge').classList.remove('hidden');
+    }
+  } catch {}
+}
+
+// ══ 啟動 ══════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  _renderMarketBadge();
+  // 並行載入各模組，互不阻塞
+  loadStats();
+  loadMovers();
+  loadScores();
+  loadFx();
+});
+</script>
 {% endblock %}

@@ -135,6 +135,38 @@
       </div>
     </div>
 
+    <!-- ── ETF 健康評分 ── -->
+    <div id="score-section" class="hidden card p-5">
+      <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4 flex items-center gap-2">
+        <i class="fas fa-star-half-alt text-amber-500"></i>ETF 健康評分
+        <span class="text-[10px] normal-case font-normal text-slate-400 ml-1">（同市場 ETF 相互比較，滿分 100）</span>
+      </h3>
+      <div class="flex flex-col md:flex-row gap-5 items-start">
+        <!-- 圓形分數 -->
+        <div class="flex flex-col items-center flex-shrink-0">
+          <div class="relative w-24 h-24">
+            <svg class="w-24 h-24 -rotate-90" viewBox="0 0 36 36">
+              <path class="text-slate-100 dark:text-slate-700" stroke="currentColor" stroke-width="3.5" fill="none"
+                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+              <path id="score-arc" stroke-width="3.5" fill="none" stroke-linecap="round"
+                stroke-dasharray="0,100"
+                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+            </svg>
+            <div class="absolute inset-0 flex flex-col items-center justify-center">
+              <span id="score-number" class="text-2xl font-black text-slate-800 dark:text-white">—</span>
+              <span id="score-grade" class="text-xs font-bold mt-0.5">—</span>
+            </div>
+          </div>
+          <span id="score-grade-label" class="text-xs text-slate-400 mt-2">載入中…</span>
+        </div>
+        <!-- 細項條形圖 -->
+        <div class="flex-1 space-y-2.5 w-full">
+          <div id="score-bars"></div>
+          <p class="text-[10px] text-slate-400 mt-2">評分維度：報酬力 / 配息力 / 成本效率 / 穩定性 / 動能。評分每 10 分鐘更新一次。</p>
+        </div>
+      </div>
+    </div>
+
     <!-- 走勢圖 -->
     <div class="card p-5">
       <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -252,6 +284,7 @@ async function loadETFDetail() {
         loadPriceHistory(currentTicker, '1Y'),
         checkWatchlistStatus(currentTicker),
         loadDipAlert(currentTicker),
+        loadEtfScore(currentTicker),
       ]).then(() => {
         probeAllPeriods(currentTicker);
       });
@@ -681,5 +714,67 @@ function _startLiveRefresh() {
 
 document.addEventListener('DOMContentLoaded', loadETFDetail);
 // _startLiveRefresh 在 loadETFDetail → renderData 完成後呼叫（見 renderData 底部）
+
+// ── ETF 健康評分 ─────────────────────────────────────────────────
+async function loadEtfScore(ticker) {
+  try {
+    const res = await fetch(`/api/etf/score/${ticker}`).then(r => r.json());
+    if (res.status !== 'success' || !res.data) return;
+    renderScore(res.data);
+  } catch(e) { /* silent */ }
+}
+
+function renderScore(d) {
+  const section = document.getElementById('score-section');
+  if (!section) return;
+  section.classList.remove('hidden');
+
+  const score = d.score;
+  const color = d.grade_color;
+
+  // 圓弧動畫
+  const arc = document.getElementById('score-arc');
+  if (arc) {
+    arc.setAttribute('stroke', color);
+    // dasharray = score, 100 — 圓弧長度比例
+    requestAnimationFrame(() => {
+      arc.style.transition = 'stroke-dasharray 1s ease-out';
+      arc.setAttribute('stroke-dasharray', `${score},100`);
+    });
+  }
+  const numEl = document.getElementById('score-number');
+  if (numEl) { numEl.textContent = score; numEl.style.color = color; }
+  const gradeEl = document.getElementById('score-grade');
+  if (gradeEl) { gradeEl.textContent = d.grade; gradeEl.style.color = color; }
+  const labelEl = document.getElementById('score-grade-label');
+  if (labelEl) labelEl.textContent = d.grade_label;
+
+  // 細項條形圖
+  const dims = [
+    { key: 'return_score',    label: '報酬力', max: 30, icon: 'fa-chart-line', color: '#4f46e5' },
+    { key: 'yield_score',     label: '配息力', max: 20, icon: 'fa-coins',      color: '#10b981' },
+    { key: 'expense_score',   label: '費用效率',max:15, icon: 'fa-percent',    color: '#0ea5e9' },
+    { key: 'stability_score', label: '穩定性', max: 20, icon: 'fa-shield-alt', color: '#8b5cf6' },
+    { key: 'momentum_score',  label: '動能',   max: 15, icon: 'fa-rocket',     color: '#f59e0b' },
+  ];
+  const barsEl = document.getElementById('score-bars');
+  if (!barsEl) return;
+  barsEl.innerHTML = dims.map(dim => {
+    const val = d.breakdown?.[dim.key] ?? 0;
+    const pct = Math.min(100, (val / dim.max) * 100);
+    return `
+      <div>
+        <div class="flex items-center justify-between text-xs mb-0.5">
+          <span class="text-slate-500 dark:text-slate-400 flex items-center gap-1">
+            <i class="fas ${dim.icon} text-[10px]" style="color:${dim.color}"></i>${dim.label}
+          </span>
+          <span class="text-slate-700 dark:text-slate-300 font-medium tabular-nums">${val.toFixed(1)} / ${dim.max}</span>
+        </div>
+        <div class="w-full h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+          <div class="h-full rounded-full transition-all duration-700" style="width:${pct}%;background:${dim.color}"></div>
+        </div>
+      </div>`;
+  }).join('');
+}
 </script>
 {% endblock %}

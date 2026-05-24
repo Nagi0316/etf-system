@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}投資庫存 — ETF 投資管理系統{% endblock %}
 
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endblock %}
+
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 py-6">
 
@@ -26,6 +30,22 @@
     <div class="card p-4">
       <div class="text-xs text-slate-500 dark:text-slate-400 mb-1">報酬率</div>
       <div class="text-lg font-bold" id="s-return">—</div>
+    </div>
+  </div>
+
+  <!-- 配置圓餅圖（持倉 ≥ 2 時顯示） -->
+  <div id="alloc-section" class="hidden card p-5 mb-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+        <i class="fas fa-chart-pie text-indigo-500 text-sm"></i>資產配置
+      </h2>
+      <span class="text-xs text-slate-400">按台幣市值</span>
+    </div>
+    <div class="flex flex-col md:flex-row gap-6 items-center">
+      <div class="relative w-44 h-44 flex-shrink-0 mx-auto md:mx-0">
+        <canvas id="alloc-chart"></canvas>
+      </div>
+      <div id="alloc-legend" class="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm"></div>
     </div>
   </div>
 
@@ -113,6 +133,74 @@
 
 {% block scripts %}
 <script>
+// ── 配置圓餅圖 ───────────────────────────────────────────────────
+let _allocChart = null;
+const _PALETTE = ['#4f46e5','#0ea5e9','#10b981','#f59e0b','#8b5cf6','#ef4444','#06b6d4','#ec4899','#84cc16','#f97316'];
+
+function _renderAllocChart(rows) {
+  const section = document.getElementById('alloc-section');
+  if (!section || rows.length < 2) { section?.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+
+  const sorted = [...rows].sort((a, b) => (b.value_twd || 0) - (a.value_twd || 0));
+  const totalTwd = sorted.reduce((s, r) => s + (r.value_twd || 0), 0);
+
+  const labels  = sorted.map(r => r.ticker);
+  const values  = sorted.map(r => r.value_twd || 0);
+  const colors  = labels.map((_, i) => _PALETTE[i % _PALETTE.length]);
+  const profits = sorted.map(r => parseFloat(r.return_pct || 0));
+
+  const ctx = document.getElementById('alloc-chart');
+  if (!ctx) return;
+  if (_allocChart) { _allocChart.destroy(); _allocChart = null; }
+
+  _allocChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 2, hoverOffset: 8,
+      borderColor: document.documentElement.classList.contains('dark') ? '#1e293b' : '#fff' }] },
+    options: {
+      cutout: '65%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const pct = totalTwd > 0 ? (ctx.raw / totalTwd * 100).toFixed(1) : '0';
+              return ` NT$ ${parseInt(ctx.raw).toLocaleString()} (${pct}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // 圖例
+  const legend = document.getElementById('alloc-legend');
+  if (legend) {
+    legend.innerHTML = sorted.map((r, i) => {
+      const pct   = totalTwd > 0 ? (r.value_twd / totalTwd * 100).toFixed(1) : '0';
+      const retPct = profits[i];
+      const retCls  = retPct >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500';
+      return `
+        <div class="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer" onclick="location.href='/etf-detail/${r.ticker}'">
+          <span class="w-3 h-3 rounded-sm flex-shrink-0" style="background:${colors[i]}"></span>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-1">
+              <span class="font-bold text-xs text-slate-800 dark:text-white">${r.ticker}</span>
+              <span class="text-[11px] tabular-nums ${retCls}">${retPct >= 0 ? '+' : ''}${retPct.toFixed(1)}%</span>
+            </div>
+            <div class="flex items-center gap-2 mt-0.5">
+              <span class="text-[10px] text-slate-400">${pct}%</span>
+              <div class="flex-1 h-1 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                <div class="h-full rounded-full" style="width:${pct}%;background:${colors[i]}"></div>
+              </div>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+}
+
 async function checkLogin() {
   if (!Auth.isLoggedIn()) { window.location.href = '/auth'; return false; }
   return true;
@@ -140,8 +228,12 @@ async function loadPortfolio() {
   const rows = data.data || [];
   if (!rows.length) {
     document.getElementById('portfolio-card').innerHTML = `<div class="text-center py-12 text-slate-400"><i class="fas fa-wallet text-3xl mb-3"></i><br>尚無持倉，<button onclick="openTradeModal('','buy')" class="text-indigo-500 hover:underline">新增第一筆</button></div>`;
+    document.getElementById('alloc-section').classList.add('hidden');
     return;
   }
+
+  // ── 資產配置圓餅圖 ────────────────────────────────────
+  _renderAllocChart(rows);
   const tickers = [...new Set(rows.map(r => r.ticker))];
   const sel = document.getElementById('filter-ticker');
   sel.innerHTML = '<option value="">全部</option>' + tickers.map(t => `<option>${t}</option>`).join('');

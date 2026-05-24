@@ -1,6 +1,14 @@
 """
 services/backtest_engine.py — 增強版回測引擎
 支援：定期定額 | 逢低加碼 | DRIP 股息再投入 | Benchmark 對比
+
+風險指標（run_accumulate 結果內皆包含）：
+  - max_drawdown      最大回撤 (%)
+  - volatility        年化波動率 (%)
+  - sharpe_ratio      夏普比率 (無風險利率 2%)
+  - sortino_ratio     索提諾比率（只計下行波動）
+  - calmar_ratio      卡瑪比率 = 年化報酬 / |最大回撤|
+  - win_rate_monthly  月勝率 (%)
 """
 from __future__ import annotations
 import logging
@@ -151,6 +159,72 @@ def _tx(tx_type: str, date, amount: float, price: float, shares: float, fee: flo
     }
 
 
+def _compute_risk_metrics(hist: pd.DataFrame, annual_return_pct: float) -> dict:
+    """從每日收盤價計算六項風險指標，全部皆用真實歷史資料，無推估成分。
+
+    Args:
+        hist: OHLC DataFrame，index 為 datetime
+        annual_return_pct: 已知年化報酬率（%），用來計算 Calmar
+
+    Returns:
+        dict with max_drawdown, volatility, sharpe_ratio,
+              sortino_ratio, calmar_ratio, win_rate_monthly
+    """
+    empty = {
+        "max_drawdown": None, "volatility": None,
+        "sharpe_ratio": None, "sortino_ratio": None,
+        "calmar_ratio": None, "win_rate_monthly": None,
+    }
+    if hist.empty or len(hist) < 20:
+        return empty
+    try:
+        prices = hist["Close"].dropna()
+        if len(prices) < 20:
+            return empty
+
+        daily_ret = prices.pct_change().dropna()
+
+        # ── 年化波動率 ──────────────────────────
+        vol = float(daily_ret.std() * np.sqrt(252) * 100)
+
+        # ── 最大回撤（Peak-to-Trough）────────────
+        cum = (1 + daily_ret).cumprod()
+        roll_max = cum.cummax()
+        dd_series = (cum - roll_max) / roll_max
+        max_dd = float(dd_series.min() * 100)   # 負數，如 -35.2
+
+        # ── Sharpe Ratio（無風險利率 2%）─────────
+        RF_ANNUAL = 0.02
+        rf_daily  = RF_ANNUAL / 252
+        excess    = daily_ret - rf_daily
+        sharpe = (float(excess.mean() / excess.std() * np.sqrt(252))
+                  if excess.std() > 1e-10 else 0.0)
+
+        # ── Sortino Ratio（僅計下行偏差）─────────
+        downside = excess[excess < 0]
+        sortino = (float(excess.mean() / downside.std() * np.sqrt(252))
+                   if len(downside) > 5 and downside.std() > 1e-10 else 0.0)
+
+        # ── Calmar Ratio = 年化報酬 / |最大回撤| ──
+        calmar = abs(annual_return_pct / max_dd) if max_dd < -0.01 else 0.0
+
+        # ── 月勝率 ─────────────────────────────
+        monthly = prices.resample("ME").last().pct_change().dropna()
+        win_rate = float((monthly > 0).mean() * 100) if len(monthly) >= 3 else None
+
+        return {
+            "max_drawdown":     round(max_dd,  2),
+            "volatility":       round(vol,     2),
+            "sharpe_ratio":     round(sharpe,  2),
+            "sortino_ratio":    round(sortino, 2),
+            "calmar_ratio":     round(calmar,  2),
+            "win_rate_monthly": round(win_rate, 1) if win_rate is not None else None,
+        }
+    except Exception as e:
+        logger.warning(f"_compute_risk_metrics 失敗: {e}")
+        return empty
+
+
 def _summarize(transactions: list, total_invested: float, total_shares: float, hist: pd.DataFrame) -> dict:
     if hist.empty or total_invested <= 0:
         return {"transactions": transactions, "error": "無足夠資料計算摘要"}
@@ -175,14 +249,14 @@ def _summarize(transactions: list, total_invested: float, total_shares: float, h
                 "note": f"共觸發 {len(dip_txs)} 次低檔加碼，長期年化報酬率可能提升約 20%～60%",
             }
 
+    risk = _compute_risk_metrics(hist, annual_return)
+
     return {
         "total_invested": round(total_invested, 2),
         "final_value": round(final_value, 2),
         "total_profit": round(total_profit, 2),
         "total_return": round(total_return, 2),
         "annual_return": round(annual_return, 2),
-        # return_1y/3y/5y 為整段期間年化，僅在對應期間足夠時才有意義
-        # 前端統一使用 annual_return；此處僅供下載報表用
         "return_3y": round(annual_return, 2) if years >= 3 else None,
         "return_5y": round(annual_return, 2) if years >= 5 else None,
         "final_price": round(final_price, 2),
@@ -191,4 +265,6 @@ def _summarize(transactions: list, total_invested: float, total_shares: float, h
         "strategy_boost": strategy_boost,
         "transactions": transactions,
         "is_bankrupt": False,
+        # ── 風險指標（真實計算，非推估）──
+        **risk,
     }
