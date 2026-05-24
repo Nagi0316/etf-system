@@ -395,6 +395,30 @@ def _best_freq(yf_count: int, ticker: str) -> str:
             else yf_freq)
 
 
+def _save_dividend_events(ticker: str, events: list[tuple]):
+    """將配息事件批次寫入 etf_dividends 表，供回測 DRIP 使用。
+
+    events: [(ticker, ex_date_str, amount_float), ...]
+    ON DUPLICATE KEY UPDATE amount=VALUES(amount)：允許金額更正（如除息日補正）。
+    """
+    if not events:
+        return
+    try:
+        with get_db() as (conn, cursor):
+            for _ticker, ex_date, amount in events:
+                if amount and float(amount) > 0:
+                    cursor.execute(
+                        "INSERT INTO etf_dividends (ticker, ex_date, amount) "
+                        "VALUES (%s, %s, %s) "
+                        "ON DUPLICATE KEY UPDATE amount=VALUES(amount)",
+                        (_ticker, ex_date, float(amount)),
+                    )
+            conn.commit()
+        logger.debug(f"dividend events saved: {ticker} ({len(events)} events)")
+    except Exception as e:
+        logger.debug(f"save_dividend_events {ticker}: {e}")
+
+
 def _annualized_return(closes: list, years: float) -> Optional[float]:
     """回傳年化報酬率（%）。資料不足（< 5 筆）時回傳 None，讓呼叫端可區分「計算結果為 0」與「資料不足」。"""
     if not closes or len(closes) < 5:
@@ -584,13 +608,25 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
     for yt in (primary, alt):
         try:
             url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
-                   f"?range=2y&interval=1mo&events=dividends")
+                   f"?range=5y&interval=1mo&events=dividends")
             r = (_cf_yahoo_get(url, timeout=15)
                  or _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{yt}"), url, timeout=10))
             if r and r.status_code == 200:
                 result = r.json().get("chart", {}).get("result")
                 if result:
                     events = result[0].get("events", {}).get("dividends", {})
+
+                    # 持久化全部 5 年配息事件到 etf_dividends（回測 DRIP 使用）
+                    if events:
+                        all_ev = [
+                            (ticker,
+                             datetime.utcfromtimestamp(v["date"]).strftime("%Y-%m-%d"),
+                             safe_float(v.get("amount", 0)))
+                            for v in events.values()
+                            if safe_float(v.get("amount", 0)) > 0
+                        ]
+                        _save_dividend_events(ticker, all_ev)
+
                     cutoff = time.time() - 365 * 86400
                     recent = [v["amount"] for v in events.values()
                               if v.get("date", 0) >= cutoff and safe_float(v.get("amount", 0)) > 0]
@@ -937,6 +973,16 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
             events  = res.get("events", {}).get("dividends", {})
             div_confirmed = True  # Yahoo 成功回應，div_yield 值可信（即使為 0）
             if events:
+                # 持久化全部 5 年配息事件到 etf_dividends（回測 DRIP 使用）
+                all_ev = [
+                    (ticker,
+                     datetime.utcfromtimestamp(v["date"]).strftime("%Y-%m-%d"),
+                     safe_float(v.get("amount", 0)))
+                    for v in events.values()
+                    if safe_float(v.get("amount", 0)) > 0
+                ]
+                _save_dividend_events(ticker, all_ev)
+
                 cutoff = time.time() - 365 * 86400
                 recent = [v["amount"] for v in events.values() if v.get("date", 0) >= cutoff]
                 if recent:

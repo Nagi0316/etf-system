@@ -66,9 +66,17 @@ async def _startup_sequence():
         try:
             from services.twse_history import backfill_tw_history
             result = await asyncio.to_thread(backfill_tw_history)
-            logger.info(f"▶ 啟動歷史補齊完成：{result['etfs']} 檔，補 {result['days_inserted']} 日")
+            logger.info(f"▶ 啟動 TW 歷史補齊完成：{result['etfs']} 檔，補 {result['days_inserted']} 日")
         except Exception as e:
-            logger.warning(f"啟動歷史補齊失敗（繼續）: {e}")
+            logger.warning(f"啟動 TW 歷史補齊失敗（繼續）: {e}")
+
+        # Step 3b: 補齊 US ETF 歷史收盤價（透過 CF 代理，只補缺失日期，冪等）
+        try:
+            from services.us_history import backfill_us_history
+            us_result = await asyncio.to_thread(backfill_us_history)
+            logger.info(f"▶ 啟動 US 歷史補齊完成：{us_result['etfs']} 檔，補 {us_result['days_inserted']} 日")
+        except Exception as e:
+            logger.warning(f"啟動 US 歷史補齊失敗（繼續）: {e}")
 
         # Step 4: 歷史補齊後立即重算年化報酬率（讓排行榜 return tab 有資料）
         try:
@@ -284,6 +292,156 @@ async def health_detail():
         "last_update":     most_recent,
         "needs_attention": needs_attention,
         "etfs":            etf_rows,
+    })
+
+
+@app.get("/api/health/data")
+async def health_data():
+    """資料完整性健康檢查。
+
+    檢查項目：
+    1. 缺漏 ETF   — 在 etf_master 但 etf_daily_data 完全無資料（從未抓到）
+    2. 過期資料   — 有資料但超過 3 天未更新（可能抓取中斷）
+    3. 欄位異常   — annual_return_1y / dividend_yield 全為 NULL（資料品質不足）
+    4. 重複代碼   — etf_master 中同 ticker 出現多筆（schema 有 PK 但仍記錄）
+    5. 市場標記錯誤 — ticker 前 4 碼全為數字但 market != 'TW'（或反之）
+    6. 快取狀態   — rank:combined:TW / rank:combined:US 是否有效
+    7. 配息事件   — etf_dividends 中有真實事件的 ETF 數量（回測品質指標）
+    """
+    from datetime import date as _date
+    from utils import safe_json
+    from cache import cache
+
+    today = _date.today()
+    issues: list[dict] = []
+    summary: dict = {}
+
+    try:
+        with get_db() as (conn, cursor):
+
+            # 1. 缺漏 ETF（in master but no price data at all）
+            cursor.execute("""
+                SELECT m.ticker, m.market
+                FROM etf_master m
+                WHERE m.is_hot = 1 AND m.is_delisted = 0
+                  AND NOT EXISTS (
+                      SELECT 1 FROM etf_daily_data d
+                      WHERE d.ticker = m.ticker AND d.current_price > 0
+                  )
+                ORDER BY m.ticker
+            """)
+            missing = cursor.fetchall()
+            summary["missing_etfs"] = len(missing)
+            for r in missing:
+                issues.append({"type": "missing", "ticker": r["ticker"],
+                                "market": r["market"], "detail": "etf_master 有此代碼但無任何價格資料"})
+
+            # 2. 過期資料（last date > 3 days ago for hot ETFs）
+            cursor.execute("""
+                SELECT m.ticker, m.market, MAX(d.date) AS last_date
+                FROM etf_master m
+                JOIN etf_daily_data d ON m.ticker = d.ticker AND d.current_price > 0
+                WHERE m.is_hot = 1 AND m.is_delisted = 0
+                GROUP BY m.ticker, m.market
+                HAVING MAX(d.date) < DATE_SUB(CURDATE(), INTERVAL 3 DAY)
+                ORDER BY last_date ASC
+                LIMIT 50
+            """)
+            stale = cursor.fetchall()
+            summary["stale_etfs"] = len(stale)
+            for r in stale:
+                last = str(r["last_date"])[:10] if r["last_date"] else "—"
+                issues.append({"type": "stale", "ticker": r["ticker"],
+                                "market": r["market"], "detail": f"最後資料日：{last}"})
+
+            # 3. 欄位異常：annual_return 與 dividend_yield 全為 NULL
+            cursor.execute("""
+                SELECT m.ticker, m.market,
+                       d.annual_return_1y, d.dividend_yield
+                FROM etf_master m
+                LEFT JOIN (
+                    SELECT d1.* FROM etf_daily_data d1
+                    INNER JOIN (
+                        SELECT ticker, MAX(date) AS md FROM etf_daily_data
+                        WHERE current_price > 0 GROUP BY ticker
+                    ) d2 ON d1.ticker=d2.ticker AND d1.date=d2.md
+                ) d ON m.ticker = d.ticker
+                WHERE m.is_hot = 1 AND m.is_delisted = 0
+                  AND d.current_price IS NOT NULL AND d.current_price > 0
+                  AND d.annual_return_1y IS NULL
+                  AND (d.dividend_yield IS NULL OR d.dividend_yield = 0)
+                ORDER BY m.ticker
+            """)
+            null_fields = cursor.fetchall()
+            summary["null_fields_etfs"] = len(null_fields)
+            for r in null_fields:
+                issues.append({"type": "null_fields", "ticker": r["ticker"],
+                                "market": r["market"],
+                                "detail": "annual_return_1y=NULL 且 dividend_yield=0/NULL"})
+
+            # 4. 市場標記錯誤（TW 代碼但 market=US，或反之）
+            cursor.execute("""
+                SELECT ticker, market
+                FROM etf_master
+                WHERE is_delisted = 0 AND (
+                    (CHAR_LENGTH(ticker) >= 4
+                     AND SUBSTRING(ticker,1,1) REGEXP '^[0-9]$'
+                     AND SUBSTRING(ticker,4,1) REGEXP '^[0-9]$'
+                     AND market != 'TW')
+                    OR
+                    (ticker REGEXP '^[A-Z]{2,5}$' AND market != 'US')
+                )
+                ORDER BY ticker
+            """)
+            wrong_market = cursor.fetchall()
+            summary["wrong_market_etfs"] = len(wrong_market)
+            for r in wrong_market:
+                issues.append({"type": "wrong_market", "ticker": r["ticker"],
+                                "market": r["market"],
+                                "detail": f"代碼形式與 market={r['market']} 不符"})
+
+            # 5. 統計：熱門 ETF 中有真實配息事件的比例
+            cursor.execute("""
+                SELECT COUNT(DISTINCT d.ticker) AS cnt
+                FROM etf_dividends d
+                JOIN etf_master m ON m.ticker = d.ticker
+                WHERE m.is_hot = 1 AND m.is_delisted = 0
+            """)
+            div_row = cursor.fetchone()
+            summary["etfs_with_real_dividends"] = (div_row or {}).get("cnt", 0)
+
+            # 6. 整體數量
+            cursor.execute("SELECT COUNT(*) AS cnt FROM etf_master WHERE is_hot=1 AND is_delisted=0")
+            hot_cnt = (cursor.fetchone() or {}).get("cnt", 0)
+            summary["hot_etfs_total"] = hot_cnt
+
+    except Exception as e:
+        return safe_json({"status": "error", "detail": str(e)}, 500)
+
+    # 7. 快取狀態（不需 DB）
+    cache_status = {
+        "rank_tw": "hit" if cache.get("rank:combined:TW") else "miss",
+        "rank_us": "hit" if cache.get("rank:combined:US") else "miss",
+        "etf_index": "hit" if cache.get("etf:index") else "miss",
+    }
+    summary["cache"] = cache_status
+
+    # 整體評級
+    critical_count = summary["missing_etfs"] + summary["wrong_market_etfs"]
+    warning_count  = summary["stale_etfs"] + summary["null_fields_etfs"]
+    if critical_count > 0:
+        overall = "degraded"
+    elif warning_count > 5:
+        overall = "warning"
+    else:
+        overall = "ok"
+
+    return safe_json({
+        "status":      overall,
+        "checked_at":  today.isoformat(),
+        "summary":     summary,
+        "issues":      issues,
+        "issue_count": len(issues),
     })
 
 

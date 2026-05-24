@@ -309,6 +309,16 @@ def init_db():
             is_active    TINYINT(1)     DEFAULT 1,
             created_at   {ts_now}
         ){engine}""",
+
+        f"""CREATE TABLE IF NOT EXISTS etf_dividends (
+            id         {pk_auto},
+            ticker     VARCHAR(20)   NOT NULL,
+            ex_date    DATE          NOT NULL,
+            amount     DECIMAL(10,6) NOT NULL,
+            currency   VARCHAR(10)   DEFAULT 'USD',
+            created_at {ts_now},
+            UNIQUE (ticker, ex_date)
+        ){engine}""",
     ]
 
     with get_db() as (conn, cursor):
@@ -378,6 +388,7 @@ def init_db():
         ("idx_notif_user_read", "notifications",     "user_id, is_read"),
         ("idx_alerts_user",     "price_alerts",      "user_id, is_active"),
         ("idx_sessions_user",   "user_sessions",     "user_id, is_revoked"),
+        ("idx_dividends_ticker","etf_dividends",     "ticker, ex_date"),
     ]
     with get_db() as (conn, cursor):
         for idx_name, tbl, cols in indexes:

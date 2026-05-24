@@ -313,7 +313,7 @@ async def _update_missing():
                 WHERE m.is_hot = 1
                   AND (
                       d.last_date IS NULL
-                      OR d.last_date < DATE_SUB(CURDATE(), INTERVAL 3 DAY)
+                      OR d.last_date < DATE_SUB(CURDATE(), INTERVAL 1 DAY)
                   )
                 ORDER BY ISNULL(d.last_date) DESC, d.last_date ASC
                 LIMIT 30
@@ -327,7 +327,7 @@ async def _update_missing():
         logger.info("★ 補漏掃描：所有熱門 ETF 資料均已是近期，略過")
         return
 
-    logger.info(f"★ 補漏掃描：找到 {len(rows)} 檔待補抓（超過 3 天未更新）")
+    logger.info(f"★ 補漏掃描：找到 {len(rows)} 檔待補抓（超過 1 天未更新）")
 
     BATCH = 2  # 保守並發，降低被 Yahoo 封鎖風險
     for i in range(0, len(rows), BATCH):
@@ -356,11 +356,17 @@ async def _update_missing():
 
 # ──────────────────────────────────────────────
 #  TWSE 歷史價格補齊（每日 03:00 增量補缺月份）
+#  US ETF 歷史補齊（每日 04:30 美股收盤後）
 # ──────────────────────────────────────────────
 
 def schedule_history_backfill():
     if MAIN_LOOP and MAIN_LOOP.is_running():
         asyncio.run_coroutine_threadsafe(_run_history_backfill(), MAIN_LOOP)
+
+
+def schedule_us_history_backfill():
+    if MAIN_LOOP and MAIN_LOOP.is_running():
+        asyncio.run_coroutine_threadsafe(_run_us_history_backfill(), MAIN_LOOP)
 
 
 def schedule_returns_recalc():
@@ -376,6 +382,16 @@ async def _run_history_backfill():
         logger.info(f"✅ 歷史補齊完成：{result['etfs']} 檔，補 {result['days_inserted']} 日")
     except Exception as e:
         logger.warning(f"歷史補齊失敗: {e}")
+
+
+async def _run_us_history_backfill():
+    """增量補齊 US ETF 歷史收盤價（透過 CF 代理，只補尚未存在的日期，冪等安全）。"""
+    from services.us_history import backfill_us_history
+    try:
+        result = await asyncio.to_thread(backfill_us_history)
+        logger.info(f"✅ US 歷史補齊完成：{result['etfs']} 檔，補 {result['days_inserted']} 日")
+    except Exception as e:
+        logger.warning(f"US 歷史補齊失敗: {e}")
 
 
 async def _run_returns_recalc():
@@ -495,6 +511,9 @@ def start_scheduler() -> BackgroundScheduler:
     # 每日 03:30 從 DB 歷史收盤價重算年化報酬率（不依賴 Yahoo，補齊 03:00 補填的資料）
     sch.add_job(lambda: schedule_returns_recalc(),   CronTrigger(hour=3, minute=30), max_instances=1)
 
+    # 每日 04:30 增量補齊 US ETF 歷史收盤價（04:15 美股收盤更新完成後啟動，透過 CF 代理）
+    sch.add_job(lambda: schedule_us_history_backfill(), CronTrigger(hour=4, minute=30), max_instances=1)
+
     # 14:40 台股收盤後再次重算報酬率（取得當日最新收盤後重算）
     sch.add_job(lambda: schedule_returns_recalc(),   CronTrigger(hour=14, minute=40), max_instances=1)
 
@@ -509,6 +528,6 @@ def start_scheduler() -> BackgroundScheduler:
         "   【台股】09:00–13:30 Asia/Taipei\n"
         "   【美股】09:30–16:00 America/New_York（DST-aware）\n"
         "   03:00 TWSE 歷史補齊 | 03:30 報酬率重算 | 07:00 補漏掃描 | 08:00 TWSE 同步\n"
-        "   14:35 台股收盤完整更新 | 14:40 報酬率重算 | 04:15 美股收盤完整更新 | 每30分清快取"
+        "   14:35 台股收盤完整更新 | 14:40 報酬率重算 | 04:15 美股收盤完整更新 | 04:30 US 歷史補齊 | 每30分清快取"
     )
     return sch

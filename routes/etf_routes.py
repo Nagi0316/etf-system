@@ -227,7 +227,7 @@ async def get_etf_index():
             """)
             rows = cursor.fetchall()
 
-        cache.set("etf:index", rows, 300)   # 5 分鐘快取
+        cache.set("etf:index", rows, 1800)  # 30 分鐘快取（清單異動極少，5 分鐘過短）
         return safe_json({"status": "success", "data": rows})
     except Exception as e:
         logger.error(f"etf index error: {e}", exc_info=True)

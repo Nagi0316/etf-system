@@ -76,13 +76,36 @@ def _download_hist_from_db(ticker: str, start: str, end: str) -> pd.DataFrame:
 
 def _get_dividends_from_db(ticker: str, start: str, end: str) -> pd.Series:
     """
-    從 etf_master 的殖利率＋配息頻率合成股息 Series（TW ETF 用）。
-    這是近似值，但比直接失敗好很多。
+    取得回測用股息 Series。
+
+    優先策略（依順序）：
+    1. etf_dividends 表中的真實歷史配息事件（累積自 Yahoo Finance 抓取）
+    2. 合成回退：以最新殖利率 × 配息頻率估算（近似值，Yahoo 未取得真實事件時使用）
     """
     from database import get_db
+
+    # ── 1. 真實配息事件（最佳）──────────────────────────
     try:
         with get_db() as (conn, cursor):
-            # 從 etf_daily_data 取最新一筆（etf_master 沒有這兩欄）
+            cursor.execute("""
+                SELECT ex_date, amount FROM etf_dividends
+                WHERE ticker = %s AND ex_date >= %s AND ex_date <= %s AND amount > 0
+                ORDER BY ex_date ASC
+            """, (ticker, start, end))
+            rows = cursor.fetchall()
+
+        if rows:
+            dates  = pd.to_datetime([str(r["ex_date"])[:10] for r in rows])
+            amounts = [float(r["amount"]) for r in rows]
+            divs = pd.Series(amounts, index=dates, name="Dividends")
+            logger.info(f"Real dividend events for {ticker}: {len(divs)} records ({start}→{end})")
+            return divs
+    except Exception as e:
+        logger.warning(f"etf_dividends query error for {ticker}: {e}")
+
+    # ── 2. 合成回退（近似值）──────────────────────────────
+    try:
+        with get_db() as (conn, cursor):
             cursor.execute("""
                 SELECT dividend_yield, payout_freq FROM etf_daily_data
                 WHERE ticker=%s AND dividend_yield IS NOT NULL AND dividend_yield > 0
@@ -96,7 +119,6 @@ def _get_dividends_from_db(ticker: str, start: str, end: str) -> pd.Series:
         freq_map = {"月配": 12, "雙月配": 6, "季配": 4, "半年配": 2, "年配": 1}
         payments_per_year = freq_map.get(row.get("payout_freq") or "", 4)
 
-        # 取得歷史價格以計算每次配息金額
         df = _download_hist_from_db(ticker, start, end)
         if df.empty:
             return pd.Series(dtype=float)
@@ -104,10 +126,10 @@ def _get_dividends_from_db(ticker: str, start: str, end: str) -> pd.Series:
         period_str_map = {12: "MS", 6: "2MS", 4: "QS", 2: "6MS", 1: "YS"}
         freq_str = period_str_map.get(payments_per_year, "QS")
         monthly_avg = df["Close"].resample(freq_str).mean()
-        dividends = monthly_avg * (annual_yield / payments_per_year)
-        dividends = dividends.dropna()
+        dividends = (monthly_avg * (annual_yield / payments_per_year)).dropna()
         dividends.name = "Dividends"
-        logger.info(f"Synthesized {len(dividends)} dividend events for {ticker} ({payments_per_year}x/year)")
+        logger.info(f"Synthesized {len(dividends)} dividend events for {ticker} "
+                    f"({payments_per_year}x/year, fallback mode)")
         return dividends
     except Exception as e:
         logger.warning(f"Dividend synthesis error for {ticker}: {e}")

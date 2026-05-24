@@ -76,48 +76,67 @@ def _fetch_month(ticker: str, year: int, month: int) -> list[dict]:
 
 # ── 查詢 DB 中哪些月份已有資料 ──
 
+_MIN_DAYS_PER_MONTH = 15  # TWSE 每月約 20 個交易日；< 15 視為不完整，需重新補齊
+
+
 def _existing_months(ticker: str) -> set[tuple[int, int]]:
-    """回傳 DB 中已有日資料的 (year, month) set。（單檔版本，供外部呼叫用）"""
+    """回傳 DB 中「資料完整」的 (year, month) set。
+    以每月有 ≥ _MIN_DAYS_PER_MONTH 筆有效收盤為標準，避免 1-2 筆殘缺資料讓整月被跳過。
+    （單檔版本，供外部呼叫用）
+    """
     with get_db() as (conn, cursor):
         cursor.execute(
-            "SELECT DISTINCT date FROM etf_daily_data WHERE ticker=%s AND current_price > 0",
+            "SELECT date FROM etf_daily_data WHERE ticker=%s AND current_price > 0",
             (ticker,),
         )
         rows = cursor.fetchall()
-    months = set()
+
+    # Python 端計數：兼容 MySQL 與 SQLite，不依賴 DATE_FORMAT / strftime
+    counts: dict[tuple[int, int], int] = {}
     for r in rows:
         d = str(r["date"])[:10]
         try:
             y, m = int(d[:4]), int(d[5:7])
-            months.add((y, m))
+            counts[(y, m)] = counts.get((y, m), 0) + 1
         except Exception:
             pass
-    return months
+
+    return {ym for ym, cnt in counts.items() if cnt >= _MIN_DAYS_PER_MONTH}
 
 
 def _batch_existing_months(tickers: list[str]) -> dict[str, set[tuple[int, int]]]:
-    """批次查詢多個 ticker 已有的月份（一次 DB 查詢，避免每檔各建一次連線）。
-    回傳 {ticker: {(year, month), ...}}。
+    """批次查詢多個 ticker 的「完整月份」集合（一次 DB 查詢）。
+    回傳 {ticker: {(year, month), ...}}；只收錄每月 ≥ _MIN_DAYS_PER_MONTH 筆的月份，
+    避免部分補齊月份被誤判為「已完成」而永遠不再重抓。
     """
     if not tickers:
         return {}
     with get_db() as (conn, cursor):
         fmt = ",".join(["%s"] * len(tickers))
         cursor.execute(
-            f"SELECT DISTINCT ticker, date FROM etf_daily_data "
+            f"SELECT ticker, date FROM etf_daily_data "
             f"WHERE ticker IN ({fmt}) AND current_price > 0",
             tickers,
         )
         rows = cursor.fetchall()
-    result: dict[str, set] = {}
+
+    # 先計數：{(ticker, year, month): count}
+    counts: dict[tuple, int] = {}
     for r in rows:
         t = r["ticker"]
         d = str(r["date"])[:10]
         try:
             y, m = int(d[:4]), int(d[5:7])
-            result.setdefault(t, set()).add((y, m))
+            key = (t, y, m)
+            counts[key] = counts.get(key, 0) + 1
         except Exception:
             pass
+
+    # 只保留達到門檻的月份
+    result: dict[str, set] = {}
+    for (t, y, m), cnt in counts.items():
+        if cnt >= _MIN_DAYS_PER_MONTH:
+            result.setdefault(t, set()).add((y, m))
     return result
 
 
