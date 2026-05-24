@@ -333,118 +333,89 @@ def _annualized_return(closes: list, years: float) -> Optional[float]:
 # ══════════════════════════════════════════════════════════
 
 TW_ETFS = [
-    # ── 台股寬基 ──────────────────────────────────────
+    # ── 寬基指數 ──────────────────────────────────────
     {'ticker': '0050',   'name': '元大台灣50',              'market': 'TW', 'hot': True},
-    {'ticker': '006208', 'name': '富邦台50',                 'market': 'TW', 'hot': True},
-    {'ticker': '0051',   'name': '元大中型100',              'market': 'TW', 'hot': True},
-    {'ticker': '0052',   'name': '富邦科技',                 'market': 'TW', 'hot': True},
-    {'ticker': '0053',   'name': '元大電子',                 'market': 'TW', 'hot': True},
-    {'ticker': '00850',  'name': '元大臺灣ESG永續',          'market': 'TW', 'hot': True},
-    {'ticker': '00692',  'name': '富邦公司治理',             'market': 'TW', 'hot': True},
-    {'ticker': '00757',  'name': '統一FANG+',               'market': 'TW', 'hot': True},
-    {'ticker': '00733',  'name': '富邦臺灣中小',             'market': 'TW', 'hot': True},
-    {'ticker': '006205', 'name': '富邦上証',                 'market': 'TW', 'hot': True},
+    {'ticker': '0056',   'name': '元大高股息',              'market': 'TW', 'hot': True},
+    {'ticker': '006208', 'name': '富邦台50',                'market': 'TW', 'hot': True},
+    {'ticker': '00850',  'name': '元大臺灣ESG永續',         'market': 'TW', 'hot': True},
+    {'ticker': '00692',  'name': '富邦公司治理',            'market': 'TW', 'hot': True},
+    {'ticker': '00646',  'name': '元大S&P500',              'market': 'TW', 'hot': True},
+    {'ticker': '00662',  'name': '富邦NASDAQ',              'market': 'TW', 'hot': True},
 
     # ── 高股息 / 月配 / 季配 ────────────────────────
-    {'ticker': '0056',   'name': '元大高股息',               'market': 'TW', 'hot': True},
-    {'ticker': '00878',  'name': '國泰永續高股息',           'market': 'TW', 'hot': True},
-    {'ticker': '00919',  'name': '群益台灣精選高息',         'market': 'TW', 'hot': True},
-    {'ticker': '00929',  'name': '復華台灣科技優息',         'market': 'TW', 'hot': True},
-    {'ticker': '00713',  'name': '元大台灣高息低波',         'market': 'TW', 'hot': True},
-    {'ticker': '00940',  'name': '元大台灣價值高息',         'market': 'TW', 'hot': True},
-    {'ticker': '00900',  'name': '富邦特選高股息30',         'market': 'TW', 'hot': True},
-    {'ticker': '00907',  'name': '永豐優息存股',             'market': 'TW', 'hot': True},
-    {'ticker': '00915',  'name': '凱基優選高股息30',         'market': 'TW', 'hot': True},
-    {'ticker': '00934',  'name': '中信成長高股息',           'market': 'TW', 'hot': True},
-    {'ticker': '00936',  'name': '台新台灣永續高息',         'market': 'TW', 'hot': True},
-    {'ticker': '00939',  'name': '統一台灣高息動能',         'market': 'TW', 'hot': True},
-    {'ticker': '00918',  'name': '大華優利高填息30',         'market': 'TW', 'hot': True},
-    {'ticker': '00921',  'name': '兆豐龍頭等息',             'market': 'TW', 'hot': True},
-    {'ticker': '00922',  'name': '國泰台灣領袖50',           'market': 'TW', 'hot': True},
-    {'ticker': '00927',  'name': '永豐優選入息成長',         'market': 'TW', 'hot': True},
-    {'ticker': '00930',  'name': '永豐ESG低碳高息',          'market': 'TW', 'hot': True},
-    {'ticker': '00932',  'name': '兆豐永續ESG優息',          'market': 'TW', 'hot': True},
-    {'ticker': '00938',  'name': '台新臺灣IC設計',           'market': 'TW', 'hot': True},
-    {'ticker': '00945',  'name': '凱基優息成長30',           'market': 'TW', 'hot': True},
-    {'ticker': '00948',  'name': '群益科技高息成長',         'market': 'TW', 'hot': True},
+    {'ticker': '00878',  'name': '國泰永續高股息',          'market': 'TW', 'hot': True},
+    {'ticker': '00919',  'name': '群益台灣精選高息',        'market': 'TW', 'hot': True},
+    {'ticker': '00929',  'name': '復華台灣科技優息',        'market': 'TW', 'hot': True},
+    {'ticker': '00713',  'name': '元大台灣高息低波',        'market': 'TW', 'hot': True},
+    {'ticker': '00940',  'name': '元大台灣價值高息',        'market': 'TW', 'hot': True},
+    {'ticker': '00939',  'name': '統一台灣高息動能',        'market': 'TW', 'hot': True},
+    {'ticker': '00918',  'name': '大華優利高填息30',        'market': 'TW', 'hot': True},
+    {'ticker': '00915',  'name': '凱基優選高股息30',        'market': 'TW', 'hot': True},
+    {'ticker': '00900',  'name': '富邦特選高股息30',        'market': 'TW', 'hot': True},
+    {'ticker': '00934',  'name': '中信成長高股息',          'market': 'TW', 'hot': True},
+    {'ticker': '00701',  'name': '國泰股利精選30',          'market': 'TW', 'hot': True},
 
     # ── 科技 / 主題 ────────────────────────────────
-    {'ticker': '00891',  'name': '中信關鍵半導體',           'market': 'TW', 'hot': True},
-    {'ticker': '00892',  'name': '富邦台灣半導體',           'market': 'TW', 'hot': True},
-    {'ticker': '00861',  'name': '元大全球AI',               'market': 'TW', 'hot': True},
-    {'ticker': '00944',  'name': '群益半導體收益',           'market': 'TW', 'hot': True},
-    {'ticker': '00933',  'name': '國泰台灣5G+',             'market': 'TW', 'hot': True},
-    {'ticker': '00928',  'name': '中信台灣科技100',          'market': 'TW', 'hot': True},
-    {'ticker': '00911',  'name': '兆豐永續高息',             'market': 'TW', 'hot': True},
-    {'ticker': '00943',  'name': '復華S&P500深度價值',       'market': 'TW', 'hot': True},
-    {'ticker': '00912',  'name': '中信臺灣智慧50',           'market': 'TW', 'hot': True},
-    {'ticker': '00905',  'name': '富邦台灣高息ESG',          'market': 'TW', 'hot': True},
-    {'ticker': '00920',  'name': '富邦全球優選高息',         'market': 'TW', 'hot': True},
+    {'ticker': '00881',  'name': '國泰台灣5G+',             'market': 'TW', 'hot': True},
+    {'ticker': '00757',  'name': '統一FANG+',               'market': 'TW', 'hot': True},
+    {'ticker': '00762',  'name': '元大全球AI',              'market': 'TW', 'hot': True},
+    {'ticker': '00830',  'name': '國泰費城半導體',          'market': 'TW', 'hot': True},
+    {'ticker': '00891',  'name': '中信關鍵半導體',          'market': 'TW', 'hot': True},
+    {'ticker': '00922',  'name': '國泰台灣領袖50',          'market': 'TW', 'hot': True},
 
-    # ── 債券 ─────────────────────────────────────────
-    {'ticker': '00679B', 'name': '元大美債20年',             'market': 'TW', 'hot': True},
-    {'ticker': '00687B', 'name': '國泰20年美債',             'market': 'TW', 'hot': True},
-    {'ticker': '00695B', 'name': '富邦美債20年',             'market': 'TW', 'hot': True},
-    {'ticker': '00720B', 'name': '元大投資級公司債',         'market': 'TW', 'hot': True},
-    {'ticker': '00781B', 'name': '中信高評級公司債',         'market': 'TW', 'hot': True},
-    {'ticker': '00849B', 'name': '元大10年以上高評級美元公司債', 'market': 'TW', 'hot': True},
+    # ── 槓桿 / 反向 / 商品 ────────────────────────
+    {'ticker': '00631L', 'name': '元大台灣50正2',           'market': 'TW', 'hot': True},
+    {'ticker': '00632R', 'name': '元大台灣50反1',           'market': 'TW', 'hot': True},
+    {'ticker': '00675L', 'name': '富邦臺灣加權正2',         'market': 'TW', 'hot': True},
+    {'ticker': '00637L', 'name': '元大滬深300正2',          'market': 'TW', 'hot': True},
+    {'ticker': '00715L', 'name': '期街口布蘭特正2',         'market': 'TW', 'hot': True},
+    {'ticker': '00642U', 'name': '期元大S&P石油',           'market': 'TW', 'hot': True},
 ]
 
 US_ETFS = [
     # ── 大盤指數 ──────────────────────────────────────
-    {'ticker': 'SPY',  'name': 'SPDR S&P 500 ETF Trust',              'market': 'US', 'hot': True},
-    {'ticker': 'IVV',  'name': 'iShares Core S&P 500 ETF',            'market': 'US', 'hot': True},
-    {'ticker': 'VOO',  'name': 'Vanguard S&P 500 ETF',                'market': 'US', 'hot': True},
-    {'ticker': 'VTI',  'name': 'Vanguard Total Stock Market ETF',     'market': 'US', 'hot': True},
-    {'ticker': 'VT',   'name': 'Vanguard Total World Stock ETF',      'market': 'US', 'hot': True},
-    {'ticker': 'QQQ',  'name': 'Invesco QQQ Trust (Nasdaq 100)',       'market': 'US', 'hot': True},
-    {'ticker': 'DIA',  'name': 'SPDR Dow Jones Industrial Average',   'market': 'US', 'hot': True},
-    {'ticker': 'IWM',  'name': 'iShares Russell 2000 ETF',            'market': 'US', 'hot': True},
-    {'ticker': 'TQQQ', 'name': 'ProShares UltraPro QQQ (3x)',         'market': 'US', 'hot': True},
+    {'ticker': 'SPY',  'name': 'SPDR S&P 500 ETF Trust',               'market': 'US', 'hot': True},
+    {'ticker': 'VOO',  'name': 'Vanguard S&P 500 ETF',                 'market': 'US', 'hot': True},
+    {'ticker': 'IVV',  'name': 'iShares Core S&P 500 ETF',             'market': 'US', 'hot': True},
+    {'ticker': 'VTI',  'name': 'Vanguard Total Stock Market ETF',      'market': 'US', 'hot': True},
+    {'ticker': 'QQQ',  'name': 'Invesco QQQ Trust',                    'market': 'US', 'hot': True},
+    {'ticker': 'VT',   'name': 'Vanguard Total World Stock ETF',       'market': 'US', 'hot': True},
+    {'ticker': 'VUG',  'name': 'Vanguard Growth ETF',                  'market': 'US', 'hot': True},
+    {'ticker': 'IWM',  'name': 'iShares Russell 2000 ETF',             'market': 'US', 'hot': True},
+    {'ticker': 'DIA',  'name': 'SPDR Dow Jones Industrial Average ETF','market': 'US', 'hot': True},
 
     # ── 股息 / 收益 ────────────────────────────────
-    {'ticker': 'SCHD', 'name': 'Schwab U.S. Dividend Equity ETF',     'market': 'US', 'hot': True},
-    {'ticker': 'VYM',  'name': 'Vanguard High Dividend Yield ETF',    'market': 'US', 'hot': True},
-    {'ticker': 'VIG',  'name': 'Vanguard Dividend Appreciation ETF',  'market': 'US', 'hot': True},
-    {'ticker': 'DGRO', 'name': 'iShares Core Dividend Growth ETF',    'market': 'US', 'hot': True},
-    {'ticker': 'SPYD', 'name': 'SPDR Portfolio S&P 500 High Dividend','market': 'US', 'hot': True},
-    {'ticker': 'JEPI', 'name': 'JPMorgan Equity Premium Income ETF',  'market': 'US', 'hot': True},
-    {'ticker': 'JEPQ', 'name': 'JPMorgan Nasdaq Equity Premium Income','market': 'US', 'hot': True},
-    {'ticker': 'QYLD', 'name': 'Global X NASDAQ 100 Covered Call ETF','market': 'US', 'hot': True},
-    {'ticker': 'XYLD', 'name': 'Global X S&P 500 Covered Call ETF',   'market': 'US', 'hot': True},
+    {'ticker': 'SCHD', 'name': 'Schwab U.S. Dividend Equity ETF',      'market': 'US', 'hot': True},
+    {'ticker': 'VYM',  'name': 'Vanguard High Dividend Yield ETF',     'market': 'US', 'hot': True},
+    {'ticker': 'JEPI', 'name': 'JPMorgan Equity Premium Income ETF',   'market': 'US', 'hot': True},
+    {'ticker': 'JEPQ', 'name': 'JPMorgan Nasdaq Equity Premium Income ETF', 'market': 'US', 'hot': True},
 
     # ── 科技 / 半導體 ────────────────────────────────
-    {'ticker': 'XLK',  'name': 'Technology Select Sector SPDR',       'market': 'US', 'hot': True},
-    {'ticker': 'VGT',  'name': 'Vanguard Information Technology ETF', 'market': 'US', 'hot': True},
-    {'ticker': 'SMH',  'name': 'VanEck Semiconductor ETF',            'market': 'US', 'hot': True},
-    {'ticker': 'SOXX', 'name': 'iShares Semiconductor ETF',           'market': 'US', 'hot': True},
-    {'ticker': 'SOXL', 'name': 'Direxion Daily Semicon Bull 3X ETF',  'market': 'US', 'hot': True},
-    {'ticker': 'BOTZ', 'name': 'Global X Robotics & AI ETF',          'market': 'US', 'hot': True},
+    {'ticker': 'XLK',  'name': 'Technology Select Sector SPDR Fund',   'market': 'US', 'hot': True},
+    {'ticker': 'SOXX', 'name': 'iShares Semiconductor ETF',            'market': 'US', 'hot': True},
+    {'ticker': 'SMH',  'name': 'VanEck Semiconductor ETF',             'market': 'US', 'hot': True},
     {'ticker': 'ARKK', 'name': 'ARK Innovation ETF',                   'market': 'US', 'hot': True},
 
-    # ── 債券 ─────────────────────────────────────────
-    {'ticker': 'TLT',  'name': 'iShares 20+ Year Treasury Bond ETF',  'market': 'US', 'hot': True},
-    {'ticker': 'IEF',  'name': 'iShares 7-10 Year Treasury Bond ETF', 'market': 'US', 'hot': True},
-    {'ticker': 'AGG',  'name': 'iShares Core US Aggregate Bond ETF',  'market': 'US', 'hot': True},
-    {'ticker': 'BND',  'name': 'Vanguard Total Bond Market ETF',      'market': 'US', 'hot': True},
-    {'ticker': 'LQD',  'name': 'iShares iBoxx $ Inv Grade Corp Bond', 'market': 'US', 'hot': True},
+    # ── 槓桿 / 反向 ────────────────────────────────
+    {'ticker': 'TQQQ', 'name': 'ProShares UltraPro QQQ',               'market': 'US', 'hot': True},
+    {'ticker': 'SQQQ', 'name': 'ProShares UltraPro Short QQQ',         'market': 'US', 'hot': True},
+    {'ticker': 'UPRO', 'name': 'ProShares UltraPro S&P500',            'market': 'US', 'hot': True},
 
-    # ── 原物料 / REITs / 其他 ──────────────────────
-    {'ticker': 'GLD',  'name': 'SPDR Gold Shares',                    'market': 'US', 'hot': True},
-    {'ticker': 'IAU',  'name': 'iShares Gold Trust',                   'market': 'US', 'hot': True},
+    # ── 類股 ETF ──────────────────────────────────
+    {'ticker': 'XLF',  'name': 'Financial Select Sector SPDR Fund',    'market': 'US', 'hot': True},
+    {'ticker': 'XLE',  'name': 'Energy Select Sector SPDR Fund',       'market': 'US', 'hot': True},
+    {'ticker': 'VNQ',  'name': 'Vanguard Real Estate ETF',             'market': 'US', 'hot': True},
+
+    # ── 原物料 / 加密貨幣 ─────────────────────────
+    {'ticker': 'GLD',  'name': 'SPDR Gold Shares',                     'market': 'US', 'hot': True},
     {'ticker': 'SLV',  'name': 'iShares Silver Trust',                 'market': 'US', 'hot': True},
-    {'ticker': 'VNQ',  'name': 'Vanguard Real Estate ETF',            'market': 'US', 'hot': True},
-    {'ticker': 'XLE',  'name': 'Energy Select Sector SPDR',           'market': 'US', 'hot': True},
-    {'ticker': 'XLF',  'name': 'Financial Select Sector SPDR',        'market': 'US', 'hot': True},
-    {'ticker': 'XLV',  'name': 'Health Care Select Sector SPDR',      'market': 'US', 'hot': True},
-    {'ticker': 'XBI',  'name': 'SPDR S&P Biotech ETF',                'market': 'US', 'hot': True},
+    {'ticker': 'IBIT', 'name': 'iShares Bitcoin Trust',                'market': 'US', 'hot': True},
+    {'ticker': 'FBTC', 'name': 'Fidelity Wise Origin Bitcoin Fund',    'market': 'US', 'hot': True},
 
-    # ── 國際 ─────────────────────────────────────────
-    {'ticker': 'VEA',  'name': 'Vanguard FTSE Developed Markets ETF', 'market': 'US', 'hot': True},
-    {'ticker': 'VWO',  'name': 'Vanguard FTSE Emerging Markets ETF',  'market': 'US', 'hot': True},
-    {'ticker': 'EEM',  'name': 'iShares MSCI Emerging Markets ETF',   'market': 'US', 'hot': True},
-    {'ticker': 'MCHI', 'name': 'iShares MSCI China ETF',              'market': 'US', 'hot': True},
-    {'ticker': 'KWEB', 'name': 'KraneShares CSI China Internet ETF',  'market': 'US', 'hot': True},
+    # ── 債券 ─────────────────────────────────────────
+    {'ticker': 'TLT',  'name': 'iShares 20+ Year Treasury Bond ETF',   'market': 'US', 'hot': True},
+    {'ticker': 'AGG',  'name': 'iShares Core U.S. Aggregate Bond ETF', 'market': 'US', 'hot': True},
+    {'ticker': 'BND',  'name': 'Vanguard Total Bond Market ETF',       'market': 'US', 'hot': True},
 ]
 
 # 去重
@@ -462,19 +433,39 @@ HOT_ETFS = [e for e in ALL_ETFS if e.get('hot')]
 # ══════════════════════════════════════════════════════════
 
 def seed_etf_master():
-    """將靜態清單的 ETF 代碼與名稱寫入 etf_master，不寫入任何假價格。"""
-    hot_set = {e['ticker'] for e in HOT_ETFS}
+    """將靜態清單的 ETF 代碼與名稱寫入 etf_master，不寫入任何假價格。
+
+    策略：
+      1. 60 檔熱門 ETF → INSERT/UPDATE，確保 is_hot=1
+      2. 已在 DB 但不在熱門清單的舊 ETF → is_hot 重設為 0
+         （避免歷史殘留 ETF 佔用排程更新資源）
+    """
+    hot_tickers = [e['ticker'] for e in ALL_ETFS]   # ALL_ETFS = 全部 60 檔，均 hot=True
     with get_db() as (conn, cursor):
+        # Step 1: 插入 / 更新 60 檔熱門 ETF，強制設 is_hot=1
         for etf in ALL_ETFS:
-            is_hot = 1 if etf['ticker'] in hot_set else 0
             cursor.execute(
-                "INSERT INTO etf_master (ticker,name,market,is_hot) VALUES (%s,%s,%s,%s) "
-                "ON DUPLICATE KEY UPDATE name=VALUES(name), market=VALUES(market), "
-                "is_hot=GREATEST(is_hot,VALUES(is_hot))",
-                (etf['ticker'], etf['name'], etf['market'], is_hot)
+                "INSERT INTO etf_master (ticker, name, market, is_hot) "
+                "VALUES (%s, %s, %s, 1) "
+                "ON DUPLICATE KEY UPDATE "
+                "name=VALUES(name), market=VALUES(market), is_hot=1",
+                (etf['ticker'], etf['name'], etf['market'])
             )
+
+        # Step 2: 將不再熱門的舊 ETF 設 is_hot=0，停止自動排程更新
+        if hot_tickers:
+            fmt = ",".join(["%s"] * len(hot_tickers))
+            cursor.execute(
+                f"UPDATE etf_master SET is_hot=0 "
+                f"WHERE is_hot=1 AND ticker NOT IN ({fmt})",
+                hot_tickers,
+            )
+            demoted = cursor.rowcount
+            if demoted:
+                logger.info(f"🔄 {demoted} 檔 ETF 移出熱門清單（is_hot → 0）")
+
         conn.commit()
-    logger.info(f"✅ etf_master 種子資料完成 ({len(ALL_ETFS)} 筆)")
+    logger.info(f"✅ etf_master 種子資料完成（{len(ALL_ETFS)} 檔熱門 ETF）")
 
 
 # ══════════════════════════════════════════════════════════
