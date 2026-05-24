@@ -280,6 +280,20 @@ KNOWN_ANNUAL_DIVIDEND: dict = {
     # ── 債券 ETF ──
     '00679B': 0.42,  '00687B': 0.38,
     '00695B': 0.36,  '00720B': 0.48,
+    # ── 美股（USD/share，TTM 近似值；Yahoo 被封鎖時作為靜態備援）──
+    # 大盤寬基
+    'SPY':  7.10,  'VOO':  6.70,  'IVV':  6.90,  'VTI':  4.00,
+    'QQQ':  2.70,  'VT':   2.10,  'IWM':  2.40,  'DIA':  8.40,
+    # 高股息（核心：這幾檔殖利率高，顯示「—」損傷公信力最大）
+    'SCHD': 2.75,  'VYM':  3.70,  'JEPI': 5.40,
+    # 科技/半導體
+    'XLK':  0.75,  'SOXX': 4.50,  'SMH':  1.50,
+    'ARKK': 0.00,  # 成長型，不配息
+    # 類股
+    'XLF':  1.00,  'XLE':  2.40,  'VNQ':  3.60,
+    # 原物料/債券（GLD 不配息）
+    'GLD':  0.00,
+    'TLT':  4.20,  'AGG':  2.40,  'BND':  2.40,
 }
 
 
@@ -948,6 +962,15 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     # 最終備援：若仍為「不配息」但靜態資料有記錄，以靜態資料為準
     if payout_freq == "不配息" and ticker in KNOWN_PAYOUT_FREQ:
         payout_freq = KNOWN_PAYOUT_FREQ[ticker]
+
+    # 靜態殖利率備援：Yahoo 完全失敗（div_confirmed=False）且 yield=0 時，
+    # 從 KNOWN_ANNUAL_DIVIDEND 估算殖利率，確保 SCHD / VYM / JEPI 等不顯示「—」。
+    # div_yield > 0 → save_etf_data 會正常寫入 DB（不受 confirmed=False 阻擋）
+    if not div_confirmed and div_yield == 0.0 and ticker in KNOWN_ANNUAL_DIVIDEND and price > 0:
+        static_dy = round(KNOWN_ANNUAL_DIVIDEND[ticker] / price * 100, 4)
+        if static_dy > 0:
+            div_yield = static_dy
+            logger.debug(f"US 靜態殖利率備援 {ticker}: {div_yield:.2f}%（{KNOWN_ANNUAL_DIVIDEND[ticker]} USD/share）")
 
     return {
         'ticker': ticker, 'current_price': price,
