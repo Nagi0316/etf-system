@@ -7,16 +7,28 @@ services/exchange_rate.py — 即時 USD/TWD 匯率
   3. ExchangeRate-API (免費，無需 key)
   4. 長期快取（24 小時，最後一次成功值）
   5. 若從未成功過 → 拋出例外（不回傳假值）
+
+新增：fx:USDTWD:last_update  — 最後成功取得匯率的 Unix 時間戳（用於健康檢查）
 """
 import logging
+import time
 import requests
 import certifi
 from cache import cache, CACHE_TTL_FX
 
 logger = logging.getLogger(__name__)
 
-_CACHE_LAST_KEY = "fx:USDTWD:last_known"
-_CACHE_LAST_TTL = 86400   # 24 小時
+_CACHE_LAST_KEY  = "fx:USDTWD:last_known"
+_CACHE_AGE_KEY   = "fx:USDTWD:last_update"   # Unix timestamp of last successful fetch
+_CACHE_LAST_TTL  = 86400   # 24 小時
+
+
+def get_fx_age_seconds() -> float | None:
+    """最後一次成功取得匯率至今的秒數；若從未成功過回傳 None。"""
+    ts = cache.get(_CACHE_AGE_KEY)
+    if ts is None:
+        return None
+    return time.time() - float(ts)
 
 def _get_session() -> requests.Session:
     """每次建立新 Session，避免多執行緒共用同一連線池導致 Race Condition。"""
@@ -44,7 +56,8 @@ def get_usd_twd() -> float:
     rate = _fetch_usd_twd()
     if rate and 25.0 < rate < 40.0:
         cache.set("fx:USDTWD", rate, CACHE_TTL_FX)
-        cache.set(_CACHE_LAST_KEY, rate, _CACHE_LAST_TTL)  # 更新長期快取
+        cache.set(_CACHE_LAST_KEY, rate, _CACHE_LAST_TTL)   # 更新長期快取
+        cache.set(_CACHE_AGE_KEY, time.time(), _CACHE_LAST_TTL)  # 更新最後成功時間戳
         return rate
 
     # 長期快取（最後一次成功的值）

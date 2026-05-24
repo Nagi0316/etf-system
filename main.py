@@ -470,7 +470,45 @@ async def health_data():
             div_row = cursor.fetchone()
             summary["etfs_with_real_dividends"] = (div_row or {}).get("cnt", 0)
 
-            # 6. 整體數量
+            # 9. 庫存對帳：user_portfolio.shares 應等於 transactions 的 buy-sell 合計
+            #    任何不符合的帳戶/代碼組合 → 資料不一致警告
+            cursor.execute("""
+                SELECT
+                    p.user_id,
+                    p.ticker,
+                    p.shares                       AS portfolio_shares,
+                    COALESCE(t.buy_shares,  0)     AS tx_buy,
+                    COALESCE(t.sell_shares, 0)     AS tx_sell,
+                    ROUND(
+                        COALESCE(t.buy_shares, 0) - COALESCE(t.sell_shares, 0)
+                    , 6)                           AS tx_net
+                FROM user_portfolio p
+                LEFT JOIN (
+                    SELECT user_id, ticker,
+                           SUM(CASE WHEN transaction_type='buy'  THEN shares ELSE 0 END) AS buy_shares,
+                           SUM(CASE WHEN transaction_type='sell' THEN shares ELSE 0 END) AS sell_shares
+                    FROM user_transactions
+                    GROUP BY user_id, ticker
+                ) t ON p.user_id = t.user_id AND p.ticker = t.ticker
+                HAVING ABS(portfolio_shares - tx_net) > 0.001
+                ORDER BY p.user_id, p.ticker
+                LIMIT 50
+            """)
+            drift_rows = cursor.fetchall()
+            summary["portfolio_drift_count"] = len(drift_rows)
+            for r in drift_rows:
+                issues.append({
+                    "type":   "portfolio_drift",
+                    "ticker": r["ticker"],
+                    "detail": (
+                        f"user_id={r['user_id']} "
+                        f"portfolio={r['portfolio_shares']} "
+                        f"tx_net={r['tx_net']} "
+                        f"(buy={r['tx_buy']} sell={r['tx_sell']})"
+                    ),
+                })
+
+            # 熱門 ETF 總數
             cursor.execute("SELECT COUNT(*) AS cnt FROM etf_master WHERE is_hot=1 AND is_delisted=0")
             hot_cnt = (cursor.fetchone() or {}).get("cnt", 0)
             summary["hot_etfs_total"] = hot_cnt
@@ -478,20 +516,41 @@ async def health_data():
     except Exception as e:
         return safe_json({"status": "error", "detail": str(e)}, 500)
 
-    # 7. 快取狀態（不需 DB）
+    # 快取狀態（不需 DB）
     cache_status = {
-        "rank_tw": "hit" if cache.get("rank:combined:TW") else "miss",
-        "rank_us": "hit" if cache.get("rank:combined:US") else "miss",
+        "rank_tw":  "hit" if cache.get("rank:combined:TW") else "miss",
+        "rank_us":  "hit" if cache.get("rank:combined:US") else "miss",
         "etf_index": "hit" if cache.get("etf:index") else "miss",
     }
     summary["cache"] = cache_status
 
+    # FX 匯率新鮮度
+    try:
+        from services.exchange_rate import get_fx_age_seconds
+        fx_age = get_fx_age_seconds()
+        if fx_age is None:
+            fx_status = "never_fetched"
+            issues.append({"type": "fx_stale", "detail": "匯率從未成功取得（系統啟動後尚無成功記錄）"})
+        elif fx_age > 3600:
+            fx_status = f"stale_{int(fx_age)}s"
+            issues.append({"type": "fx_stale",
+                           "detail": f"匯率已逾 {int(fx_age//60)} 分鐘未更新（所有來源可能失敗）"})
+        else:
+            fx_status = f"ok_{int(fx_age)}s"
+        summary["fx_age_seconds"] = round(fx_age, 1) if fx_age is not None else None
+        summary["fx_status"] = fx_status
+    except Exception:
+        summary["fx_status"] = "unknown"
+
     # 整體評級
     critical_count = (summary["missing_etfs"] + summary["wrong_market_etfs"]
                       + summary.get("bad_price_rows", 0)
-                      + summary.get("negative_shares_count", 0))
+                      + summary.get("negative_shares_count", 0)
+                      + summary.get("portfolio_drift_count", 0))
     warning_count  = (summary["stale_etfs"] + summary["null_fields_etfs"]
                       + summary.get("volatile_price_count", 0))
+    if "fx_stale" in [i["type"] for i in issues]:
+        warning_count += 1
     if critical_count > 0:
         overall = "degraded"
     elif warning_count > 5:

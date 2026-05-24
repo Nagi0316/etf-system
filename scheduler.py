@@ -175,6 +175,13 @@ async def _fast_price_tick():
     60 檔預估耗時 30-50 秒，遠低於原本的 140-280 秒。
     更新完成後立即掃描到價提醒，實現 2 分鐘以內的 alert 延遲。
     """
+    try:
+      await _fast_price_tick_inner()
+    except Exception as e:
+        logger.error(f"_fast_price_tick 未預期例外（排程器仍繼續運行）: {e}", exc_info=True)
+
+
+async def _fast_price_tick_inner():
     tw_open = _is_tw_market_open()
     us_open = _is_us_market_open()
     if not (tw_open or us_open):
@@ -239,6 +246,13 @@ async def _market_tick():
     抓取完整 ETF 資料含 dividend、歷史月線、費用率等補充資料。
     現價更新由 _fast_price_tick（每 2 分鐘）負責，此函式不重複掃描 alert。
     """
+    try:
+        await _market_tick_inner()
+    except Exception as e:
+        logger.error(f"_market_tick 未預期例外（排程器仍繼續運行）: {e}", exc_info=True)
+
+
+async def _market_tick_inner():
     tw_open = _is_tw_market_open()
     us_open = _is_us_market_open()
     if not (tw_open or us_open):
@@ -483,7 +497,7 @@ def start_scheduler() -> BackgroundScheduler:
         lambda: (
             _is_any_market_open() and
             MAIN_LOOP and MAIN_LOOP.is_running() and
-            asyncio.run_coroutine_threadsafe(_market_tick(), MAIN_LOOP)
+            asyncio.run_coroutine_threadsafe(_market_tick(), MAIN_LOOP)   # wrapper 已含 try-except
         ),
         "interval", minutes=30,
         id="full_data_tick", max_instances=1,
