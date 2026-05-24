@@ -297,13 +297,22 @@ KNOWN_YIELD_US: dict = {
     'SPY':  1.25,  'VOO':  1.30,  'IVV':  1.25,  'VTI':  1.30,
     'QQQ':  0.50,  'VT':   2.00,  'IWM':  1.40,  'DIA':  1.80,
     # ── 高股息（最重要：殖利率高，顯示「—」最損公信力）──
-    'SCHD': 3.50,  'VYM':  3.00,  'JEPI': 7.50,
+    'SCHD': 3.50,  'VYM':  3.00,  'JEPI': 7.50,  'JEPQ': 9.50,
     # ── 科技/半導體 ──
     'XLK':  0.42,  'SOXX': 0.80,  'SMH':  0.60,  'ARKK': 0.00,
+    # ── 槓桿 ──
+    'SOXL': 1.00,  'TQQQ': 0.00,  'SQQQ': 0.00,  'UPRO': 0.00,
     # ── 類股 ──
-    'XLF':  2.00,  'XLE':  3.00,  'VNQ':  3.50,
+    'XLF':  2.00,  'XLE':  3.00,  'VNQ':  3.50,  'XLV':  1.50,
+    # ── 國際市場 ──
+    'VEA':  3.00,  'VWO':  3.00,  'EEM':  2.50,
+    # ── 成長/因子 ──
+    'VIG':  1.80,  'VGT':  0.50,
     # ── 原物料/債券 ──
-    'GLD':  0.00,  'TLT':  4.50,  'AGG':  4.00,  'BND':  4.00,
+    'GLD':  0.00,  'SLV':  0.00,
+    'TLT':  4.50,  'AGG':  4.00,  'BND':  4.00,  'IEF':  4.00,
+    # ── 加密 ──
+    'IBIT': 0.00,  'FBTC': 0.00,
 }
 
 
@@ -984,7 +993,9 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
                 _save_dividend_events(ticker, all_ev)
 
                 cutoff = time.time() - 365 * 86400
-                recent = [v["amount"] for v in events.values() if v.get("date", 0) >= cutoff]
+                # amount > 0 過濾：與 TW 邏輯一致，排除零金額事件，防止膨脹頻率計數
+                recent = [v["amount"] for v in events.values()
+                          if v.get("date", 0) >= cutoff and safe_float(v.get("amount", 0)) > 0]
                 if recent:
                     div_yield   = round(sum(recent) / price * 100, 4)
                     # 取 Yahoo 事件數 與 靜態備援 兩者中頻率等級較高者
@@ -1005,9 +1016,9 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     ann_1y = _annualized_return(history[cutoff_1y:], 1.0)
     ann_3y = _annualized_return(history[cutoff_3y:], 3.0)
     ann_5y = _annualized_return(history, 5.0)
-    last12 = history[-12:] if len(history) >= 12 else history
-    wk52_h = max(last12) if last12 else quote["day_high"]
-    wk52_l = min(last12) if last12 else quote["day_low"]
+    # 52週最高/最低：與 TW ETF 相同邏輯，優先查 DB 中真實的 day_high/day_low，
+    # 比月線收盤更準確（月線只有月末收盤，無法反映月中極值）
+    wk52_h, wk52_l = _fetch_52week_hl_db(ticker, price)
 
     detail = _fetch_yahoo_quotesummary(ticker)
     asset_size    = detail.get("asset_size", 0.0)

@@ -465,6 +465,34 @@ async def _check_price_alerts():
 
 
 # ──────────────────────────────────────────────
+#  user_sessions 清理（防止表格無限增長拖慢 JTI 查詢）
+# ──────────────────────────────────────────────
+
+def schedule_session_cleanup():
+    if MAIN_LOOP and MAIN_LOOP.is_running():
+        asyncio.run_coroutine_threadsafe(_run_session_cleanup(), MAIN_LOOP)
+
+
+async def _run_session_cleanup():
+    """刪除過期的 JWT session 紀錄（expires_at < NOW()）。
+    token 本身的 exp claim 已過期 → JWT 驗證自然拒絕 → 對應 session 行無需保留。
+    每日 02:00 執行，防止 user_sessions 表無限累積拖慢 JTI 索引查詢。
+    """
+    from database import get_db
+    try:
+        with get_db() as (conn, cursor):
+            cursor.execute("DELETE FROM user_sessions WHERE expires_at < NOW()")
+            deleted = cursor.rowcount
+            conn.commit()
+        if deleted:
+            logger.info(f"✅ Session 清理：刪除 {deleted} 筆過期記錄")
+        else:
+            logger.debug("Session 清理：無過期記錄")
+    except Exception as e:
+        logger.warning(f"Session 清理失敗: {e}")
+
+
+# ──────────────────────────────────────────────
 #  快取清理
 # ──────────────────────────────────────────────
 
@@ -530,6 +558,9 @@ def start_scheduler() -> BackgroundScheduler:
 
     # 14:40 台股收盤後再次重算報酬率（取得當日最新收盤後重算）
     sch.add_job(lambda: schedule_returns_recalc(),   CronTrigger(hour=14, minute=40), max_instances=1)
+
+    # 每日 02:00 清理過期 user_sessions（防止表格無限增長拖慢 JTI 查詢）
+    sch.add_job(lambda: schedule_session_cleanup(), CronTrigger(hour=2, minute=0), max_instances=1)
 
     # 快取維護（每 30 分鐘）
     sch.add_job(_evict_cache, "interval", minutes=30, max_instances=1)
