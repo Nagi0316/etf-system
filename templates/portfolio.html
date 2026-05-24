@@ -5,19 +5,23 @@
 <div class="max-w-7xl mx-auto px-4 py-6">
 
   <!-- 總覽卡片 -->
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6" id="summary-cards">
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6" id="summary-cards">
     <div class="card p-4 col-span-2 md:col-span-1">
       <div class="text-xs text-slate-500 dark:text-slate-400 mb-1">台幣總市值</div>
       <div class="text-xl font-bold text-slate-800 dark:text-white" id="s-value">—</div>
       <div class="text-xs text-slate-400" id="s-rate"></div>
     </div>
     <div class="card p-4">
-      <div class="text-xs text-slate-500 dark:text-slate-400 mb-1">總成本</div>
+      <div class="text-xs text-slate-500 dark:text-slate-400 mb-1">持倉成本</div>
       <div class="text-lg font-bold text-slate-800 dark:text-white" id="s-cost">—</div>
     </div>
     <div class="card p-4">
       <div class="text-xs text-slate-500 dark:text-slate-400 mb-1">未實現損益</div>
       <div class="text-lg font-bold" id="s-profit">—</div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs text-slate-500 dark:text-slate-400 mb-1">已實現損益</div>
+      <div class="text-lg font-bold" id="s-realized">—</div>
     </div>
     <div class="card p-4">
       <div class="text-xs text-slate-500 dark:text-slate-400 mb-1">報酬率</div>
@@ -124,9 +128,12 @@ async function loadPortfolio() {
   document.getElementById('s-rate').textContent = `USD/TWD: ${usdRate}`;
   const pf = parseFloat(s.total_profit_twd || 0);
   const rt = parseFloat(s.total_return || 0);
+  const rl = parseFloat(s.total_realized_twd || 0);
   document.getElementById('s-cost').textContent = `NT$ ${parseInt(s.total_cost_twd || 0).toLocaleString()}`;
-  document.getElementById('s-profit').textContent = `NT$ ${parseInt(pf).toLocaleString()}`;
+  document.getElementById('s-profit').textContent = (pf >= 0 ? '+' : '') + `NT$ ${parseInt(pf).toLocaleString()}`;
   document.getElementById('s-profit').className = `text-lg font-bold ${pf >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`;
+  document.getElementById('s-realized').textContent = (rl >= 0 ? '+' : '') + `NT$ ${parseInt(rl).toLocaleString()}`;
+  document.getElementById('s-realized').className = `text-lg font-bold ${rl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`;
   document.getElementById('s-return').textContent = fmtPct(rt);
   document.getElementById('s-return').className = `text-lg font-bold ${rt >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`;
 
@@ -236,7 +243,12 @@ function openTradeModal(ticker, type) {
   document.getElementById('m-price').value = '';
   document.getElementById('m-comm').value = '0';
   document.getElementById('m-note').value = '';
+  document.getElementById('m-total').classList.add('hidden');
   document.getElementById('modal-title').textContent = type === 'sell' ? '賣出' : '買入';
+  // 每次開彈窗產生新 UUID，確保同一筆交易的重複送出被 DB 層攔截
+  _idemKey = (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : Date.now().toString(36) + Math.random().toString(36).slice(2);
   document.getElementById('trade-modal').classList.remove('hidden');
 }
 function closeModal() {
@@ -262,6 +274,7 @@ function updateTotal() {
 }
 
 let _submitting = false;   // 前端送出鎖，防止多次點擊
+let _idemKey    = '';      // 每次開彈窗重新產生的冪等鍵
 
 async function submitTrade() {
   if (_submitting) return;   // 已在處理中，直接忽略
@@ -274,6 +287,7 @@ async function submitTrade() {
     commission: parseFloat(document.getElementById('m-comm').value) || 0,
     transaction_date: document.getElementById('m-date').value,
     note: document.getElementById('m-note').value,
+    idempotency_key: _idemKey,  // 每次開彈窗產生一次，重複點擊送相同 key → DB 拒絕
   };
   if (!body.ticker || !body.shares || !body.price || !body.transaction_date) return showToast('請填寫必要欄位', false);
   if (body.transaction_date > new Date().toISOString().slice(0,10)) return showToast('交易日期不能是未來日期', false);

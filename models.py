@@ -68,6 +68,7 @@ class TransactionIn(BaseModel):
     commission: float = Field(0.0, ge=0)
     transaction_date: str
     note: Optional[str] = Field(None, max_length=500)
+    idempotency_key: Optional[str] = Field(None, max_length=64)  # 前端每次開彈窗產生新 UUID
 
     @field_validator("transaction_type")
     @classmethod

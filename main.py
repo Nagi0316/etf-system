@@ -414,7 +414,53 @@ async def health_data():
                 issues.append({"type": "bad_price", "ticker": r["ticker"],
                                 "detail": f"date={str(r['date'])[:10]} price={r['current_price']}"})
 
-            # 6. 統計：熱門 ETF 中有真實配息事件的比例
+            # 6. 資料完整性：user_portfolio 中出現負庫存（交易邏輯異常）
+            cursor.execute("""
+                SELECT user_id, ticker, shares
+                FROM user_portfolio
+                WHERE shares < 0
+                ORDER BY shares ASC
+                LIMIT 20
+            """)
+            neg_shares = cursor.fetchall()
+            summary["negative_shares_count"] = len(neg_shares)
+            for r in neg_shares:
+                issues.append({"type": "negative_shares",
+                                "ticker": r["ticker"],
+                                "detail": f"user_id={r['user_id']} shares={r['shares']}"})
+
+            # 7. 異常價格波動：熱門 ETF 當日收盤與前一交易日相差 > 30%（可能爬蟲抓到錯誤價格）
+            cursor.execute("""
+                SELECT t1.ticker,
+                       t1.current_price AS today_price,
+                       t2.current_price AS prev_price,
+                       ROUND(ABS(t1.current_price - t2.current_price)
+                             / t2.current_price * 100, 1) AS pct_diff
+                FROM etf_daily_data t1
+                JOIN etf_daily_data t2 ON t1.ticker = t2.ticker
+                JOIN etf_master m ON m.ticker = t1.ticker
+                WHERE t1.date = (
+                    SELECT MAX(d1.date) FROM etf_daily_data d1
+                    WHERE d1.ticker = t1.ticker AND d1.current_price > 0
+                )
+                  AND t2.date = (
+                    SELECT MAX(d2.date) FROM etf_daily_data d2
+                    WHERE d2.ticker = t1.ticker AND d2.current_price > 0
+                      AND d2.date < t1.date
+                )
+                  AND t1.current_price > 0 AND t2.current_price > 0
+                  AND ABS(t1.current_price - t2.current_price) / t2.current_price > 0.30
+                  AND m.is_hot = 1 AND m.is_delisted = 0
+                ORDER BY pct_diff DESC
+                LIMIT 10
+            """)
+            volatile = cursor.fetchall()
+            summary["volatile_price_count"] = len(volatile)
+            for r in volatile:
+                issues.append({"type": "volatile_price", "ticker": r["ticker"],
+                                "detail": f"今日={r['today_price']} 前日={r['prev_price']} 波動={r['pct_diff']}%"})
+
+            # 8. 統計：熱門 ETF 中有真實配息事件的比例
             cursor.execute("""
                 SELECT COUNT(DISTINCT d.ticker) AS cnt
                 FROM etf_dividends d
@@ -441,8 +487,11 @@ async def health_data():
     summary["cache"] = cache_status
 
     # 整體評級
-    critical_count = summary["missing_etfs"] + summary["wrong_market_etfs"] + summary.get("bad_price_rows", 0)
-    warning_count  = summary["stale_etfs"] + summary["null_fields_etfs"]
+    critical_count = (summary["missing_etfs"] + summary["wrong_market_etfs"]
+                      + summary.get("bad_price_rows", 0)
+                      + summary.get("negative_shares_count", 0))
+    warning_count  = (summary["stale_etfs"] + summary["null_fields_etfs"]
+                      + summary.get("volatile_price_count", 0))
     if critical_count > 0:
         overall = "degraded"
     elif warning_count > 5:

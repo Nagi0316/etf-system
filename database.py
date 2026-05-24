@@ -274,16 +274,18 @@ def init_db():
             commission       DECIMAL(10,2)  DEFAULT 0,
             transaction_date DATE           NOT NULL,
             note             VARCHAR(500),
+            idempotency_key  VARCHAR(64),
             created_at       {ts_now}
         ){engine}""",
 
         f"""CREATE TABLE IF NOT EXISTS user_portfolio (
-            id         {pk_auto},
-            user_id    INT            NOT NULL,
-            ticker     VARCHAR(20)    NOT NULL,
-            shares     DECIMAL(10,4)  NOT NULL DEFAULT 0,
-            avg_cost   DECIMAL(10,2)  NOT NULL DEFAULT 0,
-            updated_at {ts_upd},
+            id               {pk_auto},
+            user_id          INT            NOT NULL,
+            ticker           VARCHAR(20)    NOT NULL,
+            shares           DECIMAL(10,4)  NOT NULL DEFAULT 0,
+            avg_cost         DECIMAL(10,2)  NOT NULL DEFAULT 0,
+            realized_profit  DECIMAL(15,2)  NOT NULL DEFAULT 0,
+            updated_at       {ts_upd},
             UNIQUE (user_id, ticker)
         ){engine}""",
 
@@ -363,6 +365,8 @@ def init_db():
         ("users",          "auth_provider",      "VARCHAR(20) DEFAULT 'google'"),
         ("users",          "monthly_budget",     "DECIMAL(12,2) DEFAULT 10000"),
         ("user_transactions", "note",            "VARCHAR(500)"),
+        ("user_transactions", "idempotency_key","VARCHAR(64)"),
+        ("user_portfolio",   "realized_profit", "DECIMAL(15,2) NOT NULL DEFAULT 0"),
         ("etf_master",     "is_hot",            "TINYINT(1) DEFAULT 0"),
         ("etf_master",     "auto_discovered",   "TINYINT(1) DEFAULT 0"),
         ("etf_master",     "is_delisted",       "TINYINT(1) DEFAULT 0"),
@@ -389,6 +393,7 @@ def init_db():
         ("idx_alerts_user",     "price_alerts",      "user_id, is_active"),
         ("idx_sessions_user",   "user_sessions",     "user_id, is_revoked"),
         ("idx_dividends_ticker","etf_dividends",     "ticker, ex_date"),
+        ("idx_txn_idem",        "user_transactions", "user_id, idempotency_key"),
     ]
     with get_db() as (conn, cursor):
         for idx_name, tbl, cols in indexes:
