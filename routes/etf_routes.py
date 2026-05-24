@@ -263,6 +263,51 @@ async def dynamic_search(request: Request, q: str = Query(..., min_length=1)):
     return await search_etf(request, q)
 
 
+# ── 強制重算單檔（登入即可用，用於驗證修正 / 手動刷新）──
+
+@router.post("/api/etf/force-refresh/{ticker}")
+async def force_refresh_etf(ticker: str, request: Request):
+    """強制重新抓取並儲存單一 ETF 的完整資料（含年化報酬率）。
+    登入使用者即可呼叫；每 60 秒同一 ticker 限一次（防誤觸）。
+    """
+    from auth import get_current_user
+    from fastapi import HTTPException
+    try:
+        user = get_current_user(request)
+    except HTTPException:
+        return safe_json({"status": "error", "message": "請先登入"}, 401)
+
+    ticker = ticker.upper().strip()
+    rate_key = f"force_refresh:{ticker}"
+    if cache.get(rate_key):
+        return safe_json({"status": "error", "message": f"{ticker} 60 秒內已刷新過，請稍候"}, 429)
+
+    def _do():
+        data = fetch_one_etf(ticker, None)   # market=None → 內部自動判斷 TW/US
+        if not data:
+            return None
+        save_etf_data(data)
+        return data
+
+    data = await asyncio.to_thread(_do)
+    if not data:
+        return safe_json({"status": "error", "message": f"無法取得 {ticker} 資料"}, 502)
+
+    cache.delete(f"detail:{ticker}")        # 清快取讓下次 detail 用新值
+    cache.delete_prefix(f"search:")
+    cache.set(rate_key, 1, 60)
+
+    return safe_json({
+        "status":         "success",
+        "ticker":         ticker,
+        "annual_return_1y": data.get("annual_return_1y"),
+        "annual_return_3y": data.get("annual_return_3y"),
+        "annual_return_5y": data.get("annual_return_5y"),
+        "current_price":    data.get("current_price"),
+        "message":          f"{ticker} 已重新計算，重新整理頁面即可看到最新數字",
+    })
+
+
 # ── ETF 詳情 ──
 
 @router.get("/api/etf/detail/{ticker}")
