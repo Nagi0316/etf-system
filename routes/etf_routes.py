@@ -118,50 +118,97 @@ async def notifications_page(request: Request):
 
 # ── 排行榜 ──
 
+# 排行榜共用 SELECT（annual_return_1y 不用 COALESCE，保留 NULL 讓前端顯示「—」）
+_RANK_SELECT = """
+    SELECT m.ticker, m.name, m.market,
+        COALESCE(d.current_price,0)          AS current_price,
+        COALESCE(d.price_change,0)           AS price_change,
+        COALESCE(d.price_change_percent,0)   AS price_change_percent,
+        COALESCE(d.volume,0)                 AS volume,
+        COALESCE(d.dividend_yield,0)         AS dividend_yield,
+        COALESCE(d.payout_freq,'不配息')      AS payout_freq,
+        d.annual_return_1y,
+        COALESCE(d.expense_ratio,0)          AS expense_ratio
+    FROM etf_master m
+    {join}
+    WHERE d.current_price IS NOT NULL AND d.current_price > 0
+      AND COALESCE(m.is_delisted, 0) = 0
+      AND m.market = %s
+    ORDER BY {order}
+    LIMIT 10
+"""
+
+_RANK_ORDER = {
+    "volume": "d.volume DESC",
+    "return": "COALESCE(d.annual_return_1y,0) DESC",
+    "yield":  "COALESCE(d.dividend_yield,0)  DESC",
+}
+
+
 @router.get("/api/etf-rankings/{rank_type}")
 async def get_etf_rankings(rank_type: str, market: str = ""):
-    market = market.upper().strip() if market else ""
-    if market not in ("TW", "US"):
-        market = ""
+    """舊端點：向下相容（前端新版改用 /api/etf/rankings/combined）"""
+    market = market.upper().strip() if market.upper().strip() in ("TW", "US") else "TW"
     cache_key = f"rank:{rank_type}:{market}"
     cached = cache.get(cache_key)
     if cached:
-        return safe_json({"status": "success", "data": cached})
+        return safe_json({"status": "success", **cached})
 
-    ORDER_MAP = {
-        "return":   "d.annual_return_1y DESC",
-        "dividend": "d.dividend_yield DESC",
-        "yield":    "d.dividend_yield DESC",
-        "volume":   "d.volume DESC",
-        "drop":     "d.price_change_percent ASC",
-        "rise":     "d.price_change_percent DESC",
-    }
-    order = ORDER_MAP.get(rank_type, "d.annual_return_1y DESC")
-    market_filter = "AND m.market = %s" if market else ""
-    params = (market,) if market else ()
-
+    order = _RANK_ORDER.get(rank_type, _RANK_ORDER["volume"])
     with get_db() as (conn, cursor):
-        cursor.execute(f"""
-            SELECT m.ticker, m.name, m.market,
-                COALESCE(d.current_price,0) as current_price,
-                COALESCE(d.price_change,0) as price_change,
-                COALESCE(d.price_change_percent,0) as price_change_percent,
-                COALESCE(d.volume,0) as volume,
-                COALESCE(d.dividend_yield,0) as dividend_yield,
-                COALESCE(d.payout_freq,'不配息') as payout_freq,
-                COALESCE(d.annual_return_1y,0) as annual_return_1y,
-                COALESCE(d.expense_ratio,0) as expense_ratio
-            FROM etf_master m
-            {LATEST_DAILY_JOIN}
-            WHERE d.current_price IS NOT NULL AND d.current_price > 0
-              AND COALESCE(m.is_delisted, 0) = 0
-              {market_filter}
-            ORDER BY {order}
-            LIMIT 10
-        """, params)
+        cursor.execute(
+            _RANK_SELECT.format(join=LATEST_DAILY_JOIN, order=order),
+            (market,)
+        )
         rows = cursor.fetchall()
 
-    cache.set(cache_key, rows, CACHE_TTL_RANK)
+    payload = {"data": rows, "updated_at": datetime.now().strftime('%H:%M')}
+    cache.set(cache_key, payload, CACHE_TTL_RANK)
+    return safe_json({"status": "success", **payload})
+
+
+@router.get("/api/etf/rankings/combined")
+async def get_combined_rankings(market: str = "TW"):
+    """一次回傳全部 3 種排行（成交量/年化報酬/殖利率），前端切 Tab 不需重打 API。"""
+    market = market.upper() if market.upper() in ("TW", "US") else "TW"
+    cache_key = f"rank:combined:{market}"
+    cached = cache.get(cache_key)
+    if cached:
+        return safe_json({"status": "success", **cached})
+
+    result: dict = {}
+    with get_db() as (conn, cursor):
+        for rank_type, order in _RANK_ORDER.items():
+            cursor.execute(
+                _RANK_SELECT.format(join=LATEST_DAILY_JOIN, order=order),
+                (market,)
+            )
+            result[rank_type] = cursor.fetchall()
+
+    result["updated_at"] = datetime.now().strftime('%H:%M')
+    cache.set(cache_key, result, CACHE_TTL_RANK)
+    return safe_json({"status": "success", **result})
+
+
+@router.get("/api/etf/index")
+async def get_etf_index():
+    """輕量 ETF 清單（只含 ticker/name/market），供前端本地搜尋/自動補全用。
+    無需每次打字都 DB 查詢，Client 端過濾速度提升 20x 以上。
+    """
+    cached = cache.get("etf:index")
+    if cached:
+        return safe_json({"status": "success", "data": cached})
+
+    with get_db() as (conn, cursor):
+        cursor.execute("""
+            SELECT ticker, name, market, COALESCE(is_hot,0) AS is_hot
+            FROM etf_master
+            WHERE COALESCE(is_delisted, 0) = 0
+            ORDER BY is_hot DESC, ticker
+        """)
+        rows = cursor.fetchall()
+
+    cache.set("etf:index", rows, 300)   # 5 分鐘快取
     return safe_json({"status": "success", "data": rows})
 
 

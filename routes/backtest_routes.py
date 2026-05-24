@@ -81,10 +81,12 @@ def _get_dividends_from_db(ticker: str, start: str, end: str) -> pd.Series:
     from database import get_db
     try:
         with get_db() as (conn, cursor):
-            cursor.execute(
-                "SELECT dividend_yield, payout_freq FROM etf_master WHERE ticker=%s",
-                (ticker,)
-            )
+            # 從 etf_daily_data 取最新一筆（etf_master 沒有這兩欄）
+            cursor.execute("""
+                SELECT dividend_yield, payout_freq FROM etf_daily_data
+                WHERE ticker=%s AND dividend_yield IS NOT NULL AND dividend_yield > 0
+                ORDER BY date DESC LIMIT 1
+            """, (ticker,))
             row = cursor.fetchone()
         if not row or not row.get("dividend_yield"):
             return pd.Series(dtype=float)

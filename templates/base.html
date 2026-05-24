@@ -153,11 +153,70 @@ function _initMobileSearch() {
   });
 }
 
-// ── 共用搜尋 API ──
+// ── 共用搜尋（本地索引優先，0 API round-trip；fallback → server）──
+let _etfIdxLoading = false;
+async function _ensureEtfIdx() {
+  if (window._ETF_IDX) return window._ETF_IDX;
+  if (_etfIdxLoading) {
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      if (window._ETF_IDX) return window._ETF_IDX;
+    }
+    return null;
+  }
+  _etfIdxLoading = true;
+  try {
+    const d = await fetch('/api/etf/index').then(r => r.json());
+    window._ETF_IDX = d.data || [];
+  } catch { window._ETF_IDX = []; }
+  _etfIdxLoading = false;
+  return window._ETF_IDX;
+}
+// 頁面載入 2 秒後靜默預載（不阻塞主流程）
+document.addEventListener('DOMContentLoaded', () => { setTimeout(_ensureEtfIdx, 2000); });
+
 async function _doSearch(q, dropEl) {
   if (!q || !dropEl) return;
-  dropEl.innerHTML = `<div class="p-3 text-center text-slate-400 text-sm"><span class="spinner"></span></div>`;
   dropEl.classList.remove('hidden');
+
+  const idx = await _ensureEtfIdx();
+  if (idx && idx.length > 0) {
+    const q_up = q.toUpperCase();
+    const matched = idx.filter(e =>
+      e.ticker.startsWith(q_up) || e.ticker.includes(q_up) ||
+      (e.name && e.name.includes(q))
+    ).slice(0, 8);
+
+    if (matched.length > 0) {
+      dropEl.innerHTML = matched.map(e => {
+        const mktBadge = e.market === 'US'
+          ? '<span class="text-[9px] px-1 rounded bg-blue-50 text-blue-400 dark:bg-blue-900/30 ml-1">US</span>' : '';
+        return `<a href="/etf-detail/${e.ticker}"
+          class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-700
+                 text-sm border-b border-slate-50 dark:border-slate-700/50 last:border-0 transition-colors">
+          <div class="min-w-0 flex-1">
+            <span class="font-bold text-slate-800 dark:text-white mr-1">${e.ticker}</span>
+            ${mktBadge}
+            <span class="text-slate-400 text-xs ml-1">${e.name || ''}</span>
+          </div>
+          <i class="fas fa-chevron-right text-[10px] text-slate-300 ml-2 shrink-0"></i>
+        </a>`;
+      }).join('');
+      return;
+    }
+    // 本地無結果 + 看起來像代碼 → 打 API（處理剛上市的新 ETF）
+    if (!/[^\x00-\x7F]/.test(q) && q.length >= 2) {
+      await _doSearchApi(q, dropEl);
+    } else {
+      dropEl.innerHTML = `<div class="p-3 text-center text-slate-400 text-sm">找不到「${q}」</div>`;
+    }
+  } else {
+    await _doSearchApi(q, dropEl);
+  }
+}
+
+async function _doSearchApi(q, dropEl) {
+  dropEl.innerHTML = `<div class="p-3 text-center text-slate-400 text-sm"><span class="spinner"></span></div>`;
   try {
     const data = await fetch(`/api/etf/search?q=${encodeURIComponent(q)}`).then(r => r.json());
     if (!data?.data?.length) {
@@ -167,14 +226,14 @@ async function _doSearch(q, dropEl) {
     dropEl.innerHTML = data.data.slice(0, 8).map(e => {
       const pct = parseFloat(e.price_change_percent) || 0;
       const col = pct >= 0 ? 'text-red-500' : 'text-green-500';
-      const sign = pct >= 0 ? '+' : '';
       return `<a href="/etf-detail/${e.ticker}"
-        class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-sm border-b border-slate-50 dark:border-slate-700/50 last:border-0">
+        class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-700
+               text-sm border-b border-slate-50 dark:border-slate-700/50 last:border-0">
         <div class="min-w-0">
           <span class="font-bold text-slate-800 dark:text-white mr-2">${e.ticker}</span>
           <span class="text-slate-500 dark:text-slate-400 text-xs truncate">${e.name || ''}</span>
         </div>
-        <span class="${col} text-xs font-medium ml-2 shrink-0">${sign}${pct.toFixed(2)}%</span>
+        <span class="${col} text-xs font-medium ml-2 shrink-0">${pct>=0?'+':''}${pct.toFixed(2)}%</span>
       </a>`;
     }).join('');
   } catch {

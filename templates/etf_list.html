@@ -3,41 +3,59 @@
 
 {% block extra_head %}
 <style>
-  .rank-1 { background:linear-gradient(135deg,#FFD700,#FDB931); color:#1a1a1a; }
-  .rank-2 { background:linear-gradient(135deg,#C0C0C0,#E8E8E8); color:#1a1a1a; }
-  .rank-3 { background:linear-gradient(135deg,#CD7F32,#B87333); color:#fff; }
-  .rank-other { background:#f1f5f9; color:#64748b; }
+  .rank-1    { background:linear-gradient(135deg,#FFD700,#FDB931); color:#1a1a1a; }
+  .rank-2    { background:linear-gradient(135deg,#C0C0C0,#E8E8E8); color:#1a1a1a; }
+  .rank-3    { background:linear-gradient(135deg,#CD7F32,#B87333); color:#fff; }
+  .rank-other{ background:#f1f5f9; color:#64748b; }
   .dark .rank-other { background:#334155; color:#94a3b8; }
-  .rank-badge { width:26px; height:26px; display:flex; align-items:center; justify-content:center; border-radius:50%; font-weight:700; font-size:.75rem; flex-shrink:0; }
+  .rank-badge{ width:26px; height:26px; display:flex; align-items:center; justify-content:center; border-radius:50%; font-weight:700; font-size:.75rem; flex-shrink:0; }
+  .mkt-on   { background:white; color:#1e293b; box-shadow:0 1px 3px rgba(0,0,0,.1); }
+  .dark .mkt-on { background:#475569; color:#f1f5f9; }
+  .mkt-off  { color:#94a3b8; }
+  .tab-on   { color:#4f46e5; border-bottom:2px solid #4f46e5; }
+  .dark .tab-on { color:#a5b4fc; border-bottom-color:#818cf8; }
+  .tab-off  { color:#94a3b8; border-bottom:2px solid transparent; }
+  .tab-off:hover { color:#64748b; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto px-4 py-6">
-  <div class="flex items-center justify-between mb-5 flex-wrap gap-3">
+<div class="max-w-7xl mx-auto px-4 py-6 space-y-4">
+
+  <!-- ── Header ── -->
+  <div class="flex items-center justify-between flex-wrap gap-3">
     <div>
       <h1 class="text-xl font-bold text-slate-800 dark:text-white">ETF 排行榜</h1>
-      <p id="update-time" class="text-xs text-slate-400 mt-0.5">資料更新中…</p>
+      <p id="update-time" class="text-xs text-slate-400 mt-0.5">資料載入中…</p>
     </div>
-    <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5">
-      <button id="btn-TW" onclick="switchMarket('TW')"
-        class="market-btn px-5 py-1.5 rounded-md text-sm font-semibold bg-white dark:bg-slate-600 text-slate-800 dark:text-white shadow-sm transition-all">台股</button>
-      <button id="btn-US" onclick="switchMarket('US')"
-        class="market-btn px-5 py-1.5 rounded-md text-sm font-semibold text-slate-400 dark:text-slate-300 transition-all">美股</button>
+    <div class="flex items-center gap-3 flex-wrap">
+      <!-- 債券過濾 -->
+      <label class="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 cursor-pointer select-none">
+        <input type="checkbox" id="hide-bond" class="rounded accent-indigo-500" onchange="renderRanking()">
+        <span>隱藏債券 ETF</span>
+      </label>
+      <!-- 市場切換 -->
+      <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5">
+        <button id="btn-TW" onclick="switchMarket('TW')"
+          class="mkt-btn px-5 py-1.5 rounded-md text-sm font-semibold mkt-on transition-all">台股</button>
+        <button id="btn-US" onclick="switchMarket('US')"
+          class="mkt-btn px-5 py-1.5 rounded-md text-sm font-semibold mkt-off transition-all">美股</button>
+      </div>
     </div>
   </div>
 
-  <!-- Tabs -->
-  <div class="flex gap-0 border-b border-slate-200 dark:border-slate-700 mb-0 overflow-x-auto">
-    <button id="tab-volume" onclick="switchRanking('volume')"
-      class="rank-tab px-4 py-2.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500 -mb-px whitespace-nowrap">成交量</button>
-    <button id="tab-return" onclick="switchRanking('return')"
-      class="rank-tab px-4 py-2.5 text-sm font-medium text-slate-400 dark:text-slate-500 border-b-2 border-transparent -mb-px hover:text-slate-600 whitespace-nowrap">年化報酬</button>
-    <button id="tab-yield" onclick="switchRanking('yield')"
-      class="rank-tab px-4 py-2.5 text-sm font-medium text-slate-400 dark:text-slate-500 border-b-2 border-transparent -mb-px hover:text-slate-600 whitespace-nowrap">殖利率</button>
-  </div>
-
-  <div class="card rounded-t-none overflow-hidden">
+  <!-- ── 排行榜卡片 ── -->
+  <div class="card overflow-hidden">
+    <!-- Tabs -->
+    <div class="flex border-b border-slate-200 dark:border-slate-700 overflow-x-auto">
+      <button id="tab-volume" onclick="switchTab('volume')"
+        class="rank-tab tab-on px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">成交量</button>
+      <button id="tab-return" onclick="switchTab('return')"
+        class="rank-tab tab-off px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">年化報酬</button>
+      <button id="tab-yield" onclick="switchTab('yield')"
+        class="rank-tab tab-off px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">殖利率</button>
+    </div>
+    <!-- 表格 -->
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
         <thead>
@@ -59,132 +77,340 @@
       </table>
     </div>
   </div>
+
+  <!-- ── 搜尋任意 ETF ── -->
+  <div class="card p-4">
+    <h3 class="font-bold text-slate-700 dark:text-slate-300 text-sm mb-3">
+      <i class="fas fa-search mr-1.5 text-indigo-500"></i>搜尋全部 ETF
+      <span id="idx-count" class="ml-1.5 text-xs font-normal text-slate-400"></span>
+    </h3>
+    <div class="relative">
+      <input id="etf-search" type="text" placeholder="輸入代碼或名稱，如 0050、SCHD、高股息…"
+        class="input w-full pl-9 pr-4 text-sm" autocomplete="off">
+      <i class="fas fa-search absolute left-3 top-2.5 text-slate-400 text-xs pointer-events-none"></i>
+    </div>
+    <div id="etf-search-results" class="mt-2"></div>
+
+    <!-- 熱門快捷 -->
+    <div class="mt-4">
+      <p class="text-xs text-slate-400 mb-2">熱門</p>
+      <div id="hot-chips" class="flex flex-wrap gap-1.5"></div>
+    </div>
+  </div>
+
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-let currentRanking = 'volume', currentMarket = 'TW', allEtfData = [];
+// ══════════════════════════════════════════════════════
+//  狀態
+// ══════════════════════════════════════════════════════
+let rankData      = { TW: null, US: null };  // combined ranking payload
+let etfIdx        = null;                     // [{ticker,name,market,is_hot}]
+let currentMarket = 'TW';
+let currentTab    = 'volume';
+let _searchTimer;
 
-const FREQ_BADGE = {
-  '月配':  'bg-blue-100 text-blue-600',
-  '雙月配':'bg-cyan-100 text-cyan-600',
-  '季配':  'bg-emerald-100 text-emerald-600',
-  '半年配':'bg-amber-100 text-amber-600',
-  '年配':  'bg-purple-100 text-purple-600',
-  '不配息':'bg-slate-100 text-slate-400',
+const TAB_HEADERS = { volume:'今日成交量', return:'年化報酬', yield:'殖利率' };
+const FREQ_BADGE  = {
+  '月配':  'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+  '雙月配':'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
+  '季配':  'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+  '半年配':'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+  '年配':  'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+};
+const HOT_CHIPS = {
+  TW: ['0050','0056','00878','00919','006208','00929','00940','00679B','00861'],
+  US: ['SPY','QQQ','VOO','SCHD','JEPI','JEPQ','TLT','SOXL','TQQQ'],
 };
 
-function payoutBadge(freq) {
-  if (!freq || freq === '未知') return '';
-  const cls = FREQ_BADGE[freq] || 'bg-slate-100 text-slate-400';
-  return `<span class="text-[11px] px-1.5 py-0.5 rounded font-medium ${cls} ml-1.5">${freq}</span>`;
-}
+// ══════════════════════════════════════════════════════
+//  初始化
+// ══════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', async () => {
+  renderHotChips();
 
-function fmtVol(v, market) {
-  if (!v) return '-';
-  if (market === 'TW') {
-    const lots = Math.round(v / 1000);
-    return lots >= 100000 ? (lots/10000).toFixed(1)+' 萬張' : lots.toLocaleString()+' 張';
-  }
-  if (v >= 1e9) return (v/1e9).toFixed(2)+'B';
-  if (v >= 1e6) return (v/1e6).toFixed(1)+'M';
-  return v.toLocaleString();
-}
+  // 並行抓取雙市場排行 + ETF 搜尋索引
+  await Promise.all([
+    loadCombinedRankings(),
+    loadEtfIndex(),
+  ]);
 
-function switchMarket(m) {
-  currentMarket = m;
-  const on  = 'market-btn px-5 py-1.5 rounded-md text-sm font-semibold bg-white dark:bg-slate-600 text-slate-800 dark:text-white shadow-sm transition-all';
-  const off = 'market-btn px-5 py-1.5 rounded-md text-sm font-semibold text-slate-400 dark:text-slate-300 transition-all';
-  document.getElementById('btn-TW').className = m === 'TW' ? on : off;
-  document.getElementById('btn-US').className = m === 'US' ? on : off;
-  switchRanking(currentRanking);
-}
+  // 每 5 分鐘自動刷新排行
+  setInterval(loadCombinedRankings, 5 * 60 * 1000);
 
-async function switchRanking(type) {
-  currentRanking = type;
-  document.querySelectorAll('.rank-tab').forEach(t => {
-    t.className = 'rank-tab px-4 py-2.5 text-sm font-medium text-slate-400 dark:text-slate-500 border-b-2 border-transparent -mb-px hover:text-slate-600 whitespace-nowrap';
+  // 搜尋框（150ms debounce，前端本地過濾）
+  document.getElementById('etf-search').addEventListener('input', e => {
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(() => renderSearch(e.target.value.trim()), 150);
   });
-  const tab = document.getElementById('tab-' + type);
-  if (tab) tab.className = 'rank-tab px-4 py-2.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500 -mb-px whitespace-nowrap';
-  const headers = { volume:'今日成交量', return:'年化報酬', yield:'殖利率' };
-  document.getElementById('rank-col-header').textContent = headers[type] || '';
+});
 
-  document.getElementById('ranking-body').innerHTML = `<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">
-    <span class="spinner mr-2"></span>載入中…</td></tr>`;
-
-  const data = await fetch(`/api/etf-rankings/${type}?market=${currentMarket}`).then(r=>r.json()).catch(()=>null);
-  if (data?.status === 'success') {
-    allEtfData = data.data || [];
-    const t = data.update_time || new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
-    document.getElementById('update-time').textContent = `更新於 ${t}`;
-    renderTable(allEtfData, type);
-  } else {
-    document.getElementById('ranking-body').innerHTML = `<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">暫無資料</td></tr>`;
-  }
+// ══════════════════════════════════════════════════════
+//  資料載入
+// ══════════════════════════════════════════════════════
+async function loadCombinedRankings() {
+  // 兩市場並行，不互相等待
+  const [tw, us] = await Promise.all([
+    fetch('/api/etf/rankings/combined?market=TW').then(r => r.json()).catch(() => null),
+    fetch('/api/etf/rankings/combined?market=US').then(r => r.json()).catch(() => null),
+  ]);
+  if (tw?.status === 'success') rankData.TW = tw;
+  if (us?.status === 'success') rankData.US = us;
+  renderRanking();
 }
 
-function renderTable(data, type) {
-  const tbody = document.getElementById('ranking-body');
-  const rows = (data || []).slice(0, 10);
-  if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">${allEtfData.length ? '此市場暫無資料' : '數據抓取中，請稍後重新整理頁面'}</td></tr>`;
+async function loadEtfIndex() {
+  try {
+    const d = await fetch('/api/etf/index').then(r => r.json());
+    etfIdx = d.data || [];
+    window._ETF_IDX = etfIdx;   // 供 navbar 搜尋共用
+    const cnt = document.getElementById('idx-count');
+    if (cnt) cnt.textContent = `（共 ${etfIdx.length} 檔）`;
+  } catch { etfIdx = []; }
+}
+
+// ══════════════════════════════════════════════════════
+//  排行榜渲染
+// ══════════════════════════════════════════════════════
+function renderRanking() {
+  const d    = rankData[currentMarket];
+  const body = document.getElementById('ranking-body');
+
+  if (!d) {
+    body.innerHTML = `<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">
+      <span class="spinner mr-2"></span>載入中…</td></tr>`;
     return;
   }
-  tbody.innerHTML = rows.map((item, i) => {
-    const rank = i + 1;
-    const bCls = rank===1?'rank-1':rank===2?'rank-2':rank===3?'rank-3':'rank-other';
-    const chg  = item.price_change_percent || 0;
-    const chgCls = chg >= 0 ? 'text-red-500' : 'text-green-500';
-    const price  = item.current_price ? item.current_price.toFixed(2) : '-';
-    const yld    = parseFloat(item.dividend_yield) || 0;
-    const yldTxt = yld > 0 ? yld.toFixed(2)+'%' : '-';
-    let rankVal = '-';
-    if (type === 'volume')      rankVal = fmtVol(item.volume || 0, item.market);
-    else if (type === 'return') {
-      const r = item.annual_return_1y || 0;
-      rankVal = `<span class="${r>=0?'text-red-500':'text-green-500'}">${r>=0?'+':''}${r.toFixed(2)}%</span>`;
-    } else if (type === 'yield') {
-      rankVal = `<span class="${yld>0?'text-emerald-600 dark:text-emerald-400 font-medium':'text-slate-400'}">${yldTxt}</span>`;
-    }
-    return `
-    <tr class="table-row cursor-pointer animate-fade-in" onclick="location.href='/etf-detail/${item.ticker}'">
-      <td class="px-4 py-3.5"><div class="rank-badge ${bCls}">${rank}</div></td>
-      <td class="px-4 py-3.5 max-w-0">
-        <div class="flex items-center gap-1 flex-wrap">
-          <span class="font-bold text-indigo-600 dark:text-indigo-400 text-sm">${item.ticker}</span>
-          ${payoutBadge(item.payout_freq)}
-        </div>
-        <div class="text-xs text-slate-400 mt-0.5 truncate">${item.name||''}</div>
-      </td>
-      <td class="px-4 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-200 tabular-nums">${price}</td>
-      <td class="px-4 py-3.5 text-right font-semibold tabular-nums ${chgCls}">${chg>=0?'+':''}${chg.toFixed(2)}%</td>
-      <td class="px-4 py-3.5 text-right text-slate-600 dark:text-slate-300 tabular-nums">${rankVal}</td>
-      <td class="px-4 py-3.5 text-right text-emerald-600 dark:text-emerald-400 tabular-nums hide-mobile">${type!=='yield'?yldTxt:'-'}</td>
-      <td class="px-4 py-3.5 text-center hide-mobile" onclick="event.stopPropagation()">
-        <button data-ticker="${item.ticker}" data-name="${(item.name||'').replace(/"/g,'&quot;')}" data-market="${item.market}"
-          onclick="addWatchlist(this.dataset.ticker,this.dataset.name,this.dataset.market)"
-          class="w-7 h-7 rounded-md text-slate-300 dark:text-slate-600 hover:bg-yellow-50 dark:hover:bg-yellow-900/30 hover:text-yellow-500 transition-colors inline-flex items-center justify-center" title="加入自選">
-          <i class="fas fa-star text-xs"></i>
-        </button>
-      </td>
-    </tr>`;
-  }).join('');
+
+  // 更新時間
+  const ts = d.updated_at || '';
+  document.getElementById('update-time').textContent = ts ? `更新於 ${ts}` : '';
+  document.getElementById('rank-col-header').textContent = TAB_HEADERS[currentTab] || '';
+
+  const hideBond = document.getElementById('hide-bond')?.checked;
+  let rows = (d[currentTab] || []).slice(0, 10);
+  if (hideBond) {
+    rows = rows.filter(e =>
+      !e.ticker.toUpperCase().endsWith('B') &&
+      !(e.name || '').includes('債')
+    );
+  }
+
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="7" class="px-4 py-12 text-center text-slate-400 text-sm">${
+      hideBond ? '勾選「隱藏債券 ETF」後無資料，請取消後重試' : '此市場暫無資料，請稍後重試'
+    }</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = rows.map((item, i) => renderRow(item, i + 1)).join('');
 }
 
+function renderRow(item, rank) {
+  const bCls   = rank===1?'rank-1':rank===2?'rank-2':rank===3?'rank-3':'rank-other';
+  const chg    = parseFloat(item.price_change_percent) || 0;
+  const chgCls = chg >= 0 ? 'text-red-500' : 'text-green-500';
+  const price  = parseFloat(item.current_price) > 0
+    ? parseFloat(item.current_price).toFixed(2) : '-';
+  const yld    = parseFloat(item.dividend_yield) || 0;
+  const isBond = item.ticker.toUpperCase().endsWith('B');
+
+  // ── 排名欄位值 ──────────────────────────
+  let rankVal = '-';
+  if (currentTab === 'volume') {
+    const v = parseInt(item.volume) || 0;
+    if (item.market === 'TW') {
+      const lots = Math.round(v / 1000);
+      rankVal = lots >= 100000
+        ? (lots / 10000).toFixed(1) + ' 萬張'
+        : lots.toLocaleString() + ' 張';
+    } else {
+      rankVal = v >= 1e9 ? (v / 1e9).toFixed(2) + 'B'
+              : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M'
+              : v.toLocaleString();
+    }
+  } else if (currentTab === 'return') {
+    const r = parseFloat(item.annual_return_1y);
+    rankVal = (isNaN(r) || item.annual_return_1y == null)
+      ? '<span class="text-slate-300 dark:text-slate-600">—</span>'
+      : `<span class="${r>=0?'text-red-500':'text-green-500'} font-medium">${r>=0?'+':''}${r.toFixed(2)}%</span>`;
+  } else if (currentTab === 'yield') {
+    rankVal = yld > 0
+      ? `<span class="text-emerald-600 dark:text-emerald-400 font-medium">${yld.toFixed(2)}%</span>`
+      : '<span class="text-slate-300 dark:text-slate-600">—</span>';
+  }
+
+  // ── 配息頻率徽章 ───────────────────────
+  const freqBadge = (() => {
+    const f = item.payout_freq;
+    if (!f || f === '不配息' || f === '未知') return '';
+    const cls = FREQ_BADGE[f] || 'bg-slate-100 text-slate-400';
+    return `<span class="text-[11px] px-1.5 py-0.5 rounded font-medium ${cls} ml-1">${f}</span>`;
+  })();
+
+  const bondBadge = isBond
+    ? '<span class="text-[10px] px-1 py-0.5 rounded bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400 ml-1">債</span>'
+    : '';
+
+  const yldCell = (yld > 0 && currentTab !== 'yield')
+    ? `<span class="text-emerald-600 dark:text-emerald-400">${yld.toFixed(2)}%</span>`
+    : '<span class="text-slate-300 dark:text-slate-600">—</span>';
+
+  return `
+  <tr class="border-b border-slate-50 dark:border-slate-700/50 last:border-0 cursor-pointer
+             hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors"
+      onclick="location.href='/etf-detail/${item.ticker}'">
+    <td class="px-4 py-3.5"><div class="rank-badge ${bCls}">${rank}</div></td>
+    <td class="px-4 py-3.5 max-w-0">
+      <div class="flex items-center gap-0.5 flex-wrap">
+        <span class="font-bold text-indigo-600 dark:text-indigo-400 text-sm">${item.ticker}</span>
+        ${bondBadge}${freqBadge}
+      </div>
+      <div class="text-xs text-slate-400 mt-0.5 truncate max-w-[160px]">${item.name || ''}</div>
+    </td>
+    <td class="px-4 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-200 tabular-nums">${price}</td>
+    <td class="px-4 py-3.5 text-right font-semibold tabular-nums ${chgCls}">${chg>=0?'+':''}${chg.toFixed(2)}%</td>
+    <td class="px-4 py-3.5 text-right text-slate-600 dark:text-slate-300 tabular-nums">${rankVal}</td>
+    <td class="px-4 py-3.5 text-right tabular-nums hide-mobile">${yldCell}</td>
+    <td class="px-4 py-3.5 text-center hide-mobile" onclick="event.stopPropagation()">
+      <button data-ticker="${item.ticker}"
+              data-name="${(item.name||'').replace(/"/g,'&quot;')}"
+              data-market="${item.market}"
+        onclick="addWatchlist(this.dataset.ticker,this.dataset.name,this.dataset.market)"
+        class="w-7 h-7 rounded-md text-slate-300 dark:text-slate-600 hover:bg-yellow-50
+               dark:hover:bg-yellow-900/30 hover:text-yellow-500 transition-colors
+               inline-flex items-center justify-center" title="加入自選">
+        <i class="fas fa-star text-xs"></i>
+      </button>
+    </td>
+  </tr>`;
+}
+
+// ══════════════════════════════════════════════════════
+//  切換（即時，不打 API）
+// ══════════════════════════════════════════════════════
+function switchMarket(m) {
+  currentMarket = m;
+  document.getElementById('btn-TW').className =
+    `mkt-btn px-5 py-1.5 rounded-md text-sm font-semibold transition-all ${m==='TW'?'mkt-on':'mkt-off'}`;
+  document.getElementById('btn-US').className =
+    `mkt-btn px-5 py-1.5 rounded-md text-sm font-semibold transition-all ${m==='US'?'mkt-on':'mkt-off'}`;
+  renderHotChips();
+  renderRanking();
+}
+
+function switchTab(type) {
+  currentTab = type;
+  document.querySelectorAll('.rank-tab').forEach(t => {
+    const active = t.id === 'tab-' + type;
+    t.className = `rank-tab px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors ${
+      active ? 'tab-on' : 'tab-off'}`;
+  });
+  renderRanking();
+}
+
+// ══════════════════════════════════════════════════════
+//  搜尋（本地 index 即時過濾，0 API 請求）
+// ══════════════════════════════════════════════════════
+function renderSearch(q) {
+  const box = document.getElementById('etf-search-results');
+  if (!q) { box.innerHTML = ''; return; }
+
+  if (!etfIdx) {
+    box.innerHTML = '<p class="text-xs text-slate-400 py-2">搜尋索引載入中…</p>';
+    return;
+  }
+
+  const q_up = q.toUpperCase();
+  const matched = etfIdx.filter(e =>
+    e.ticker.startsWith(q_up) ||
+    e.ticker.includes(q_up) ||
+    (e.name && e.name.includes(q))
+  ).slice(0, 12);
+
+  if (!matched.length) {
+    box.innerHTML = `<p class="text-xs text-slate-400 py-2">找不到「${q}」，可至 ETF 詳情頁直接輸入代碼</p>`;
+    return;
+  }
+
+  // 用已載入的排行資料補充報價（不打新 API）
+  const priceMap = {};
+  ['TW', 'US'].forEach(mkt => {
+    if (!rankData[mkt]) return;
+    ['volume', 'return', 'yield'].forEach(t => {
+      (rankData[mkt][t] || []).forEach(e => { priceMap[e.ticker] = e; });
+    });
+  });
+
+  box.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-2">` +
+    matched.map(e => {
+      const p     = priceMap[e.ticker];
+      const price = p?.current_price > 0 ? parseFloat(p.current_price).toFixed(2) : null;
+      const chg   = p ? parseFloat(p.price_change_percent) : null;
+      const mktBadge = e.market === 'US'
+        ? '<span class="text-[10px] px-1 rounded bg-blue-50 text-blue-400 dark:bg-blue-900/30 ml-1">US</span>' : '';
+
+      return `<a href="/etf-detail/${e.ticker}"
+        class="flex items-center justify-between px-3 py-2.5 rounded-lg
+               bg-slate-50 dark:bg-slate-700/50 hover:bg-indigo-50 dark:hover:bg-indigo-900/30
+               transition-colors group">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center">
+            <span class="font-bold text-slate-800 dark:text-white text-sm
+                         group-hover:text-indigo-600 dark:group-hover:text-indigo-400">${e.ticker}</span>
+            ${mktBadge}
+          </div>
+          <div class="text-xs text-slate-400 truncate mt-0.5">${e.name || ''}</div>
+        </div>
+        ${price
+          ? `<div class="text-right ml-3 shrink-0">
+               <div class="text-sm font-semibold text-slate-700 dark:text-slate-200 tabular-nums">${price}</div>
+               ${chg !== null
+                 ? `<div class="text-xs ${chg>=0?'text-red-500':'text-green-500'} tabular-nums">${chg>=0?'+':''}${chg.toFixed(2)}%</div>`
+                 : ''}
+             </div>`
+          : `<i class="fas fa-chevron-right text-xs text-slate-300 dark:text-slate-600 ml-3
+                        group-hover:text-indigo-400 shrink-0"></i>`
+        }
+      </a>`;
+    }).join('') +
+  `</div>`;
+}
+
+// ══════════════════════════════════════════════════════
+//  熱門快捷
+// ══════════════════════════════════════════════════════
+function renderHotChips() {
+  const box   = document.getElementById('hot-chips');
+  const chips = HOT_CHIPS[currentMarket] || HOT_CHIPS.TW;
+  box.innerHTML = chips.map(t =>
+    `<a href="/etf-detail/${t}"
+      class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium
+             bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300
+             hover:bg-indigo-100 dark:hover:bg-indigo-900/40 hover:text-indigo-600
+             dark:hover:text-indigo-400 transition-colors">${t}</a>`
+  ).join('');
+}
+
+// ══════════════════════════════════════════════════════
+//  加入自選
+// ══════════════════════════════════════════════════════
 async function addWatchlist(ticker, name, market) {
-  if (!Auth.isLoggedIn()) { showToast('請先登入', false); setTimeout(()=>location.href='/auth',1000); return; }
+  if (!Auth.isLoggedIn()) {
+    showToast('請先登入', false);
+    setTimeout(() => location.href = '/auth', 1000);
+    return;
+  }
   const data = await Auth.fetchJson('/api/watchlist/add', {
     method: 'POST',
     body: JSON.stringify({ ticker, name, market })
   });
-  showToast(data?.status==='success' ? `已加入 ${ticker}` : (data?.message||'加入失敗'), data?.status==='success');
+  showToast(
+    data?.status === 'success' ? `已加入 ${ticker}` : (data?.message || '加入失敗'),
+    data?.status === 'success'
+  );
 }
-
-document.addEventListener('DOMContentLoaded', () => {
-  switchRanking('volume');
-  setInterval(() => switchRanking(currentRanking), 300000);
-});
 </script>
 {% endblock %}
