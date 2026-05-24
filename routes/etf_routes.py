@@ -49,7 +49,10 @@ LATEST_DAILY_JOIN = """
 LEFT JOIN (
     SELECT d1.* FROM etf_daily_data d1
     INNER JOIN (
-        SELECT ticker, MAX(date) AS max_date FROM etf_daily_data GROUP BY ticker
+        SELECT ticker, MAX(date) AS max_date
+        FROM etf_daily_data
+        WHERE current_price > 0
+        GROUP BY ticker
     ) d2 ON d1.ticker = d2.ticker AND d1.date = d2.max_date
 ) d ON m.ticker = d.ticker
 """
@@ -133,6 +136,7 @@ _RANK_SELECT = """
     {join}
     WHERE d.current_price IS NOT NULL AND d.current_price > 0
       AND COALESCE(m.is_delisted, 0) = 0
+      AND m.is_hot = 1
       AND m.market = %s
     ORDER BY {order}
     LIMIT 10

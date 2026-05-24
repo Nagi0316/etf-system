@@ -383,6 +383,11 @@ def schedule_history_backfill():
         asyncio.run_coroutine_threadsafe(_run_history_backfill(), MAIN_LOOP)
 
 
+def schedule_returns_recalc():
+    if MAIN_LOOP and MAIN_LOOP.is_running():
+        asyncio.run_coroutine_threadsafe(_run_returns_recalc(), MAIN_LOOP)
+
+
 async def _run_history_backfill():
     """增量補齊 TW ETF 歷史收盤價（只補尚未存在的月份，冪等安全）。"""
     from services.twse_history import backfill_tw_history
@@ -391,6 +396,21 @@ async def _run_history_backfill():
         logger.info(f"✅ 歷史補齊完成：{result['etfs']} 檔，補 {result['days_inserted']} 日")
     except Exception as e:
         logger.warning(f"歷史補齊失敗: {e}")
+
+
+async def _run_returns_recalc():
+    """從 DB 歷史收盤價重算年化報酬率（不依賴 Yahoo Finance）。
+    在 TWSE 歷史補齊（03:00）之後 30 分鐘執行，確保最新日資料已入庫。
+    """
+    from services.returns_calc import recalc_all_returns
+    try:
+        result = await asyncio.to_thread(recalc_all_returns)
+        logger.info(f"✅ 年化報酬率重算完成：更新 {result['updated']} 檔，略過 {result['skipped']} 檔")
+        # 清除排行榜快取，讓下次請求取得最新報酬率排名
+        from cache import cache
+        cache.delete_prefix("rank:")
+    except Exception as e:
+        logger.warning(f"年化報酬率重算失敗: {e}")
 
 
 # ──────────────────────────────────────────────
@@ -492,6 +512,12 @@ def start_scheduler() -> BackgroundScheduler:
     # 每日 03:00 增量補齊 TW ETF 歷史收盤價（只補缺月，冪等）
     sch.add_job(lambda: schedule_history_backfill(), CronTrigger(hour=3, minute=0), max_instances=1)
 
+    # 每日 03:30 從 DB 歷史收盤價重算年化報酬率（不依賴 Yahoo，補齊 03:00 補填的資料）
+    sch.add_job(lambda: schedule_returns_recalc(),   CronTrigger(hour=3, minute=30), max_instances=1)
+
+    # 14:40 台股收盤後再次重算報酬率（取得當日最新收盤後重算）
+    sch.add_job(lambda: schedule_returns_recalc(),   CronTrigger(hour=14, minute=40), max_instances=1)
+
     # 快取維護（每 30 分鐘）
     sch.add_job(_evict_cache, "interval", minutes=30, max_instances=1)
 
@@ -502,7 +528,7 @@ def start_scheduler() -> BackgroundScheduler:
         "   【盤中完整】每 30 分鐘更新含 dividend/history 補充資料\n"
         "   【台股】09:00–13:30 Asia/Taipei\n"
         "   【美股】09:30–16:00 America/New_York（DST-aware）\n"
-        "   03:00 TWSE 歷史補齊 | 07:00 補漏掃描 | 08:00 TWSE 同步\n"
-        "   14:35 台股收盤完整更新 | 04:15 美股收盤完整更新 | 每30分清快取"
+        "   03:00 TWSE 歷史補齊 | 03:30 報酬率重算 | 07:00 補漏掃描 | 08:00 TWSE 同步\n"
+        "   14:35 台股收盤完整更新 | 14:40 報酬率重算 | 04:15 美股收盤完整更新 | 每30分清快取"
     )
     return sch

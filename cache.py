@@ -43,7 +43,7 @@ class MemCache:
 
 cache = MemCache()
 
-CACHE_TTL_RANK   = 180    # 排行榜 3 分鐘
+CACHE_TTL_RANK   = 600    # 排行榜 10 分鐘（原 3 分鐘，頻繁 miss 反而增加 DB 壓力）
 CACHE_TTL_DETAIL = 600    # 詳情 10 分鐘
 CACHE_TTL_SEARCH = 60     # 搜尋 1 分鐘
 CACHE_TTL_FX     = 300    # 匯率 5 分鐘

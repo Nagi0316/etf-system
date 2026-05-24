@@ -60,7 +60,7 @@ async def _startup_sequence():
     logger.info("▶ 開始更新活躍 ETF 行情...")
     await _update_active()
 
-    # Step 3: 背景補齊 TW ETF 歷史收盤價（只補缺月，冪等；不阻塞啟動）
+    # Step 3: 背景補齊 TW ETF 歷史收盤價，補齊後立即重算年化報酬率
     async def _bg_backfill():
         await asyncio.sleep(30)  # 等 _update_active 完成後再開始，避免同時競爭 DB
         try:
@@ -70,8 +70,18 @@ async def _startup_sequence():
         except Exception as e:
             logger.warning(f"啟動歷史補齊失敗（繼續）: {e}")
 
+        # Step 4: 歷史補齊後立即重算年化報酬率（讓排行榜 return tab 有資料）
+        try:
+            from services.returns_calc import recalc_all_returns
+            ret = await asyncio.to_thread(recalc_all_returns)
+            logger.info(f"▶ 啟動報酬率重算完成：更新 {ret['updated']} 檔")
+            from cache import cache
+            cache.delete_prefix("rank:")   # 讓下次請求取得最新報酬率排名
+        except Exception as e:
+            logger.warning(f"啟動報酬率重算失敗（繼續）: {e}")
+
     asyncio.ensure_future(_bg_backfill())
-    logger.info("✅ 啟動序列完成（歷史補齊已在背景啟動）")
+    logger.info("✅ 啟動序列完成（歷史補齊 + 報酬率重算已在背景啟動）")
 
 
 # ══════════════════════════════════════════════════════════
