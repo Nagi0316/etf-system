@@ -111,6 +111,7 @@ let etfIdx        = null;                     // [{ticker,name,market,is_hot}]
 let currentMarket = 'TW';
 let currentTab    = 'volume';
 let _searchTimer;
+let rankLoaded    = false;   // 是否已完成至少一次載入嘗試（成功或失敗）
 
 const TAB_HEADERS = { volume:'今日成交量', return:'年化報酬', yield:'殖利率' };
 const FREQ_BADGE  = {
@@ -151,24 +152,44 @@ document.addEventListener('DOMContentLoaded', async () => {
 //  資料載入
 // ══════════════════════════════════════════════════════
 async function loadCombinedRankings() {
-  // 兩市場並行，不互相等待
-  const [tw, us] = await Promise.all([
-    fetch('/api/etf/rankings/combined?market=TW').then(r => r.json()).catch(() => null),
-    fetch('/api/etf/rankings/combined?market=US').then(r => r.json()).catch(() => null),
-  ]);
-  if (tw?.status === 'success') rankData.TW = tw;
-  if (us?.status === 'success') rankData.US = us;
+  // 12 秒逾時，避免 DB 連線慢時前端無限等待
+  const ctrl = new AbortController();
+  const tid  = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const [tw, us] = await Promise.all([
+      fetch('/api/etf/rankings/combined?market=TW', { signal: ctrl.signal })
+        .then(r => r.json()).catch(() => null),
+      fetch('/api/etf/rankings/combined?market=US', { signal: ctrl.signal })
+        .then(r => r.json()).catch(() => null),
+    ]);
+    if (tw?.status === 'success') rankData.TW = tw;
+    if (us?.status === 'success') rankData.US = us;
+  } catch (_) {
+    // AbortError（逾時）或其他網路錯誤，rankData 維持 null → 顯示錯誤提示
+  } finally {
+    clearTimeout(tid);
+    rankLoaded = true;   // 無論成功或失敗，標記「已嘗試過」
+  }
   renderRanking();
 }
 
 async function loadEtfIndex() {
+  const ctrl = new AbortController();
+  const tid  = setTimeout(() => ctrl.abort(), 10000);
   try {
-    const d = await fetch('/api/etf/index').then(r => r.json());
+    const d = await fetch('/api/etf/index', { signal: ctrl.signal }).then(r => r.json());
     etfIdx = d.data || [];
     window._ETF_IDX = etfIdx;   // 供 navbar 搜尋共用
     const cnt = document.getElementById('idx-count');
-    if (cnt) cnt.textContent = `（共 ${etfIdx.length} 檔）`;
+    if (cnt && etfIdx.length) cnt.textContent = `（共 ${etfIdx.length} 檔）`;
   } catch { etfIdx = []; }
+  finally { clearTimeout(tid); }
+}
+
+async function retryLoad() {
+  rankLoaded = false;
+  renderRanking();           // 重新顯示轉圈
+  await loadCombinedRankings();
 }
 
 // ══════════════════════════════════════════════════════
@@ -179,8 +200,24 @@ function renderRanking() {
   const body = document.getElementById('ranking-body');
 
   if (!d) {
-    body.innerHTML = `<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">
-      <span class="spinner mr-2"></span>載入中…</td></tr>`;
+    if (!rankLoaded) {
+      // 首次載入中：顯示轉圈
+      body.innerHTML = `<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">
+        <span class="spinner mr-2"></span>排行榜載入中，請稍候…</td></tr>`;
+    } else {
+      // 載入完成但失敗：顯示錯誤＋重試按鈕
+      body.innerHTML = `<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">
+        <i class="fas fa-exclamation-circle mr-2 text-amber-400 text-base"></i>
+        資料暫時無法載入（伺服器可能剛啟動）
+        <button onclick="retryLoad()"
+          class="ml-3 px-3 py-1 rounded-md bg-indigo-50 dark:bg-indigo-900/30
+                 text-indigo-600 dark:text-indigo-400 text-xs hover:bg-indigo-100
+                 dark:hover:bg-indigo-900/50 transition-colors">
+          <i class="fas fa-redo mr-1 text-[10px]"></i>重試
+        </button>
+      </td></tr>`;
+      document.getElementById('update-time').textContent = '載入失敗，請按重試';
+    }
     return;
   }
 
@@ -199,8 +236,10 @@ function renderRanking() {
   }
 
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="7" class="px-4 py-12 text-center text-slate-400 text-sm">${
-      hideBond ? '勾選「隱藏債券 ETF」後無資料，請取消後重試' : '此市場暫無資料，請稍後重試'
+    body.innerHTML = `<tr><td colspan="7" class="px-4 py-12 text-center text-slate-400 text-sm">
+      <i class="fas fa-database mr-2 text-slate-300"></i>${
+      hideBond ? '勾選「隱藏債券 ETF」後無資料，請取消後重試' :
+      '排行榜資料更新中，請稍後重試<button onclick="retryLoad()" class="ml-2 text-indigo-500 hover:underline">重試</button>'
     }</td></tr>`;
     return;
   }

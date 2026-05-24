@@ -154,17 +154,21 @@ async def get_etf_rankings(rank_type: str, market: str = ""):
     if cached:
         return safe_json({"status": "success", **cached})
 
-    order = _RANK_ORDER.get(rank_type, _RANK_ORDER["volume"])
-    with get_db() as (conn, cursor):
-        cursor.execute(
-            _RANK_SELECT.format(join=LATEST_DAILY_JOIN, order=order),
-            (market,)
-        )
-        rows = cursor.fetchall()
+    try:
+        order = _RANK_ORDER.get(rank_type, _RANK_ORDER["volume"])
+        with get_db() as (conn, cursor):
+            cursor.execute(
+                _RANK_SELECT.format(join=LATEST_DAILY_JOIN, order=order),
+                (market,)
+            )
+            rows = cursor.fetchall()
 
-    payload = {"data": rows, "updated_at": datetime.now().strftime('%H:%M')}
-    cache.set(cache_key, payload, CACHE_TTL_RANK)
-    return safe_json({"status": "success", **payload})
+        payload = {"data": rows, "updated_at": datetime.now().strftime('%H:%M')}
+        cache.set(cache_key, payload, CACHE_TTL_RANK)
+        return safe_json({"status": "success", **payload})
+    except Exception as e:
+        logger.error(f"etf rankings error ({rank_type}/{market}): {e}", exc_info=True)
+        return safe_json({"status": "success", "data": [], "updated_at": datetime.now().strftime('%H:%M')})
 
 
 @router.get("/api/etf/rankings/combined")
@@ -176,18 +180,27 @@ async def get_combined_rankings(market: str = "TW"):
     if cached:
         return safe_json({"status": "success", **cached})
 
-    result: dict = {}
-    with get_db() as (conn, cursor):
-        for rank_type, order in _RANK_ORDER.items():
-            cursor.execute(
-                _RANK_SELECT.format(join=LATEST_DAILY_JOIN, order=order),
-                (market,)
-            )
-            result[rank_type] = cursor.fetchall()
+    try:
+        result: dict = {}
+        with get_db() as (conn, cursor):
+            for rank_type, order in _RANK_ORDER.items():
+                cursor.execute(
+                    _RANK_SELECT.format(join=LATEST_DAILY_JOIN, order=order),
+                    (market,)
+                )
+                result[rank_type] = cursor.fetchall()
 
-    result["updated_at"] = datetime.now().strftime('%H:%M')
-    cache.set(cache_key, result, CACHE_TTL_RANK)
-    return safe_json({"status": "success", **result})
+        result["updated_at"] = datetime.now().strftime('%H:%M')
+        cache.set(cache_key, result, CACHE_TTL_RANK)
+        return safe_json({"status": "success", **result})
+    except Exception as e:
+        logger.error(f"combined rankings error (market={market}): {e}", exc_info=True)
+        # 回傳空成功，讓前端顯示「暫無資料」而非無限轉圈
+        return safe_json({
+            "status": "success",
+            "volume": [], "return": [], "yield": [],
+            "updated_at": datetime.now().strftime('%H:%M'),
+        })
 
 
 @router.get("/api/etf/index")
@@ -199,17 +212,21 @@ async def get_etf_index():
     if cached:
         return safe_json({"status": "success", "data": cached})
 
-    with get_db() as (conn, cursor):
-        cursor.execute("""
-            SELECT ticker, name, market, COALESCE(is_hot,0) AS is_hot
-            FROM etf_master
-            WHERE COALESCE(is_delisted, 0) = 0
-            ORDER BY is_hot DESC, ticker
-        """)
-        rows = cursor.fetchall()
+    try:
+        with get_db() as (conn, cursor):
+            cursor.execute("""
+                SELECT ticker, name, market, COALESCE(is_hot,0) AS is_hot
+                FROM etf_master
+                WHERE COALESCE(is_delisted, 0) = 0
+                ORDER BY is_hot DESC, ticker
+            """)
+            rows = cursor.fetchall()
 
-    cache.set("etf:index", rows, 300)   # 5 分鐘快取
-    return safe_json({"status": "success", "data": rows})
+        cache.set("etf:index", rows, 300)   # 5 分鐘快取
+        return safe_json({"status": "success", "data": rows})
+    except Exception as e:
+        logger.error(f"etf index error: {e}", exc_info=True)
+        return safe_json({"status": "success", "data": []})
 
 
 # ── 搜尋 ──
@@ -444,10 +461,17 @@ async def get_etf_detail(ticker: str):
     if cached:
         return safe_json({"status": "success", "data": cached})
 
-    usd_twd = get_usd_twd()
+    try:
+        usd_twd = get_usd_twd()
+    except Exception:
+        usd_twd = 32.0   # fallback 匯率
 
-    with get_db() as (conn, cursor):
-        row = _fetch_etf_detail_row(cursor, ticker)
+    try:
+        with get_db() as (conn, cursor):
+            row = _fetch_etf_detail_row(cursor, ticker)
+    except Exception as e:
+        logger.error(f"etf detail DB error ({ticker}): {e}", exc_info=True)
+        return safe_json({"status": "error", "message": "資料庫暫時無法連線，請稍後再試"}, 503)
 
     if not row:
         # 資料庫找不到 → 嘗試即時爬取並寫入
