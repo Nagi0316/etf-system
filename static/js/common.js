@@ -130,7 +130,9 @@ async function loadUserInfo(containerId = 'user-info') {
     ]);
 
     if (!profileData || profileData.status !== 'success') {
-      Auth.clearToken();
+      // 注意：401 已由 Auth.fetch() 處理（自動 clearToken + 跳轉），
+      // 抵達這裡表示是 timeout / 5xx 等暫時性錯誤，不清除 token，
+      // 避免 TiDB 冷啟動瞬間把所有使用者踢出去。
       container.innerHTML = `<a href="/auth" class="btn-primary text-sm px-3 py-1.5 rounded-lg">登入</a>`;
       return;
     }

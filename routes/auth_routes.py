@@ -3,7 +3,6 @@ routes/auth_routes.py — 登入 / 登出 / Google OAuth / 密碼變更
 所有 API 回傳 JSON；前端頁面以 template 回傳
 """
 import logging, os, time
-from collections import defaultdict
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -25,17 +24,22 @@ templates: Jinja2Templates | None = None  # 由 main.py 注入
 _COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 天
 
 # ── 登入速率限制（IP 每 15 分鐘最多 10 次，防暴力破解）──
-_login_rate: dict[str, list[float]] = defaultdict(list)
+# 使用 cache 而非全域 dict，避免多 worker 下各自獨立計數失效
 _RATE_WINDOW = 900   # 15 分鐘
 _RATE_MAX    = 10    # 最多 10 次
 
 def _is_login_rate_limited(ip: str) -> bool:
+    from cache import cache
+    key = f"rate:login:{ip}"
     now = time.time()
-    timestamps = _login_rate[ip]
-    _login_rate[ip] = [t for t in timestamps if now - t < _RATE_WINDOW]
-    if len(_login_rate[ip]) >= _RATE_MAX:
+    timestamps: list = cache.get(key) or []
+    # 只保留窗口內的時間戳
+    timestamps = [t for t in timestamps if now - t < _RATE_WINDOW]
+    if len(timestamps) >= _RATE_MAX:
+        cache.set(key, timestamps, _RATE_WINDOW)
         return True
-    _login_rate[ip].append(now)
+    timestamps.append(now)
+    cache.set(key, timestamps, _RATE_WINDOW)
     return False
 
 
@@ -45,7 +49,9 @@ def _set_auth_cookies(response, token: str):
     etf_session:  非 HttpOnly → JS 僅用來判斷是否已登入，無法取得真正 token
     secure 旗標：正式環境 (ENV=production) 才開啟，防止 token 在 HTTP 明文傳送
     """
-    is_prod = os.getenv("ENV") == "production"
+    # 預設為 secure=True（HTTPS only），僅在明確設定 ENV=development 時才關閉
+    # Railway 線上環境不設此變數 → 預設 secure，更安全
+    is_prod = os.getenv("ENV", "production") != "development"
     response.set_cookie(
         "access_token", token,
         httponly=True, samesite="lax", secure=is_prod,

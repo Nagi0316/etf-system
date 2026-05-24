@@ -69,6 +69,12 @@ def revoke_token(jti: str):
     with get_db() as (conn, cursor):
         cursor.execute("UPDATE user_sessions SET is_revoked=1 WHERE jti=%s", (jti,))
         conn.commit()
+    # 立即清除快取，確保登出後不會再有 cache-hit 通過驗證
+    try:
+        from cache import cache
+        cache.delete(f"jti:ok:{jti}")
+    except Exception:
+        pass
 
 
 # ── Bearer 依賴注入 ──
@@ -92,14 +98,26 @@ def get_current_user(
     payload = decode_token(token)
     if not payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 無效或已過期")
-    # 檢查是否被撤銷
+    # 檢查是否被撤銷（JTI 驗證加快取，避免每次 API 都打 DB）
     jti = payload.get("jti")
     if jti:
-        with get_db() as (conn, cursor):
-            cursor.execute("SELECT is_revoked FROM user_sessions WHERE jti=%s", (jti,))
-            row = cursor.fetchone()
-        if row and row["is_revoked"]:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 已失效，請重新登入")
+        from cache import cache
+        cache_key = f"jti:ok:{jti}"
+        if not cache.get(cache_key):
+            # Cache miss → 查 DB
+            try:
+                with get_db() as (conn, cursor):
+                    cursor.execute("SELECT is_revoked FROM user_sessions WHERE jti=%s", (jti,))
+                    row = cursor.fetchone()
+            except Exception as _db_err:
+                # TiDB 冷啟動或連線暫時失敗 → fail-open：允許此次請求，但不快取
+                logger.warning("JTI DB 驗證失敗，暫時以 JWT 本身為準: %s", _db_err)
+                row = None
+            if row and row["is_revoked"]:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 已失效，請重新登入")
+            if row:
+                # 只有確認有效才快取（5 分鐘），DB 無此紀錄（row is None）時不快取
+                cache.set(cache_key, 1, 300)
     return {"id": int(payload["sub"]), "email": payload.get("email", ""), "jti": jti}
 
 
