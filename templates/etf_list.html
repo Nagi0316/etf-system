@@ -29,11 +29,6 @@
       <p id="update-time" class="text-xs text-slate-400 mt-0.5">資料載入中…</p>
     </div>
     <div class="flex items-center gap-3 flex-wrap">
-      <!-- 債券過濾 -->
-      <label class="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 cursor-pointer select-none">
-        <input type="checkbox" id="hide-bond" class="rounded accent-indigo-500" onchange="renderRanking()">
-        <span>隱藏債券 ETF</span>
-      </label>
       <!-- 市場切換 -->
       <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5">
         <button id="btn-TW" onclick="switchMarket('TW')"
@@ -78,25 +73,6 @@
     </div>
   </div>
 
-  <!-- ── 搜尋任意 ETF ── -->
-  <div class="card p-4">
-    <h3 class="font-bold text-slate-700 dark:text-slate-300 text-sm mb-3">
-      <i class="fas fa-search mr-1.5 text-indigo-500"></i>搜尋全部 ETF
-      <span id="idx-count" class="ml-1.5 text-xs font-normal text-slate-400"></span>
-    </h3>
-    <div class="relative">
-      <input id="etf-search" type="text" placeholder="輸入代碼或名稱，如 0050、SCHD、高股息…"
-        class="input w-full pl-9 pr-4 text-sm" autocomplete="off">
-      <i class="fas fa-search absolute left-3 top-2.5 text-slate-400 text-xs pointer-events-none"></i>
-    </div>
-    <div id="etf-search-results" class="mt-2"></div>
-
-    <!-- 熱門快捷 -->
-    <div class="mt-4">
-      <p class="text-xs text-slate-400 mb-2">熱門</p>
-      <div id="hot-chips" class="flex flex-wrap gap-1.5"></div>
-    </div>
-  </div>
 
 </div>
 {% endblock %}
@@ -107,10 +83,8 @@
 //  狀態
 // ══════════════════════════════════════════════════════
 let rankData      = { TW: null, US: null };  // combined ranking payload
-let etfIdx        = null;                     // [{ticker,name,market,is_hot}]
 let currentMarket = 'TW';
 let currentTab    = 'volume';
-let _searchTimer;
 let rankLoaded    = false;   // 是否已完成至少一次載入嘗試（成功或失敗）
 
 const TAB_HEADERS = { volume:'今日成交量', return:'年化報酬', yield:'殖利率' };
@@ -121,18 +95,12 @@ const FREQ_BADGE  = {
   '半年配':'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
   '年配':  'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
 };
-const HOT_CHIPS = {
-  TW: ['0050','0056','00878','00919','00929','006208','00940','00713','00939','00915','00757'],
-  US: ['SPY','QQQ','VOO','VTI','SCHD','JEPI','TLT','GLD','SOXX','SMH','ARKK'],
-};
 
 // ══════════════════════════════════════════════════════
 //  初始化
 // ══════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', async () => {
-  renderHotChips();
-
-  // 並行抓取雙市場排行 + ETF 搜尋索引
+  // 並行抓取雙市場排行 + ETF 搜尋索引（索引供 navbar 搜尋共用）
   await Promise.all([
     loadCombinedRankings(),
     loadEtfIndex(),
@@ -140,12 +108,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 每 5 分鐘自動刷新排行
   setInterval(loadCombinedRankings, 5 * 60 * 1000);
-
-  // 搜尋框（150ms debounce，前端本地過濾）
-  document.getElementById('etf-search').addEventListener('input', e => {
-    clearTimeout(_searchTimer);
-    _searchTimer = setTimeout(() => renderSearch(e.target.value.trim()), 150);
-  });
 });
 
 // ══════════════════════════════════════════════════════
@@ -174,15 +136,13 @@ async function loadCombinedRankings() {
 }
 
 async function loadEtfIndex() {
+  // 只為 navbar 搜尋預載入索引，本頁不使用搜尋 UI
   const ctrl = new AbortController();
   const tid  = setTimeout(() => ctrl.abort(), 10000);
   try {
     const d = await fetch('/api/etf/index', { signal: ctrl.signal }).then(r => r.json());
-    etfIdx = d.data || [];
-    window._ETF_IDX = etfIdx;   // 供 navbar 搜尋共用
-    const cnt = document.getElementById('idx-count');
-    if (cnt && etfIdx.length) cnt.textContent = `（共 ${etfIdx.length} 檔）`;
-  } catch { etfIdx = []; }
+    window._ETF_IDX = d.data || [];   // 供 navbar 搜尋共用
+  } catch { window._ETF_IDX = []; }
   finally { clearTimeout(tid); }
 }
 
@@ -226,21 +186,13 @@ function renderRanking() {
   document.getElementById('update-time').textContent = ts ? `更新於 ${ts}` : '';
   document.getElementById('rank-col-header').textContent = TAB_HEADERS[currentTab] || '';
 
-  const hideBond = document.getElementById('hide-bond')?.checked;
-  let rows = (d[currentTab] || []).slice(0, 10);
-  if (hideBond) {
-    rows = rows.filter(e =>
-      !e.ticker.toUpperCase().endsWith('B') &&
-      !(e.name || '').includes('債')
-    );
-  }
+  const rows = (d[currentTab] || []).slice(0, 10);
 
   if (!rows.length) {
     body.innerHTML = `<tr><td colspan="7" class="px-4 py-12 text-center text-slate-400 text-sm">
-      <i class="fas fa-database mr-2 text-slate-300"></i>${
-      hideBond ? '勾選「隱藏債券 ETF」後無資料，請取消後重試' :
-      '排行榜資料更新中，請稍後重試<button onclick="retryLoad()" class="ml-2 text-indigo-500 hover:underline">重試</button>'
-    }</td></tr>`;
+      <i class="fas fa-database mr-2 text-slate-300"></i>排行榜資料更新中，請稍後重試
+      <button onclick="retryLoad()" class="ml-2 text-indigo-500 hover:underline">重試</button>
+    </td></tr>`;
     return;
   }
 
@@ -336,7 +288,6 @@ function switchMarket(m) {
     `mkt-btn px-5 py-1.5 rounded-md text-sm font-semibold transition-all ${m==='TW'?'mkt-on':'mkt-off'}`;
   document.getElementById('btn-US').className =
     `mkt-btn px-5 py-1.5 rounded-md text-sm font-semibold transition-all ${m==='US'?'mkt-on':'mkt-off'}`;
-  renderHotChips();
   renderRanking();
 }
 
@@ -348,89 +299,6 @@ function switchTab(type) {
       active ? 'tab-on' : 'tab-off'}`;
   });
   renderRanking();
-}
-
-// ══════════════════════════════════════════════════════
-//  搜尋（本地 index 即時過濾，0 API 請求）
-// ══════════════════════════════════════════════════════
-function renderSearch(q) {
-  const box = document.getElementById('etf-search-results');
-  if (!q) { box.innerHTML = ''; return; }
-
-  if (!etfIdx) {
-    box.innerHTML = '<p class="text-xs text-slate-400 py-2">搜尋索引載入中…</p>';
-    return;
-  }
-
-  const q_up = q.toUpperCase();
-  const matched = etfIdx.filter(e =>
-    e.ticker.startsWith(q_up) ||
-    e.ticker.includes(q_up) ||
-    (e.name && e.name.includes(q))
-  ).slice(0, 12);
-
-  if (!matched.length) {
-    box.innerHTML = `<p class="text-xs text-slate-400 py-2">找不到「${q}」，可至 ETF 詳情頁直接輸入代碼</p>`;
-    return;
-  }
-
-  // 用已載入的排行資料補充報價（不打新 API）
-  const priceMap = {};
-  ['TW', 'US'].forEach(mkt => {
-    if (!rankData[mkt]) return;
-    ['volume', 'return', 'yield'].forEach(t => {
-      (rankData[mkt][t] || []).forEach(e => { priceMap[e.ticker] = e; });
-    });
-  });
-
-  box.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-2">` +
-    matched.map(e => {
-      const p     = priceMap[e.ticker];
-      const price = p?.current_price > 0 ? parseFloat(p.current_price).toFixed(2) : null;
-      const chg   = p ? parseFloat(p.price_change_percent) : null;
-      const mktBadge = e.market === 'US'
-        ? '<span class="text-[10px] px-1 rounded bg-blue-50 text-blue-400 dark:bg-blue-900/30 ml-1">US</span>' : '';
-
-      return `<a href="/etf-detail/${e.ticker}"
-        class="flex items-center justify-between px-3 py-2.5 rounded-lg
-               bg-slate-50 dark:bg-slate-700/50 hover:bg-indigo-50 dark:hover:bg-indigo-900/30
-               transition-colors group">
-        <div class="min-w-0 flex-1">
-          <div class="flex items-center">
-            <span class="font-bold text-slate-800 dark:text-white text-sm
-                         group-hover:text-indigo-600 dark:group-hover:text-indigo-400">${e.ticker}</span>
-            ${mktBadge}
-          </div>
-          <div class="text-xs text-slate-400 truncate mt-0.5">${e.name || ''}</div>
-        </div>
-        ${price
-          ? `<div class="text-right ml-3 shrink-0">
-               <div class="text-sm font-semibold text-slate-700 dark:text-slate-200 tabular-nums">${price}</div>
-               ${chg !== null
-                 ? `<div class="text-xs ${chg>=0?'text-red-500':'text-green-500'} tabular-nums">${chg>=0?'+':''}${chg.toFixed(2)}%</div>`
-                 : ''}
-             </div>`
-          : `<i class="fas fa-chevron-right text-xs text-slate-300 dark:text-slate-600 ml-3
-                        group-hover:text-indigo-400 shrink-0"></i>`
-        }
-      </a>`;
-    }).join('') +
-  `</div>`;
-}
-
-// ══════════════════════════════════════════════════════
-//  熱門快捷
-// ══════════════════════════════════════════════════════
-function renderHotChips() {
-  const box   = document.getElementById('hot-chips');
-  const chips = HOT_CHIPS[currentMarket] || HOT_CHIPS.TW;
-  box.innerHTML = chips.map(t =>
-    `<a href="/etf-detail/${t}"
-      class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium
-             bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300
-             hover:bg-indigo-100 dark:hover:bg-indigo-900/40 hover:text-indigo-600
-             dark:hover:text-indigo-400 transition-colors">${t}</a>`
-  ).join('');
 }
 
 // ══════════════════════════════════════════════════════
