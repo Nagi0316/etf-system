@@ -33,7 +33,7 @@ _HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; ETF-System/2.0)",
 }
 _TIMEOUT = 20
-_SLEEP   = 1.2   # seconds between requests
+_SLEEP   = 0.15  # seconds between requests（TWSE 公開 API 限制寬鬆，0.15s 足夠）
 MAX_ETFS = 200   # safety cap per run
 
 

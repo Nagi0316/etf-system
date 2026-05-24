@@ -17,7 +17,7 @@ from cache import cache, CACHE_TTL_RANK, CACHE_TTL_DETAIL
 import requests as _req
 import certifi as _certifi
 
-from etf_data import fetch_one_etf, save_etf_data, _yahoo_ticker, _new_session
+from etf_data import fetch_one_etf, save_etf_data, _yahoo_ticker, _new_session, _cf_yahoo_get
 from services.alerts import check_dip_alert
 from services.exchange_rate import get_usd_twd
 
@@ -432,8 +432,9 @@ def _maybe_background_refresh(ticker: str, row: dict):
 
 # DB 需達到的最低有效點數，才足以畫出有意義的走勢圖（避免 2-3 個連續相近點畫成直線）
 _MIN_CHART_ROWS = {
-    "1M": 10, "3M": 20, "6M": 40, "YTD": 20,
-    "1Y": 60, "3Y": 100, "5Y": 100, "ALL": 30, "MAX": 30,
+    # 門檻降低：有資料就顯示，不讓「資料稍少」導致白屏
+    "1M": 3, "3M": 5, "6M": 10, "YTD": 5,
+    "1Y": 20, "3Y": 30, "5Y": 30, "ALL": 10, "MAX": 10,
 }
 
 _TWSE_HIST_HEADERS = {
@@ -469,7 +470,10 @@ def _fetch_db_price_history(ticker: str, period: str) -> Optional[dict]:
             return None
         labels = [str(r["date"])[:10] for r in rows]
         prices = [round(float(r["current_price"]), 2) for r in rows]
-        return {"labels": labels, "prices": prices, "is_intraday": False}
+        # is_partial=True 表示資料未涵蓋完整請求期間（DB 尚在補齊中），前端可顯示提示
+        expected_rows = _MIN_CHART_ROWS.get(period.upper(), 60) * 3
+        is_partial = len(rows) < expected_rows
+        return {"labels": labels, "prices": prices, "is_intraday": False, "is_partial": is_partial}
     except Exception as e:
         logger.debug(f"DB price history {ticker}: {e}")
     return None
@@ -547,8 +551,9 @@ def _fetch_twse_month(ticker: str, year: int, month: int) -> list[dict]:
 
 def _fetch_twse_price_history(ticker: str, period: str) -> Optional[dict]:
     """從 TWSE / TPEX 官方 API 抓歷史收盤價（不依賴 Yahoo Finance）。
-    成功後寫入 DB，下次請求直接從 DB 走，速度大幅提升。
+    以 4 執行緒並行抓取，大幅縮短等待時間；成功後寫入 DB 供下次直接回傳。
     """
+    import concurrent.futures
     from dateutil.relativedelta import relativedelta as _rd
 
     cache_key = f"twse_hist:{ticker}:{period}"
@@ -563,13 +568,18 @@ def _fetch_twse_price_history(ticker: str, period: str) -> Optional[dict]:
     }
     months_needed = PERIOD_MONTHS.get(period.upper(), 13)
 
+    # 建立需要抓取的月份清單
+    targets = [(today - _rd(months=i)) for i in range(months_needed - 1, -1, -1)]
+
+    # 並行抓取（最多 4 個執行緒，避免 TWSE rate limit）
     all_days: list[dict] = []
-    for i in range(months_needed - 1, -1, -1):
-        target = today - _rd(months=i)
-        month_days = _fetch_twse_month(ticker, target.year, target.month)
-        all_days.extend(month_days)
-        if i > 0:
-            time.sleep(0.05)  # 避免速率限制；0.05s 已足夠，不需要 0.15s
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(_fetch_twse_month, ticker, t.year, t.month): t for t in targets}
+        for fut in concurrent.futures.as_completed(futures):
+            try:
+                all_days.extend(fut.result())
+            except Exception:
+                pass
 
     if len(all_days) < 5:
         return None
@@ -588,10 +598,7 @@ def _fetch_twse_price_history(ticker: str, period: str) -> Optional[dict]:
         "is_intraday": False,
     }
     cache.set(cache_key, result, ttl=21600)  # 6h
-
-    # 寫入 DB，讓下次請求從 DB 直接回傳（無需再打 TWSE API）
-    _save_history_to_db(ticker, deduped)
-
+    _save_history_to_db(ticker, deduped)     # 回填 DB，下次 DB 直接回傳
     return result
 
 
@@ -629,6 +636,9 @@ async def get_price_history(ticker: str, period: str = "1y"):
     # 時區偏移：台股 UTC+8，美股 EDT = UTC-4（夏令）
     tz_offset_h = 8 if market == "TW" else -4
 
+    # timeout 策略：1D/5D (intraday) 用 5s 快速失敗；非即時歷史資料用 12s（US ETF 1Y 回傳 ~252 筆）
+    yahoo_timeout = 5 if is_intraday else 12
+
     def _fetch():
         symbols = [yt]
         if market == "TW" and yt.endswith(".TW"):
@@ -638,8 +648,9 @@ async def get_price_history(ticker: str, period: str = "1y"):
             try:
                 url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
                        f"?range={yf_range}&interval={yf_interval}")
-                # Railway 上 Yahoo Finance 經常被封鎖；使用短 timeout 快速失敗，避免長時間等待
-                r = _new_session(f"https://finance.yahoo.com/quote/{symbol}").get(url, timeout=5)
+                # CF Proxy 優先（繞過 Railway IP 封鎖），fallback 直連 Yahoo
+                r = (_cf_yahoo_get(url, timeout=yahoo_timeout)
+                     or _new_session(f"https://finance.yahoo.com/quote/{symbol}").get(url, timeout=yahoo_timeout))
                 if r.status_code != 200:
                     continue
                 result = r.json().get("chart", {}).get("result")
@@ -652,7 +663,6 @@ async def get_price_history(ticker: str, period: str = "1y"):
                     continue
 
                 if is_intraday:
-                    # 轉換為市場本地時間（UTC → 台股 UTC+8 / 美股 UTC-4）
                     labels = []
                     for t, _ in pairs:
                         dt_local = (datetime.fromtimestamp(t, tz=timezone.utc).replace(tzinfo=None)
@@ -670,23 +680,30 @@ async def get_price_history(ticker: str, period: str = "1y"):
         return None
 
     if not is_intraday and market == "TW":
-        # TW ETF 非即時：Railway 上 Yahoo 必定逾時，直接跳過，先查 DB 再打 TWSE
+        # TW ETF 非即時：DB → CF Proxy Yahoo（快，1 次 API）→ 並行 TWSE（慢，備援）
         data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
         if not data:
+            data = await asyncio.to_thread(_fetch)        # _fetch 內部已走 CF proxy
+        if not data:
             data = await asyncio.to_thread(_fetch_twse_price_history, ticker, p)
+    elif is_intraday and market == "TW":
+        # TW ETF 即時（1D/5D）：嘗試 Yahoo；失敗則用 DB 最近資料回傳「最近交易日」走勢
+        data = await asyncio.to_thread(_fetch)
+        if not data:
+            data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
     else:
-        # 即時（1D/5D）或 US ETF：先嘗試 Yahoo（短 timeout），失敗後回落 DB
+        # US ETF（即時或歷史）：Yahoo Finance 為唯一來源；歷史失敗則 DB fallback
         data = await asyncio.to_thread(_fetch)
         if not data and not is_intraday:
-            # US ETF Yahoo 失敗：只能靠 DB
             data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
     if not data:
         return safe_json({"status": "error", "message": "無法取得歷史資料"}, 400)
     return safe_json({
-        "status": "success",
-        "labels": data["labels"],
-        "prices": data["prices"],
+        "status":     "success",
+        "labels":     data["labels"],
+        "prices":     data["prices"],
         "is_intraday": data.get("is_intraday", False),
+        "is_partial":  data.get("is_partial", False),
     })
 
 

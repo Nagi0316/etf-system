@@ -289,7 +289,10 @@ async function loadETFDetail() {
         loadPriceHistory(currentTicker, '1Y'),
         checkWatchlistStatus(currentTicker),
         loadDipAlert(currentTicker),
-      ]);
+      ]).then(() => {
+        // 主圖表載入完後，在背景靜默探測其他 period 是否有資料，把空的按鈕藏掉
+        probeAllPeriods(currentTicker);
+      });
 
       // 若關鍵欄位缺失（爬取曾失敗），立即在背景強制重抓並刷新顯示
       const d = etfData;
@@ -442,6 +445,38 @@ async function loadDipAlert(ticker) {
 }
 
 // 圖表
+// 記錄哪些 period 已確認有資料，哪些沒有
+const _periodStatus = {};   // 'ok' | 'fail' | undefined
+
+function _hidePeriodBtn(period) {
+  document.querySelectorAll('.period-btn').forEach(b => {
+    if (b.textContent.toUpperCase() === period.toUpperCase()) b.style.display = 'none';
+  });
+}
+
+// 靜默探測所有 period，把沒資料的按鈕藏起來（不影響主圖表載入）
+// 以 300ms 的延遲錯開，避免初次載入時同時打爆後端 API
+async function probeAllPeriods(ticker) {
+  const ALL_PERIODS = ['1D','5D','1M','6M','YTD','5Y','ALL']; // 排除 1Y (主圖表已探測)
+  for (const p of ALL_PERIODS) {
+    if (_periodStatus[p] === 'ok') continue;  // 已知有資料，跳過
+    await new Promise(res => setTimeout(res, 250));  // 錯開請求，避免同時打後端
+    fetch(`/api/etf/price-history/${ticker}?period=${p}`)
+      .then(r => r.json())
+      .then(d => {
+        const prices = d.prices || d.data?.prices;
+        const clean  = (prices || []).map(v => parseFloat(v)).filter(v => !isNaN(v) && v > 0);
+        if (d.status === 'success' && clean.length >= 2) {
+          _periodStatus[p] = 'ok';
+        } else {
+          _periodStatus[p] = 'fail';
+          _hidePeriodBtn(p);
+        }
+      })
+      .catch(() => { _periodStatus[p] = 'fail'; _hidePeriodBtn(p); });
+  }
+}
+
 async function loadPriceHistory(ticker, period = '1Y') {
   const reqId = ++_chartReqId;   // 每次呼叫取得唯一 ID，過期的回應直接丟棄
   // 顯示載入中狀態
@@ -460,12 +495,28 @@ async function loadPriceHistory(ticker, period = '1Y') {
     if (data.status === 'success' && prices?.length) {
       const cleanPrices = prices.map(p => parseFloat(p)).filter(p => !isNaN(p) && p > 0);
       const cleanLabels = labels.slice(labels.length - cleanPrices.length);
-      if (cleanPrices.length >= 2) { drawChart(cleanLabels, cleanPrices, false, intraday); return; }
+      if (cleanPrices.length >= 2) {
+        _periodStatus[period] = 'ok';
+        drawChart(cleanLabels, cleanPrices, false, intraday);
+        const noteEl = document.getElementById('chart-note');
+        if (data.is_partial) {
+          noteEl.textContent = `⚠️ 歷史資料補充中，目前顯示 ${cleanLabels[0]} 至今的資料`;
+          noteEl.classList.remove('hidden');
+        } else {
+          noteEl.classList.add('hidden');
+        }
+        return;
+      }
     }
+    // 此 period 沒有資料 — 標記並隱藏按鈕
+    _periodStatus[period] = 'fail';
+    _hidePeriodBtn(period);
     showNoChart();
   } catch(e) {
     if (reqId !== _chartReqId) return;
     document.getElementById('chart-loading').classList.add('hidden');
+    _periodStatus[period] = 'fail';
+    _hidePeriodBtn(period);
     showNoChart();
   }
 }

@@ -3,9 +3,10 @@ etf_data.py — ETF 靜態清單、資料抓取、DB 存取
 （從原 main.py 提取並整合 exchange_rate）
 """
 from __future__ import annotations
-import random, time, logging, threading
+import os, random, time, logging, threading
 from datetime import datetime, date
 from typing import Optional
+from urllib.parse import quote as _url_quote
 
 import requests as req_lib
 import certifi
@@ -56,6 +57,32 @@ def _new_session(referer: str = "") -> req_lib.Session:
     if referer:
         s.headers["Referer"] = referer
     return s
+
+
+# ── Cloudflare Worker Proxy（繞過 Railway IP 被 Yahoo Finance 封鎖）──
+# 環境變數設定說明：
+#   CF_PROXY_URL    = https://<your-worker>.workers.dev
+#   CF_PROXY_SECRET = <同 Worker 中設定的 SECRET>
+CF_PROXY_URL    = os.environ.get("CF_PROXY_URL", "").rstrip("/")
+CF_PROXY_SECRET = os.environ.get("CF_PROXY_SECRET", "")
+
+
+def _cf_yahoo_get(url: str, timeout: int = 15) -> Optional[req_lib.Response]:
+    """透過 Cloudflare Worker 代理呼叫 Yahoo Finance API。
+    CF_PROXY_URL / CF_PROXY_SECRET 未設定時直接回傳 None（呼叫方自行 fallback）。
+    Cloudflare IP 不在 Yahoo 封鎖名單內，可取得 TW ETF 被 Railway IP 封鎖時無法直連的資料。
+    """
+    if not CF_PROXY_URL or not CF_PROXY_SECRET:
+        return None
+    try:
+        endpoint = f"{CF_PROXY_URL}?s={CF_PROXY_SECRET}&u={_url_quote(url, safe='')}"
+        r = req_lib.get(endpoint, timeout=timeout)
+        if r.status_code == 200:
+            return r
+        logger.debug(f"CF proxy HTTP {r.status_code} for {url[:70]}")
+    except Exception as e:
+        logger.debug(f"CF proxy error for {url[:70]}: {e}")
+    return None
 
 
 def _jitter(base: float = 1.0, spread: float = 2.0):
@@ -460,11 +487,13 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
     alt     = f"{ticker}.TWO" if primary.endswith(".TW") else f"{ticker}.TW"
 
     # 1. Yahoo Finance events（個別事件，頻率最準確）
+    # CF Proxy 優先 → 直連 fallback（Railway 上 Yahoo 封鎖 TW ETF 直連）
     for yt in (primary, alt):
         try:
             url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
                    f"?range=2y&interval=1mo&events=dividends")
-            r = _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{yt}"), url, timeout=10)
+            r = (_cf_yahoo_get(url, timeout=15)
+                 or _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{yt}"), url, timeout=10))
             if r and r.status_code == 200:
                 result = r.json().get("chart", {}).get("result")
                 if result:
@@ -525,17 +554,24 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
 
 
 def _fetch_tw_history(ticker: str) -> list:
-    """取得 5 年月線收盤價（Yahoo 優先，自動嘗試 .TW / .TWO 兩種後綴）"""
+    """取得 5 年月線收盤價。
+    優先走 Cloudflare Worker Proxy（繞過 Railway IP 封鎖），
+    CF 未設定或失敗時直連 Yahoo Finance，自動嘗試 .TW / .TWO 兩種後綴。
+    """
     primary = _yahoo_ticker(ticker, "TW")
     alt     = f"{ticker}.TWO" if primary.endswith(".TW") else f"{ticker}.TW"
     for yt in (primary, alt):
         try:
             url = f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}?range=5y&interval=1mo"
-            r = _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{yt}"), url, timeout=6)
+            # CF Proxy 優先 → 直連 fallback
+            r = (_cf_yahoo_get(url, timeout=15)
+                 or _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{yt}"), url, timeout=6))
             if r and r.status_code == 200:
                 result = r.json().get("chart", {}).get("result")
                 if result:
-                    closes = [safe_float(c) for c in (result[0].get("indicators", {}).get("quote", [{}])[0].get("close") or []) if c is not None]
+                    closes = [safe_float(c) for c in
+                              (result[0].get("indicators", {}).get("quote", [{}])[0].get("close") or [])
+                              if c is not None]
                     if len(closes) >= 6:
                         return closes
         except Exception as e:
