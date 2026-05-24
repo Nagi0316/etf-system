@@ -93,6 +93,14 @@ class DbCursor:
         rows = self._c.fetchall()
         return [dict(r) for r in rows] if not self._is_mysql else rows
 
+    @property
+    def rowcount(self) -> int:
+        """回傳上一個 execute 影響的行數（代理底層 cursor.rowcount）。"""
+        try:
+            return self._c.rowcount
+        except Exception:
+            return -1
+
     def close(self):
         try:
             self._c.close()
