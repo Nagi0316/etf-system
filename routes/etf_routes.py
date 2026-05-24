@@ -282,24 +282,56 @@ async def force_refresh_etf(ticker: str, request: Request):
     if cache.get(rate_key):
         return safe_json({"status": "error", "message": f"{ticker} 60 秒內已刷新過，請稍候"}, 429)
 
+    # 從 DB 或代碼格式判斷市場（四位數字開頭 = 台股）
+    market = "TW" if ticker[:4].isdigit() else "US"
+    try:
+        with get_db() as (conn, cursor):
+            cursor.execute("SELECT market FROM etf_master WHERE ticker=%s LIMIT 1", (ticker,))
+            row = cursor.fetchone()
+            if row:
+                market = row["market"]
+    except Exception:
+        pass
+
     def _do():
-        data = fetch_one_etf(ticker, None)   # market=None → 內部自動判斷 TW/US
+        data = fetch_one_etf(ticker, market)
         if not data:
             return None
+
+        # TW ETF + Yahoo 被封鎖 → 用 TWSE 逐月抓歷史收盤計算年化報酬
+        if market == "TW" and not data.get("annual_return_1y"):
+            price = data.get("current_price", 0)
+            if price > 0:
+                from dateutil.relativedelta import relativedelta as _rd
+                from datetime import date as _date
+                def _twse_close_n_months_ago(n: int) -> Optional[float]:
+                    target = _date.today() - _rd(months=n)
+                    rows = _fetch_twse_month(ticker, target.year, target.month)
+                    return rows[-1]["close"] if rows else None
+                p1y = _twse_close_n_months_ago(12)
+                p3y = _twse_close_n_months_ago(36)
+                p5y = _twse_close_n_months_ago(60)
+                if p1y and p1y > 0:
+                    data["annual_return_1y"] = round((price / p1y - 1) * 100, 2)
+                if p3y and p3y > 0:
+                    data["annual_return_3y"] = round(((price / p3y) ** (1/3) - 1) * 100, 2)
+                if p5y and p5y > 0:
+                    data["annual_return_5y"] = round(((price / p5y) ** (1/5) - 1) * 100, 2)
+
         save_etf_data(data)
         return data
 
     data = await asyncio.to_thread(_do)
     if not data:
-        return safe_json({"status": "error", "message": f"無法取得 {ticker} 資料"}, 502)
+        return safe_json({"status": "error", "message": f"無法取得 {ticker} 資料（TWSE 連線可能暫時失敗，請稍後再試）"}, 502)
 
-    cache.delete(f"detail:{ticker}")        # 清快取讓下次 detail 用新值
-    cache.delete_prefix(f"search:")
+    cache.delete(f"detail:{ticker}")
+    cache.delete_prefix("search:")
     cache.set(rate_key, 1, 60)
 
     return safe_json({
-        "status":         "success",
-        "ticker":         ticker,
+        "status":           "success",
+        "ticker":           ticker,
         "annual_return_1y": data.get("annual_return_1y"),
         "annual_return_3y": data.get("annual_return_3y"),
         "annual_return_5y": data.get("annual_return_5y"),

@@ -543,31 +543,32 @@ def _fetch_tw_history(ticker: str) -> list:
     return []
 
 
-def _fetch_db_monthly_closes(ticker: str) -> list:
-    """從 etf_daily_data 取近 5 年每月末收盤價。
-    Yahoo Finance 在 Railway 被封鎖時的備援，確保年化報酬率在任何環境都能即時計算。
+def _fetch_52week_hl_db(ticker: str, fallback_price: float) -> tuple[float, float]:
+    """從 DB etf_daily_data 取 52 週最高/最低（使用儲存的 day_high / day_low 欄位）。
+    DB 無資料時退回 ±15% 估算值。
     """
     try:
+        from datetime import timedelta
+        since = (date.today() - timedelta(days=370)).strftime("%Y-%m-%d")
         with get_db() as (conn, cursor):
-            cursor.execute("""
-                SELECT d.current_price
-                FROM   etf_daily_data d
-                INNER JOIN (
-                    SELECT DATE_FORMAT(date, '%%Y-%%m') AS ym,
-                           MAX(date)                    AS max_date
-                    FROM   etf_daily_data
-                    WHERE  ticker       = %s
-                      AND  date        >= DATE_SUB(CURDATE(), INTERVAL 5 YEAR)
-                      AND  current_price > 0
-                    GROUP BY DATE_FORMAT(date, '%%Y-%%m')
-                ) m ON d.date = m.max_date AND d.ticker = %s
-                ORDER BY d.date ASC
-            """, (ticker, ticker))
-            rows = cursor.fetchall()
-            return [float(r["current_price"]) for r in rows if r.get("current_price")]
+            cursor.execute(
+                "SELECT MAX(day_high) AS h, MIN(day_low) AS l, MAX(current_price) AS cp_h, MIN(current_price) AS cp_l "
+                "FROM etf_daily_data "
+                "WHERE ticker = %s AND date >= %s",
+                (ticker, since),
+            )
+            row = cursor.fetchone()
+            if row:
+                h = float(row["h"] or 0) or float(row["cp_h"] or 0)
+                l = float(row["l"] or 0) or float(row["cp_l"] or 0)
+                # 確保今日現價也在範圍內（盤中高點可能尚未入庫）
+                h = max(h, fallback_price) if h > 0 else fallback_price * 1.15
+                l = min(l, fallback_price) if l > 0 else fallback_price * 0.85
+                if h > 0 and l > 0:
+                    return h, l
     except Exception as e:
-        logger.debug(f"_fetch_db_monthly_closes {ticker}: {e}")
-        return []
+        logger.debug(f"52W H/L DB {ticker}: {e}")
+    return fallback_price * 1.15, fallback_price * 0.85
 
 
 def _fetch_yahoo_quotesummary(yt: str) -> dict:
@@ -706,26 +707,25 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
     div_yield, payout_freq, div_confirmed = _fetch_tw_dividend(ticker, price)
     history_closes = _fetch_tw_history(ticker)
 
-    # 備援：Railway 上 Yahoo 被封鎖時，改從 DB 取月末收盤（由 TWSE backfill 填入）
-    if not history_closes:
-        history_closes = _fetch_db_monthly_closes(ticker)
-
-    # ── 終點修正 ──
-    # Yahoo 月線最後一筆 = 上個月末收盤，本月至今的漲跌完全被漏掉。
-    # 將最後一筆換成今日現價，確保年化報酬率算到「今日」。
-    if history_closes and price > 0:
+    # ── 終點修正（Yahoo 有資料時才啟用）──
+    # Yahoo 月線最後一筆 = 上個月末收盤，本月至今漲跌被漏掉。
+    # 注意：只在 history_closes 足夠長時才覆蓋，避免資料太少時算出錯誤的近零報酬
+    # 並繞過 IS NOT NULL 保護，覆蓋舊的正確值。
+    if len(history_closes) >= 13 and price > 0:
         history_closes = list(history_closes)
         history_closes[-1] = price
 
     # 計算年化報酬需要「起點 + N 個月」共 N+1 筆，故 cutoff 用 -(N+1)
+    # Railway 上 Yahoo 被封鎖 → history_closes = [] → ann_* = None
+    # → IS NOT NULL 守衛保留 DB 舊值（不會被 None 覆蓋）
     cutoff_1y = len(history_closes) - 13 if len(history_closes) >= 13 else 0
     cutoff_3y = len(history_closes) - 37 if len(history_closes) >= 37 else 0
     ann_1y = _annualized_return(history_closes[cutoff_1y:], 1.0)
     ann_3y = _annualized_return(history_closes[cutoff_3y:], 3.0)
     ann_5y = _annualized_return(history_closes, 5.0)
-    last12 = history_closes[-12:] if len(history_closes) >= 12 else history_closes
-    wk52_h = max(last12) if last12 else price * 1.15
-    wk52_l = min(last12) if last12 else price * 0.85
+
+    # ── 52 週最高/最低：優先從 DB 查真實 day_high/day_low ──
+    wk52_h, wk52_l = _fetch_52week_hl_db(ticker, price)
 
     detail = _fetch_tw_detail(ticker)
 
