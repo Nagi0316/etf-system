@@ -36,7 +36,9 @@
       <div class="relative hidden md:block">
         <input id="search-input" type="text" placeholder="搜尋代碼或名稱…"
           class="input pl-8 pr-3 py-1.5 text-sm w-52">
-        <i class="fas fa-search absolute left-2.5 top-2.5 text-xs text-slate-400 pointer-events-none"></i>
+        <button id="search-btn" type="button"
+          class="fas fa-search absolute left-2.5 top-2.5 text-xs text-slate-400 hover:text-indigo-500 cursor-pointer bg-transparent border-0 p-0"
+          aria-label="搜尋"></button>
       </div>
       <button onclick="toggleDarkMode()" id="dark-toggle" class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"><i class="fas fa-moon"></i></button>
       <div id="user-area"></div>
@@ -237,34 +239,54 @@ async function addWatchlist(ticker, name, market) {
 
 // 搜尋
 let searchTimer;
-document.getElementById('search-input')?.addEventListener('input', e => {
+const _searchInput = document.getElementById('search-input');
+
+async function doSearch(q) {
+  const data = await fetch(`/api/etf/search/dynamic?q=${encodeURIComponent(q)}`).then(r=>r.json()).catch(()=>null);
+  if (data?.status==='success' && data.data?.length) {
+    if (data.data.length === 1) { location.href = `/etf-detail/${data.data[0].ticker}`; return; }
+    document.getElementById('search-results-list').innerHTML = data.data.slice(0,8).map(item => `
+      <div onclick="location.href='/etf-detail/${item.ticker}'"
+        class="flex justify-between items-center p-3 rounded-lg border border-slate-100 dark:border-slate-700 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700">
+        <div>
+          <span class="font-bold text-indigo-600 dark:text-indigo-400 text-sm">${item.ticker}</span>
+          <div class="text-xs text-slate-400">${item.name||''}</div>
+        </div>
+        <div class="text-right">
+          <div class="font-medium text-sm tabular-nums text-slate-800 dark:text-slate-200">${item.current_price?item.current_price.toFixed(2):'-'}</div>
+          <div class="text-xs tabular-nums ${(item.price_change_percent||0)>=0?'text-red-500':'text-green-500'}">
+            ${(item.price_change_percent||0)>=0?'+':''}${(item.price_change_percent||0).toFixed(2)}%
+          </div>
+        </div>
+      </div>`).join('');
+    document.getElementById('search-modal').style.display = 'flex';
+  } else if (q.length > 1) {
+    showToast('找不到相關 ETF', false);
+  }
+}
+
+function _fireSearch() {
+  const q = _searchInput?.value.trim();
+  if (!q) { document.getElementById('search-modal').style.display='none'; return; }
+  clearTimeout(searchTimer);
+  doSearch(q);
+}
+
+// 即時篩選（350 ms debounce）
+_searchInput?.addEventListener('input', e => {
   clearTimeout(searchTimer);
   const q = e.target.value.trim();
   if (!q) { document.getElementById('search-modal').style.display='none'; return; }
-  searchTimer = setTimeout(async () => {
-    const data = await fetch(`/api/etf/search/dynamic?q=${encodeURIComponent(q)}`).then(r=>r.json()).catch(()=>null);
-    if (data?.status==='success' && data.data?.length) {
-      if (data.data.length === 1) { location.href = `/etf-detail/${data.data[0].ticker}`; return; }
-      document.getElementById('search-results-list').innerHTML = data.data.slice(0,8).map(item => `
-        <div onclick="location.href='/etf-detail/${item.ticker}'"
-          class="flex justify-between items-center p-3 rounded-lg border border-slate-100 dark:border-slate-700 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700">
-          <div>
-            <span class="font-bold text-indigo-600 dark:text-indigo-400 text-sm">${item.ticker}</span>
-            <div class="text-xs text-slate-400">${item.name||''}</div>
-          </div>
-          <div class="text-right">
-            <div class="font-medium text-sm tabular-nums text-slate-800 dark:text-slate-200">${item.current_price?item.current_price.toFixed(2):'-'}</div>
-            <div class="text-xs tabular-nums ${(item.price_change_percent||0)>=0?'text-red-500':'text-green-500'}">
-              ${(item.price_change_percent||0)>=0?'+':''}${(item.price_change_percent||0).toFixed(2)}%
-            </div>
-          </div>
-        </div>`).join('');
-      document.getElementById('search-modal').style.display = 'flex';
-    } else if (q.length > 1) {
-      showToast('找不到相關 ETF', false);
-    }
-  }, 350);
+  searchTimer = setTimeout(() => doSearch(q), 350);
 });
+
+// Enter 鍵 → 立即搜尋
+_searchInput?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); _fireSearch(); }
+});
+
+// 放大鏡按鈕點擊 → 立即搜尋
+document.getElementById('search-btn')?.addEventListener('click', _fireSearch);
 
 document.getElementById('search-modal')?.addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.style.display='none'; });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { document.getElementById('search-modal').style.display='none'; } });

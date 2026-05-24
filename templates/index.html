@@ -29,7 +29,9 @@
       <div class="relative hidden md:block">
         <input type="text" id="search-input" placeholder="搜尋 ETF…" autocomplete="off"
           class="input pl-9 pr-4 w-52 text-sm">
-        <i class="fas fa-search absolute left-3 top-2.5 text-slate-400 text-sm"></i>
+        <button id="search-btn" type="button"
+          class="fas fa-search absolute left-3 top-2.5 text-slate-400 text-sm hover:text-indigo-500 cursor-pointer bg-transparent border-0 p-0"
+          aria-label="搜尋"></button>
         <div id="search-dropdown" class="hidden absolute top-full left-0 right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 max-h-72 overflow-y-auto"></div>
       </div>
       <button onclick="toggleDarkMode()" id="dark-toggle"
@@ -143,16 +145,35 @@
 <script>
 // 搜尋
 let searchTimer;
-document.getElementById('search-input')?.addEventListener('input', e => {
+const _searchInput = document.getElementById('search-input');
+const _searchDrop  = document.getElementById('search-dropdown');
+
+function _fireSearch() {
+  const q = _searchInput?.value.trim();
+  if (!q) { _searchDrop?.classList.add('hidden'); return; }
+  clearTimeout(searchTimer);
+  doSearch(q);
+}
+
+// 即時篩選（250 ms debounce）
+_searchInput?.addEventListener('input', e => {
   clearTimeout(searchTimer);
   const q = e.target.value.trim();
-  if (!q) { document.getElementById('search-dropdown').classList.add('hidden'); return; }
+  if (!q) { _searchDrop?.classList.add('hidden'); return; }
   searchTimer = setTimeout(() => doSearch(q), 250);
 });
 
+// Enter 鍵 → 立即搜尋
+_searchInput?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); _fireSearch(); }
+});
+
+// 放大鏡按鈕點擊 → 立即搜尋
+document.getElementById('search-btn')?.addEventListener('click', _fireSearch);
+
 document.addEventListener('click', e => {
-  if (!e.target.closest('#search-input') && !e.target.closest('#search-dropdown'))
-    document.getElementById('search-dropdown')?.classList.add('hidden');
+  if (!e.target.closest('#search-input') && !e.target.closest('#search-dropdown') && !e.target.closest('#search-btn'))
+    _searchDrop?.classList.add('hidden');
 });
 
 async function doSearch(q) {

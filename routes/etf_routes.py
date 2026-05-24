@@ -187,9 +187,13 @@ async def search_etf(request: Request, q: str = Query(..., min_length=1)):
             {LATEST_DAILY_JOIN}
             WHERE (m.ticker LIKE %s OR m.name LIKE %s)
               AND COALESCE(m.is_delisted, 0) = 0
-            ORDER BY CASE WHEN m.ticker=%s THEN 0 ELSE 1 END, m.ticker
+            ORDER BY
+                CASE WHEN m.ticker = %s     THEN 0
+                     WHEN m.ticker LIKE %s  THEN 1
+                     ELSE                        2 END,
+                m.ticker
             LIMIT 30
-        """, (f"{q_up}%", f"%{q}%", q_up))
+        """, (f"%{q_up}%", f"%{q}%", q_up, f"{q_up}%"))
         rows = cursor.fetchall()
 
     # ── 隨需探索：資料庫找不到且輸入看起來像代碼 ──
