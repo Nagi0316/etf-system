@@ -280,20 +280,26 @@ KNOWN_ANNUAL_DIVIDEND: dict = {
     # ── 債券 ETF ──
     '00679B': 0.42,  '00687B': 0.38,
     '00695B': 0.36,  '00720B': 0.48,
-    # ── 美股（USD/share，TTM 近似值；Yahoo 被封鎖時作為靜態備援）──
-    # 大盤寬基
-    'SPY':  7.10,  'VOO':  6.70,  'IVV':  6.90,  'VTI':  4.00,
-    'QQQ':  2.70,  'VT':   2.10,  'IWM':  2.40,  'DIA':  8.40,
-    # 高股息（核心：這幾檔殖利率高，顯示「—」損傷公信力最大）
-    'SCHD': 2.75,  'VYM':  3.70,  'JEPI': 5.40,
-    # 科技/半導體
-    'XLK':  0.75,  'SOXX': 4.50,  'SMH':  1.50,
-    'ARKK': 0.00,  # 成長型，不配息
-    # 類股
-    'XLF':  1.00,  'XLE':  2.40,  'VNQ':  3.60,
-    # 原物料/債券（GLD 不配息）
-    'GLD':  0.00,
-    'TLT':  4.20,  'AGG':  2.40,  'BND':  2.40,
+}
+
+
+# ══════════════════════════════════════════════════════════
+#  美股靜態殖利率備援（%，與股價無關，股票分割不影響）
+#  用途：Railway IP 被 Yahoo Finance 封鎖時，確保高股息 ETF 不顯示「—」
+#  更新原則：殖利率顯著偏離（>0.5pp）時更新；不需要跟著每次配息改
+# ══════════════════════════════════════════════════════════
+KNOWN_YIELD_US: dict = {
+    # ── 大盤寬基 ──
+    'SPY':  1.25,  'VOO':  1.30,  'IVV':  1.25,  'VTI':  1.30,
+    'QQQ':  0.50,  'VT':   2.00,  'IWM':  1.40,  'DIA':  1.80,
+    # ── 高股息（最重要：殖利率高，顯示「—」最損公信力）──
+    'SCHD': 3.50,  'VYM':  3.00,  'JEPI': 7.50,
+    # ── 科技/半導體 ──
+    'XLK':  0.42,  'SOXX': 0.80,  'SMH':  0.60,  'ARKK': 0.00,
+    # ── 類股 ──
+    'XLF':  2.00,  'XLE':  3.00,  'VNQ':  3.50,
+    # ── 原物料/債券 ──
+    'GLD':  0.00,  'TLT':  4.50,  'AGG':  4.00,  'BND':  4.00,
 }
 
 
@@ -916,7 +922,9 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     history, div_yield, payout_freq, div_confirmed = [], 0.0, "不配息", False
     try:
         url = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=5y&interval=1mo&events=dividends"
-        r = _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{ticker}"), url, timeout=6)
+        # CF Proxy 優先（Railway IP 被 Yahoo 封鎖）→ 直連 fallback（本機開發）
+        r = (_cf_yahoo_get(url, timeout=15)
+             or _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{ticker}"), url, timeout=6))
         if r and r.status_code == 200:
             res = r.json().get("chart", {}).get("result", [{}])[0]
             history = [safe_float(c) for c in (res.get("indicators", {}).get("quote", [{}])[0].get("close") or []) if c is not None]
@@ -963,14 +971,14 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
     if payout_freq == "不配息" and ticker in KNOWN_PAYOUT_FREQ:
         payout_freq = KNOWN_PAYOUT_FREQ[ticker]
 
-    # 靜態殖利率備援：Yahoo 完全失敗（div_confirmed=False）且 yield=0 時，
-    # 從 KNOWN_ANNUAL_DIVIDEND 估算殖利率，確保 SCHD / VYM / JEPI 等不顯示「—」。
-    # div_yield > 0 → save_etf_data 會正常寫入 DB（不受 confirmed=False 阻擋）
-    if not div_confirmed and div_yield == 0.0 and ticker in KNOWN_ANNUAL_DIVIDEND and price > 0:
-        static_dy = round(KNOWN_ANNUAL_DIVIDEND[ticker] / price * 100, 4)
+    # 靜態殖利率備援：Yahoo 完全失敗（div_confirmed=False）且 yield=0 時、
+    # 直接套用 KNOWN_YIELD_US 殖利率%，不依賴股價 → 股票分割/大漲後仍正確。
+    # div_yield > 0 → save_etf_data 正常寫 DB（不受 confirmed=False 阻擋）
+    if not div_confirmed and div_yield == 0.0 and ticker in KNOWN_YIELD_US:
+        static_dy = KNOWN_YIELD_US[ticker]
         if static_dy > 0:
             div_yield = static_dy
-            logger.debug(f"US 靜態殖利率備援 {ticker}: {div_yield:.2f}%（{KNOWN_ANNUAL_DIVIDEND[ticker]} USD/share）")
+            logger.debug(f"US 靜態殖利率備援 {ticker}: {div_yield:.2f}%")
 
     return {
         'ticker': ticker, 'current_price': price,
