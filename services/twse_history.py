@@ -77,7 +77,7 @@ def _fetch_month(ticker: str, year: int, month: int) -> list[dict]:
 # ── 查詢 DB 中哪些月份已有資料 ──
 
 def _existing_months(ticker: str) -> set[tuple[int, int]]:
-    """回傳 DB 中已有日資料的 (year, month) set。"""
+    """回傳 DB 中已有日資料的 (year, month) set。（單檔版本，供外部呼叫用）"""
     with get_db() as (conn, cursor):
         cursor.execute(
             "SELECT DISTINCT date FROM etf_daily_data WHERE ticker=%s AND current_price > 0",
@@ -93,6 +93,32 @@ def _existing_months(ticker: str) -> set[tuple[int, int]]:
         except Exception:
             pass
     return months
+
+
+def _batch_existing_months(tickers: list[str]) -> dict[str, set[tuple[int, int]]]:
+    """批次查詢多個 ticker 已有的月份（一次 DB 查詢，避免每檔各建一次連線）。
+    回傳 {ticker: {(year, month), ...}}。
+    """
+    if not tickers:
+        return {}
+    with get_db() as (conn, cursor):
+        fmt = ",".join(["%s"] * len(tickers))
+        cursor.execute(
+            f"SELECT DISTINCT ticker, date FROM etf_daily_data "
+            f"WHERE ticker IN ({fmt}) AND current_price > 0",
+            tickers,
+        )
+        rows = cursor.fetchall()
+    result: dict[str, set] = {}
+    for r in rows:
+        t = r["ticker"]
+        d = str(r["date"])[:10]
+        try:
+            y, m = int(d[:4]), int(d[5:7])
+            result.setdefault(t, set()).add((y, m))
+        except Exception:
+            pass
+    return result
 
 
 # ── 寫入 DB ──
@@ -119,9 +145,13 @@ def _save_days(ticker: str, days: list[dict]):
 
 # ── 單一 ETF 補齊 ──
 
-def _backfill_one(ticker: str, since: date, until: date) -> int:
-    """補齊單一 ETF 從 since 到 until 的每月歷史資料。回傳補寫的天數。"""
-    existing = _existing_months(ticker)
+def _backfill_one(ticker: str, since: date, until: date,
+                  existing: set | None = None) -> int:
+    """補齊單一 ETF 從 since 到 until 的每月歷史資料。回傳補寫的天數。
+    existing: 外部預先查好的已有月份 set；None 則自行查詢（向下相容）。
+    """
+    if existing is None:
+        existing = _existing_months(ticker)
     total_days = 0
     cur = date(since.year, since.month, 1)
     while cur <= until:
@@ -175,8 +205,12 @@ def backfill_tw_history(ticker: str = None, years: int = 5) -> dict:
     total_etfs = 0
     total_days = 0
 
+    # 批次查詢所有 ticker 的已有月份（一次 DB 連線 vs 原本每檔一次連線）
+    existing_map = _batch_existing_months(tickers)
+    logger.info(f"📦 已批次查詢 {len(tickers)} 檔現有月份資料（節省 {len(tickers)-1} 次 DB 連線）")
+
     for t in tickers:
-        inserted = _backfill_one(t, since, until)
+        inserted = _backfill_one(t, since, until, existing=existing_map.get(t, set()))
         if inserted:
             logger.info(f"✅ {t}: 補 {inserted} 日")
         total_etfs += 1

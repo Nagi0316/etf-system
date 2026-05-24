@@ -46,20 +46,16 @@ async def lifespan(app: FastAPI):
 
 async def _startup_sequence():
     """啟動後：
-    1. 同步 TWSE 全市場台股 ETF 代碼（非阻塞）
-    2. 用「用戶驅動池」更新活躍標的（庫存 + 自選 + 熱門）
+    1. 更新活躍標的行情（庫存 + 自選 + 熱門，3 分鐘內完成）
+    2. 歷史補齊在背景運行（不阻塞排行榜顯示）
+
+    NOTE: sync_tw_etfs 已移至每日 08:00 排程執行（不在啟動時跑）
+    ‣ seed_etf_master() 已於啟動時植入 91 檔熱門 ETF，排行榜不依賴 TWSE 同步
+    ‣ 每次啟動呼叫 sync_tw_etfs 會多花 30-60 秒等待 TWSE HTTP API，屬不必要成本
     """
     await asyncio.sleep(3)
 
-    # Step 1: 先同步台股全市場代碼建檔
-    try:
-        from services.twse_sync import sync_tw_etfs
-        new_count = await asyncio.to_thread(sync_tw_etfs)
-        logger.info(f"▶ 啟動 TWSE 同步完成，新增 {new_count} 檔台股 ETF 基本資料")
-    except Exception as e:
-        logger.warning(f"啟動 TWSE 同步失敗（繼續）: {e}")
-
-    # Step 2: 用用戶驅動池更新即時行情
+    # Step 1: 更新活躍 ETF 即時行情（有資料即顯示，不必等全部完成）
     from scheduler import _update_active
     logger.info("▶ 開始更新活躍 ETF 行情...")
     await _update_active()

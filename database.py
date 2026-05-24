@@ -1,8 +1,14 @@
 """
 database.py — 資料庫連線管理、初始化、Schema Migration
 支援 TiDB Cloud (MySQL 8) 及本地 SQLite 自動切換
+
+連線策略：
+  MySQL/TiDB — MySQLConnectionPool（pool_size=5）
+    ‣ 避免每次 API 請求都建立新的 TiDB SSL 連線（原本每次 ~150ms overhead）
+    ‣ 連線池重用連線，overhead 降至 ~1ms
+  SQLite — 每次建立新連線（WAL 模式支援並發讀取）
 """
-import time, logging
+import time, logging, threading
 from contextlib import contextmanager
 from typing import Optional
 from config import (
@@ -13,30 +19,71 @@ from config import (
 logger = logging.getLogger(__name__)
 _DB_RETRIES = 3
 
+# ── MySQL 連線池（全域單例，執行緒安全）──
+_mysql_pool      = None
+_mysql_pool_lock = threading.Lock()
 
-# ══════════════════════════════════════════════════════════
-#  連線建立
-# ══════════════════════════════════════════════════════════
+
+def _get_mysql_pool():
+    """取得（或建立）MySQL 連線池。pool_size=5 對 TiDB Serverless 足夠。"""
+    global _mysql_pool
+    if _mysql_pool is not None:
+        return _mysql_pool
+    with _mysql_pool_lock:
+        if _mysql_pool is not None:
+            return _mysql_pool
+        import mysql.connector.pooling as _pooling, certifi
+        pool_params: dict = dict(
+            host=DB_HOST, port=int(DB_PORT),
+            user=DB_USER, password=DB_PASSWORD,
+            database=DB_NAME,
+            connection_timeout=15,
+            autocommit=False,
+            charset="utf8mb4",
+            collation="utf8mb4_unicode_ci",
+            use_unicode=True,
+        )
+        if "tidbcloud.com" in DB_HOST or str(DB_PORT) == "4000":
+            pool_params.update(
+                ssl_ca=certifi.where(),
+                ssl_verify_cert=True,
+                ssl_verify_identity=True,
+            )
+        _mysql_pool = _pooling.MySQLConnectionPool(
+            pool_name="etf_pool",
+            pool_size=5,
+            pool_reset_session=True,
+            **pool_params,
+        )
+        logger.info("✅ MySQL 連線池已建立（pool_size=5）")
+    return _mysql_pool
+
 
 def _get_mysql_conn():
+    """從連線池取得連線；若池耗盡則退回新建連線。"""
     import mysql.connector, certifi
-    params = dict(
-        host=DB_HOST, port=DB_PORT,
-        user=DB_USER, password=DB_PASSWORD,
-        database=DB_NAME,
-        connection_timeout=15,
-        autocommit=False,
-        charset="utf8mb4",
-        collation="utf8mb4_unicode_ci",
-        use_unicode=True,
-    )
-    if "tidbcloud.com" in DB_HOST or str(DB_PORT) == "4000":
-        params.update(
-            ssl_ca=certifi.where(),
-            ssl_verify_cert=True,
-            ssl_verify_identity=True,
+    try:
+        pool = _get_mysql_pool()
+        return pool.get_connection()
+    except Exception:
+        # pool 耗盡或初始化失敗：退回直接建立連線（保持向下相容）
+        params = dict(
+            host=DB_HOST, port=DB_PORT,
+            user=DB_USER, password=DB_PASSWORD,
+            database=DB_NAME,
+            connection_timeout=15,
+            autocommit=False,
+            charset="utf8mb4",
+            collation="utf8mb4_unicode_ci",
+            use_unicode=True,
         )
-    return mysql.connector.connect(**params)
+        if "tidbcloud.com" in DB_HOST or str(DB_PORT) == "4000":
+            params.update(
+                ssl_ca=certifi.where(),
+                ssl_verify_cert=True,
+                ssl_verify_identity=True,
+            )
+        return mysql.connector.connect(**params)
 
 
 def _get_sqlite_conn():
@@ -207,9 +254,9 @@ def init_db():
             nav                  DECIMAL(10,2)  DEFAULT 0,
             dividend_yield       DECIMAL(10,4)  DEFAULT NULL,
             payout_freq          VARCHAR(20)    DEFAULT '季配',
-            annual_return_1y     DECIMAL(7,4)   DEFAULT 0,
-            annual_return_3y     DECIMAL(7,4)   DEFAULT 0,
-            annual_return_5y     DECIMAL(7,4)   DEFAULT 0,
+            annual_return_1y     DECIMAL(7,4)   DEFAULT NULL,
+            annual_return_3y     DECIMAL(7,4)   DEFAULT NULL,
+            annual_return_5y     DECIMAL(7,4)   DEFAULT NULL,
             pe_ratio             DECIMAL(10,2)  DEFAULT 0,
             expense_ratio        DECIMAL(6,4)   DEFAULT 0,
             day_high             DECIMAL(10,2)  DEFAULT 0,
@@ -310,23 +357,30 @@ def init_db():
                 logger.debug(f"DDL 略過: {e}")
         conn.commit()
 
-    # 平滑升級舊資料庫（新增欄位，若已存在則略過）
-    # MySQL only: 修正 dividend_yield 欄位精度（DECIMAL(5,4) 無法存入 >9.9999% 的殖利率）
+    # 平滑升級舊資料庫（MODIFY 欄位型別 / DEFAULT，若無改動則靜默略過）
     if USE_MYSQL:
+        modify_stmts = [
+            # dividend_yield 精度修正（歷史原因）
+            "ALTER TABLE etf_daily_data MODIFY COLUMN dividend_yield DECIMAL(10,4) DEFAULT NULL",
+            # annual_return 改為 DEFAULT NULL：區分「無資料」與「0%」，前端顯示「—」而非 +0.00%
+            "ALTER TABLE etf_daily_data MODIFY COLUMN annual_return_1y DECIMAL(7,4) DEFAULT NULL",
+            "ALTER TABLE etf_daily_data MODIFY COLUMN annual_return_3y DECIMAL(7,4) DEFAULT NULL",
+            "ALTER TABLE etf_daily_data MODIFY COLUMN annual_return_5y DECIMAL(7,4) DEFAULT NULL",
+        ]
         with get_db() as (conn, cursor):
-            try:
-                cursor.execute(
-                    "ALTER TABLE etf_daily_data MODIFY COLUMN dividend_yield DECIMAL(10,4) DEFAULT NULL"
-                )
-                conn.commit()
-                logger.info("✅ dividend_yield 欄位精度升級為 DECIMAL(10,4)")
-            except Exception:
-                pass
+            for stmt in modify_stmts:
+                try:
+                    cursor.execute(stmt)
+                    conn.commit()
+                    col = stmt.split("COLUMN")[1].split()[0]
+                    logger.info(f"✅ {col} 欄位定義已更新")
+                except Exception:
+                    pass  # 已是正確型別則略過
 
     new_cols = [
         ("etf_daily_data", "discount_premium",   "DECIMAL(10,2) DEFAULT 0"),
-        ("etf_daily_data", "annual_return_3y",   "DECIMAL(7,4)  DEFAULT 0"),
-        ("etf_daily_data", "annual_return_5y",   "DECIMAL(7,4)  DEFAULT 0"),
+        ("etf_daily_data", "annual_return_3y",   "DECIMAL(7,4)  DEFAULT NULL"),
+        ("etf_daily_data", "annual_return_5y",   "DECIMAL(7,4)  DEFAULT NULL"),
         ("etf_daily_data", "fifty_two_week_high","DECIMAL(10,2) DEFAULT 0"),
         ("etf_daily_data", "fifty_two_week_low", "DECIMAL(10,2) DEFAULT 0"),
         ("etf_master",     "issuer",             "VARCHAR(100)"),
