@@ -1,15 +1,19 @@
 """
 routes/portfolio_routes.py — 庫存 / 交易記錄
 """
+import hashlib
 import logging
 from datetime import date
 from fastapi import APIRouter, Depends
 
 from auth import get_current_user
+from cache import cache
 from models import TransactionIn
 from database import get_db
 from utils import safe_json
 from services.exchange_rate import get_usd_twd
+
+_DEDUP_TTL = 5   # 5 秒冪等視窗：同一使用者的相同交易在此秒數內只接受第一筆
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -89,12 +93,25 @@ async def get_portfolio(current_user: dict = Depends(get_current_user)):
 @router.post("/api/portfolio/transaction")
 async def add_transaction(body: TransactionIn, current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
+
+    # ── 後端冪等防護：5 秒內相同交易只允許一次（防前端雙擊 / 網路重傳）──
+    # Key = uid + ticker + type + shares + price + date 的 hash，TTL=5s
+    dedup_sig = hashlib.sha256(
+        f"{uid}:{body.ticker}:{body.transaction_type}:{body.shares}:{body.price}:{body.transaction_date}".encode()
+    ).hexdigest()[:16]
+    dedup_key = f"txn_dedup:{dedup_sig}"
+    if cache.get(dedup_key):
+        return safe_json({"status": "error", "message": "重複提交：相同交易已在 5 秒內新增，請勿重複送出"}, 429)
+    cache.set(dedup_key, 1, _DEDUP_TTL)
+
     try:
         _insert_transaction(uid, body.dict())  # 內部已包含 recalc，單一 atomic transaction
         return safe_json({"status": "success", "message": "交易已新增"})
     except ValueError as e:
+        cache.delete(dedup_key)  # 業務邏輯失敗（如庫存不足），解除鎖定讓使用者更正後重送
         return safe_json({"status": "error", "message": str(e)}, 400)
     except Exception as ex:
+        cache.delete(dedup_key)
         logger.error(f"add_transaction: {ex}")
         return safe_json({"status": "error", "message": str(ex)}, 500)
 
@@ -136,9 +153,17 @@ async def delete_transaction(tid: int, current_user: dict = Depends(get_current_
 # ── 私有邏輯 ──
 
 def _recalc_portfolio_cursor(uid: int, ticker: str, cursor):
-    """重算持倉的核心邏輯（使用既有 cursor），供原子性操作共用。"""
+    """重算持倉的核心邏輯（使用既有 cursor），供原子性操作共用。
+
+    均價計算公式（含手續費）：
+      買入：total_cost += shares × price + commission
+      賣出：按當前均價比例扣除成本（手續費已內含在均價中，不再另減）
+
+    此設計讓「均價」反映真實持倉成本（含每筆買入手續費），
+    使損益 / 報酬率計算準確。
+    """
     cursor.execute(
-        "SELECT transaction_type, shares, price FROM user_transactions "
+        "SELECT transaction_type, shares, price, commission FROM user_transactions "
         "WHERE user_id=%s AND ticker=%s ORDER BY transaction_date ASC, id ASC",
         (uid, ticker)
     )
@@ -149,12 +174,13 @@ def _recalc_portfolio_cursor(uid: int, ticker: str, cursor):
     for t in txs:
         s = float(t["shares"])
         p = float(t["price"])
+        c = float(t.get("commission") or 0)   # 手續費（含稅），買入時計入成本
         if t["transaction_type"] == "buy":
-            total_cost   += s * p
+            total_cost   += s * p + c          # 真實成本 = 股數×股價 + 手續費
             total_shares += s
         elif t["transaction_type"] == "sell":
             if total_shares > 0:
-                total_cost -= (total_cost / total_shares) * s
+                total_cost -= (total_cost / total_shares) * s   # 按均價比例扣除
             total_shares -= s
             if total_shares < 0 or abs(total_shares) < 1e-6:
                 total_shares = 0.0

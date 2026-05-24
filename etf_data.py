@@ -1081,7 +1081,9 @@ def save_etf_data(data: dict):
              day_high, day_low, fifty_two_week_high, fifty_two_week_low)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON DUPLICATE KEY UPDATE
-              current_price=VALUES(current_price), price_change=VALUES(price_change),
+              -- price>0 才覆蓋：防止爬取瞬間失效（price=0）清除已有正確價格
+              current_price=IF(VALUES(current_price)>0, VALUES(current_price), current_price),
+              price_change=IF(VALUES(current_price)>0, VALUES(price_change), price_change),
               price_change_percent=VALUES(price_change_percent),
               volume=VALUES(volume), discount_premium=VALUES(discount_premium),
               -- 殖利率：IS NOT NULL 才更新
@@ -1187,12 +1189,13 @@ def save_price_only(data: dict):
                day_high, day_low, volume)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
             ON DUPLICATE KEY UPDATE
-              current_price=VALUES(current_price),
-              price_change=VALUES(price_change),
-              price_change_percent=VALUES(price_change_percent),
-              day_high=VALUES(day_high),
-              day_low=VALUES(day_low),
-              volume=VALUES(volume)
+              -- price>0 才覆蓋（save_price_only 同樣需要防零價守衛）
+              current_price=IF(VALUES(current_price)>0, VALUES(current_price), current_price),
+              price_change=IF(VALUES(current_price)>0, VALUES(price_change), price_change),
+              price_change_percent=IF(VALUES(current_price)>0, VALUES(price_change_percent), price_change_percent),
+              day_high=IF(VALUES(current_price)>0, VALUES(day_high), day_high),
+              day_low=IF(VALUES(current_price)>0, VALUES(day_low), day_low),
+              volume=IF(VALUES(current_price)>0, VALUES(volume), volume)
         """, (
             ticker, today, cp,
             safe_float(data.get("price_change")),

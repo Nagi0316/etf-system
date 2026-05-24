@@ -239,19 +239,33 @@ function openTradeModal(ticker, type) {
   document.getElementById('modal-title').textContent = type === 'sell' ? '賣出' : '買入';
   document.getElementById('trade-modal').classList.remove('hidden');
 }
-function closeModal() { document.getElementById('trade-modal').classList.add('hidden'); }
+function closeModal() {
+  document.getElementById('trade-modal').classList.add('hidden');
+  _submitting = false;   // 關閉彈窗時重置送出鎖，確保下次開啟時狀態乾淨
+  const btn = document.querySelector('#trade-modal button[onclick="submitTrade()"]');
+  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> 確認'; }
+}
 
 function updateTotal() {
   const s = parseFloat(document.getElementById('m-shares').value) || 0;
   const p = parseFloat(document.getElementById('m-price').value) || 0;
+  const c = parseFloat(document.getElementById('m-comm').value) || 0;
   const box = document.getElementById('m-total');
   if (s > 0 && p > 0) {
-    box.textContent = `預估金額：NT$ ${parseInt(s * p).toLocaleString()}`;
+    const subtotal = s * p;
+    const total    = subtotal + c;
+    box.textContent = c > 0
+      ? `成交金額：${parseInt(subtotal).toLocaleString()} + 手續費 ${parseInt(c).toLocaleString()} = NT$ ${parseInt(total).toLocaleString()}`
+      : `成交金額：NT$ ${parseInt(subtotal).toLocaleString()}`;
     box.classList.remove('hidden');
   } else box.classList.add('hidden');
 }
 
+let _submitting = false;   // 前端送出鎖，防止多次點擊
+
 async function submitTrade() {
+  if (_submitting) return;   // 已在處理中，直接忽略
+
   const body = {
     ticker: document.getElementById('m-ticker').value.trim().toUpperCase(),
     transaction_type: document.getElementById('m-type').value,
@@ -264,9 +278,27 @@ async function submitTrade() {
   if (!body.ticker || !body.shares || !body.price || !body.transaction_date) return showToast('請填寫必要欄位', false);
   if (body.transaction_date > new Date().toISOString().slice(0,10)) return showToast('交易日期不能是未來日期', false);
   if (body.shares <= 0 || body.price <= 0) return showToast('股數與價格必須大於 0', false);
-  const data = await Auth.fetchJson('/api/portfolio/transaction', { method:'POST', body: JSON.stringify(body) });
-  if (data?.status === 'success') { showToast('已新增'); closeModal(); loadPortfolio(); loadTransactions(); }
-  else showToast(data?.message || '新增失敗', false);
+
+  // 鎖定按鈕，防止雙擊重複送出
+  const btn = document.querySelector('#trade-modal button[onclick="submitTrade()"]');
+  _submitting = true;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner mr-1"></span> 處理中…'; }
+
+  try {
+    const data = await Auth.fetchJson('/api/portfolio/transaction', { method:'POST', body: JSON.stringify(body) });
+    if (data?.status === 'success') {
+      showToast('已新增');
+      closeModal();
+      loadPortfolio();
+      loadTransactions();
+    } else {
+      showToast(data?.message || '新增失敗', false);
+    }
+  } finally {
+    // 不管成功或失敗，恢復按鈕（業務錯誤讓使用者更正後重送）
+    _submitting = false;
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> 確認'; }
+  }
 }
 
 document.getElementById('m-shares').addEventListener('input', updateTotal);

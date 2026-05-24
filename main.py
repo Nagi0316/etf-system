@@ -400,7 +400,21 @@ async def health_data():
                                 "market": r["market"],
                                 "detail": f"代碼形式與 market={r['market']} 不符"})
 
-            # 5. 統計：熱門 ETF 中有真實配息事件的比例
+            # 5. 異常價格：current_price ≤ 0（包含被零值覆蓋的紀錄）
+            cursor.execute("""
+                SELECT ticker, date, current_price
+                FROM etf_daily_data
+                WHERE current_price <= 0 OR current_price IS NULL
+                ORDER BY date DESC
+                LIMIT 20
+            """)
+            bad_prices = cursor.fetchall()
+            summary["bad_price_rows"] = len(bad_prices)
+            for r in bad_prices:
+                issues.append({"type": "bad_price", "ticker": r["ticker"],
+                                "detail": f"date={str(r['date'])[:10]} price={r['current_price']}"})
+
+            # 6. 統計：熱門 ETF 中有真實配息事件的比例
             cursor.execute("""
                 SELECT COUNT(DISTINCT d.ticker) AS cnt
                 FROM etf_dividends d
@@ -427,7 +441,7 @@ async def health_data():
     summary["cache"] = cache_status
 
     # 整體評級
-    critical_count = summary["missing_etfs"] + summary["wrong_market_etfs"]
+    critical_count = summary["missing_etfs"] + summary["wrong_market_etfs"] + summary.get("bad_price_rows", 0)
     warning_count  = summary["stale_etfs"] + summary["null_fields_etfs"]
     if critical_count > 0:
         overall = "degraded"
