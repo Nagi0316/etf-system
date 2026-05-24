@@ -543,6 +543,33 @@ def _fetch_tw_history(ticker: str) -> list:
     return []
 
 
+def _fetch_db_monthly_closes(ticker: str) -> list:
+    """從 etf_daily_data 取近 5 年每月末收盤價。
+    Yahoo Finance 在 Railway 被封鎖時的備援，確保年化報酬率在任何環境都能即時計算。
+    """
+    try:
+        with get_db() as (conn, cursor):
+            cursor.execute("""
+                SELECT d.current_price
+                FROM   etf_daily_data d
+                INNER JOIN (
+                    SELECT DATE_FORMAT(date, '%%Y-%%m') AS ym,
+                           MAX(date)                    AS max_date
+                    FROM   etf_daily_data
+                    WHERE  ticker       = %s
+                      AND  date        >= DATE_SUB(CURDATE(), INTERVAL 5 YEAR)
+                      AND  current_price > 0
+                    GROUP BY DATE_FORMAT(date, '%%Y-%%m')
+                ) m ON d.date = m.max_date AND d.ticker = %s
+                ORDER BY d.date ASC
+            """, (ticker, ticker))
+            rows = cursor.fetchall()
+            return [float(r["current_price"]) for r in rows if r.get("current_price")]
+    except Exception as e:
+        logger.debug(f"_fetch_db_monthly_closes {ticker}: {e}")
+        return []
+
+
 def _fetch_yahoo_quotesummary(yt: str) -> dict:
     """Yahoo Finance v10 quoteSummary（含 crumb 認證，自動刷新）。"""
     global _yf_crumb, _yf_crumb_cookies
@@ -679,6 +706,17 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
     div_yield, payout_freq, div_confirmed = _fetch_tw_dividend(ticker, price)
     history_closes = _fetch_tw_history(ticker)
 
+    # 備援：Railway 上 Yahoo 被封鎖時，改從 DB 取月末收盤（由 TWSE backfill 填入）
+    if not history_closes:
+        history_closes = _fetch_db_monthly_closes(ticker)
+
+    # ── 終點修正 ──
+    # Yahoo 月線最後一筆 = 上個月末收盤，本月至今的漲跌完全被漏掉。
+    # 將最後一筆換成今日現價，確保年化報酬率算到「今日」。
+    if history_closes and price > 0:
+        history_closes = list(history_closes)
+        history_closes[-1] = price
+
     # 計算年化報酬需要「起點 + N 個月」共 N+1 筆，故 cutoff 用 -(N+1)
     cutoff_1y = len(history_closes) - 13 if len(history_closes) >= 13 else 0
     cutoff_3y = len(history_closes) - 37 if len(history_closes) >= 37 else 0
@@ -769,6 +807,13 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
                     payout_freq = _best_freq(len(recent), ticker)
     except Exception as e:
         logger.debug(f"US history/dividend {ticker}: {e}")
+
+    # ── 終點修正 ──
+    # Yahoo 月線最後一筆 = 上個月末收盤，本月至今的漲跌完全被漏掉。
+    # 將最後一筆換成今日現價，確保年化報酬率算到「今日」。
+    if history and price > 0:
+        history = list(history)
+        history[-1] = price
 
     # 計算年化報酬需要「起點 + N 個月」共 N+1 筆，故 cutoff 用 -(N+1)
     cutoff_1y = len(history) - 13 if len(history) >= 13 else 0
