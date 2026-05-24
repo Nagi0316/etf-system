@@ -607,14 +607,18 @@ async function forceRefresh() {
   const ticker = etfData?.ticker;
   if (!ticker) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt"></i>'; return; }
   const data = await Auth.fetchJson(`/api/etf/force-refresh/${ticker}`, { method: 'POST' });
-  btn.disabled = false;
-  btn.innerHTML = '<i class="fas fa-sync-alt"></i>';
-  if (data?.status === 'success') {
-    showToast(`${ticker} 重算完成，重新整理頁面即可看到最新數字`);
-    // 清快取後自動重載
-    setTimeout(() => location.reload(), 1200);
+  if (data?.status === 'success' || data?.status === 'processing') {
+    // 背景計算中 → 顯示倒數 Toast，10 秒後自動重載
+    const reloadDelay = data.status === 'processing' ? 10000 : 1500;
+    const msg = data.status === 'processing'
+      ? `⏳ ${ticker} 計算中，${reloadDelay/1000} 秒後自動重新整理…`
+      : `✅ ${ticker} 重算完成`;
+    showToast(msg);
+    setTimeout(() => location.reload(), reloadDelay);
   } else {
-    showToast(data?.message || '重算失敗', false);
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-sync-alt"></i>';
+    showToast(data?.message || '重算失敗，請稍後再試', false);
   }
 }
 

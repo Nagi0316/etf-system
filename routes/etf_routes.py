@@ -4,7 +4,7 @@ routes/etf_routes.py — ETF 清單、詳情、搜尋、排行榜、歷史
 import asyncio, logging, time
 from datetime import datetime, timedelta, timezone, date
 from typing import Optional
-from fastapi import APIRouter, Request, Query
+from fastapi import APIRouter, Request, Query, BackgroundTasks
 from fastapi.templating import Jinja2Templates
 
 import yfinance as yf
@@ -266,14 +266,15 @@ async def dynamic_search(request: Request, q: str = Query(..., min_length=1)):
 # ── 強制重算單檔（登入即可用，用於驗證修正 / 手動刷新）──
 
 @router.post("/api/etf/force-refresh/{ticker}")
-async def force_refresh_etf(ticker: str, request: Request):
-    """強制重新抓取並儲存單一 ETF 的完整資料（含年化報酬率）。
-    登入使用者即可呼叫；每 60 秒同一 ticker 限一次（防誤觸）。
+async def force_refresh_etf(ticker: str, request: Request, background_tasks: BackgroundTasks):
+    """強制重新計算單一 ETF 年化報酬 + 52 週高低，立即返回、背景執行（不再超時）。
+    TW ETF：並行抓 TWSE 歷史收盤 → 計算報酬率 → 更新 DB
+    US ETF：Yahoo Finance → 完整更新
     """
     from auth import get_current_user
     from fastapi import HTTPException
     try:
-        user = get_current_user(request)
+        get_current_user(request)
     except HTTPException:
         return safe_json({"status": "error", "message": "請先登入"}, 401)
 
@@ -282,61 +283,107 @@ async def force_refresh_etf(ticker: str, request: Request):
     if cache.get(rate_key):
         return safe_json({"status": "error", "message": f"{ticker} 60 秒內已刷新過，請稍候"}, 429)
 
-    # 從 DB 或代碼格式判斷市場（四位數字開頭 = 台股）
     market = "TW" if ticker[:4].isdigit() else "US"
+    current_price = 0.0
     try:
         with get_db() as (conn, cursor):
-            cursor.execute("SELECT market FROM etf_master WHERE ticker=%s LIMIT 1", (ticker,))
+            cursor.execute(
+                "SELECT market, current_price FROM etf_master WHERE ticker=%s LIMIT 1", (ticker,)
+            )
             row = cursor.fetchone()
             if row:
                 market = row["market"]
+                current_price = float(row.get("current_price") or 0)
     except Exception:
         pass
 
-    def _do():
-        data = fetch_one_etf(ticker, market)
-        if not data:
-            return None
+    cache.set(rate_key, 1, 60)   # 立即上鎖，防止重複觸發
 
-        # TW ETF + Yahoo 被封鎖 → 用 TWSE 逐月抓歷史收盤計算年化報酬
-        if market == "TW" and not data.get("annual_return_1y"):
-            price = data.get("current_price", 0)
-            if price > 0:
-                from dateutil.relativedelta import relativedelta as _rd
-                from datetime import date as _date
-                def _twse_close_n_months_ago(n: int) -> Optional[float]:
-                    target = _date.today() - _rd(months=n)
+    if market == "TW":
+        def _bg_tw():
+            """背景任務：並行抓 TWSE 歷史收盤 → 計算年化報酬 + 52W H/L → 更新 DB"""
+            import concurrent.futures
+            from dateutil.relativedelta import relativedelta as _rd
+            from etf_data import _fetch_tw_realtime_perfect, _fetch_52week_hl_db
+
+            try:
+                # 1. 取最新現價（TWSE mis，~1s）
+                realtime = _fetch_tw_realtime_perfect(ticker)
+                price = realtime.get("current_price", 0) if realtime else current_price
+                if not price or price <= 0:
+                    price = current_price
+                if not price or price <= 0:
+                    logger.warning(f"force_refresh {ticker}: 無法取得現價，放棄")
+                    return
+
+                # 2. 並行抓 1Y / 3Y / 5Y 歷史收盤（各抓目標月份最後一筆）
+                def _close_n_months_ago(n: int) -> Optional[float]:
+                    target = date.today() - _rd(months=n)
                     rows = _fetch_twse_month(ticker, target.year, target.month)
                     return rows[-1]["close"] if rows else None
-                p1y = _twse_close_n_months_ago(12)
-                p3y = _twse_close_n_months_ago(36)
-                p5y = _twse_close_n_months_ago(60)
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                    f1y = pool.submit(_close_n_months_ago, 12)
+                    f3y = pool.submit(_close_n_months_ago, 36)
+                    f5y = pool.submit(_close_n_months_ago, 60)
+                    p1y = f1y.result(timeout=25)
+                    p3y = f3y.result(timeout=25)
+                    p5y = f5y.result(timeout=25)
+
+                # 3. 計算年化報酬
+                updates: dict = {}
                 if p1y and p1y > 0:
-                    data["annual_return_1y"] = round((price / p1y - 1) * 100, 2)
+                    updates["annual_return_1y"] = round((price / p1y - 1) * 100, 2)
                 if p3y and p3y > 0:
-                    data["annual_return_3y"] = round(((price / p3y) ** (1/3) - 1) * 100, 2)
+                    updates["annual_return_3y"] = round(((price / p3y) ** (1 / 3) - 1) * 100, 2)
                 if p5y and p5y > 0:
-                    data["annual_return_5y"] = round(((price / p5y) ** (1/5) - 1) * 100, 2)
+                    updates["annual_return_5y"] = round(((price / p5y) ** (1 / 5) - 1) * 100, 2)
 
-        save_etf_data(data)
-        return data
+                # 4. 52 週高低（從 DB 歷史 current_price 計算）
+                wk52_h, wk52_l = _fetch_52week_hl_db(ticker, price)
+                if wk52_h > 0 and wk52_l > 0:
+                    updates["week52_high"] = wk52_h
+                    updates["week52_low"]  = wk52_l
 
-    data = await asyncio.to_thread(_do)
-    if not data:
-        return safe_json({"status": "error", "message": f"無法取得 {ticker} 資料（TWSE 連線可能暫時失敗，請稍後再試）"}, 502)
+                # 5. 更新現價
+                if realtime:
+                    updates["current_price"]          = price
+                    updates["price_change"]            = realtime.get("price_change", 0)
+                    updates["price_change_percent"]    = realtime.get("price_change_percent", 0)
 
-    cache.delete(f"detail:{ticker}")
-    cache.delete_prefix("search:")
-    cache.set(rate_key, 1, 60)
+                # 6. 寫入 DB
+                if updates:
+                    set_clause = ", ".join(f"{k} = %s" for k in updates)
+                    vals = list(updates.values()) + [ticker]
+                    with get_db() as (conn, cursor):
+                        cursor.execute(
+                            f"UPDATE etf_master SET {set_clause} WHERE ticker = %s", vals
+                        )
+                        conn.commit()
+
+                cache.delete(f"detail:{ticker}")
+                cache.delete_prefix("search:")
+                logger.info(f"✅ force_refresh {ticker} 完成: ann={updates.get('annual_return_1y')} 52W={wk52_h}/{wk52_l}")
+
+            except Exception as e:
+                logger.error(f"force_refresh {ticker} 背景任務失敗: {e}")
+
+        background_tasks.add_task(_bg_tw)
+
+    else:
+        def _bg_us():
+            data = fetch_one_etf(ticker, market)
+            if data:
+                save_etf_data(data)
+                cache.delete(f"detail:{ticker}")
+                cache.delete_prefix("search:")
+
+        background_tasks.add_task(_bg_us)
 
     return safe_json({
-        "status":           "success",
-        "ticker":           ticker,
-        "annual_return_1y": data.get("annual_return_1y"),
-        "annual_return_3y": data.get("annual_return_3y"),
-        "annual_return_5y": data.get("annual_return_5y"),
-        "current_price":    data.get("current_price"),
-        "message":          f"{ticker} 已重新計算，重新整理頁面即可看到最新數字",
+        "status":  "processing",
+        "ticker":  ticker,
+        "message": f"{ticker} 正在背景重新計算，約 10 秒後重新整理頁面即可看到最新數字",
     })
 
 

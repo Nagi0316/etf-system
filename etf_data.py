@@ -580,31 +580,36 @@ def _fetch_tw_history(ticker: str) -> list:
 
 
 def _fetch_52week_hl_db(ticker: str, fallback_price: float) -> tuple[float, float]:
-    """從 DB etf_daily_data 取 52 週最高/最低（使用儲存的 day_high / day_low 欄位）。
-    DB 無資料時退回 ±15% 估算值。
+    """從 DB etf_daily_data 取 52 週最高/最低。
+    優先用 day_high/day_low；若為 NULL 改用 current_price（TWSE 補齊後有值）。
+    只取 current_price > 0 的有效紀錄，避免 0 值拉低 MIN。
     """
     try:
         from datetime import timedelta
         since = (date.today() - timedelta(days=370)).strftime("%Y-%m-%d")
         with get_db() as (conn, cursor):
             cursor.execute(
-                "SELECT MAX(day_high) AS h, MIN(day_low) AS l, MAX(current_price) AS cp_h, MIN(current_price) AS cp_l "
-                "FROM etf_daily_data "
-                "WHERE ticker = %s AND date >= %s",
+                """
+                SELECT
+                    MAX(COALESCE(NULLIF(day_high, 0), current_price))  AS h,
+                    MIN(COALESCE(NULLIF(day_low,  0), current_price))  AS l
+                FROM etf_daily_data
+                WHERE ticker = %s AND date >= %s AND current_price > 0
+                """,
                 (ticker, since),
             )
             row = cursor.fetchone()
             if row:
-                h = float(row["h"] or 0) or float(row["cp_h"] or 0)
-                l = float(row["l"] or 0) or float(row["cp_l"] or 0)
-                # 確保今日現價也在範圍內（盤中高點可能尚未入庫）
-                h = max(h, fallback_price) if h > 0 else fallback_price * 1.15
-                l = min(l, fallback_price) if l > 0 else fallback_price * 0.85
+                h = float(row["h"] or 0)
+                l = float(row["l"] or 0)
                 if h > 0 and l > 0:
-                    return h, l
+                    # 盤中最新價也算進去（今日高點可能尚未入庫）
+                    h = max(h, fallback_price)
+                    l = min(l, fallback_price)
+                    return round(h, 2), round(l, 2)
     except Exception as e:
         logger.debug(f"52W H/L DB {ticker}: {e}")
-    return fallback_price * 1.15, fallback_price * 0.85
+    return round(fallback_price * 1.15, 2), round(fallback_price * 0.85, 2)
 
 
 def _fetch_yahoo_quotesummary(yt: str) -> dict:
