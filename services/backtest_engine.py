@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 COMMISSION_RATE = 0.001425 * 0.28  # 28折（台灣券商慣用）
 MIN_COMMISSION  = 20.0              # 台股低消 20 元（原值 1.0 遠低於市場行情）
+TW_STT_RATE     = 0.001            # 台灣證券交易稅 0.1%（賣出時收取）
 
 
 def _calc_shares(price: float, budget: float) -> tuple[float, float]:
@@ -43,6 +44,7 @@ def run_accumulate(
     dip_threshold_60d: float,
     dip_extra_pct: float,
     dividend_series: Optional[pd.Series] = None,
+    exit_tax_rate: float = 0.0,
 ) -> dict:
     """
     定期定額 + 選配低檔加碼 + 選配 DRIP
@@ -115,19 +117,21 @@ def run_accumulate(
 
         current_ym += 1
 
-    return _summarize(transactions, total_invested, total_shares, hist)
+    return _summarize(transactions, total_invested, total_shares, hist, exit_tax_rate)
 
 
 def run_benchmark(
     hist_benchmark: pd.DataFrame,
     monthly_amount: float,
     price_mode: str,
+    exit_tax_rate: float = 0.0,
 ) -> dict:
     """Benchmark 對比（純定期定額，不含加碼）"""
     return run_accumulate(
         hist_benchmark, 0, monthly_amount, price_mode,
         enable_drip=False, enable_dip=False,
         dip_threshold_20d=10, dip_threshold_60d=15, dip_extra_pct=50,
+        exit_tax_rate=exit_tax_rate,
     )
 
 
@@ -225,12 +229,16 @@ def _compute_risk_metrics(hist: pd.DataFrame, annual_return_pct: float) -> dict:
         return empty
 
 
-def _summarize(transactions: list, total_invested: float, total_shares: float, hist: pd.DataFrame) -> dict:
+def _summarize(transactions: list, total_invested: float, total_shares: float,
+               hist: pd.DataFrame, exit_tax_rate: float = 0.0) -> dict:
     if hist.empty or total_invested <= 0:
         return {"transactions": transactions, "error": "無足夠資料計算摘要"}
 
-    final_price = float(hist["Close"].iloc[-1])
-    final_value = total_shares * final_price
+    final_price  = float(hist["Close"].iloc[-1])
+    gross_value  = total_shares * final_price
+    # 台股賣出時需扣除 0.1% 證券交易稅（exit_tax_rate=0.001），US ETF 為 0
+    exit_tax     = gross_value * exit_tax_rate
+    final_value  = gross_value - exit_tax
     total_profit = final_value - total_invested
     total_return = total_profit / total_invested * 100
 
@@ -238,7 +246,6 @@ def _summarize(transactions: list, total_invested: float, total_shares: float, h
     years = max(0.1, days / 365.25)
     annual_return = (((final_value / total_invested) ** (1 / years)) - 1) * 100 if final_value > 0 else 0.0
 
-    # 策略說明比較
     strategy_boost = None
     if len(transactions) > 0:
         dip_txs = [t for t in transactions if "加碼" in t.get("type", "")]
@@ -246,7 +253,6 @@ def _summarize(transactions: list, total_invested: float, total_shares: float, h
             strategy_boost = {
                 "dip_tx_count": len(dip_txs),
                 "extra_invested": round(sum(t["amount"] for t in dip_txs), 2),
-                "note": f"共觸發 {len(dip_txs)} 次低檔加碼，長期年化報酬率可能提升約 20%～60%",
             }
 
     risk = _compute_risk_metrics(hist, annual_return)

@@ -471,7 +471,10 @@ function renderSingleResult(d, ticker) {
     noteBox.classList.remove('hidden');
     document.getElementById('strategy-note-title').textContent = d.strategy_note.title;
     document.getElementById('strategy-note-desc').textContent  = d.strategy_note.description;
-    document.getElementById('strategy-note-boost').textContent = '📊 ' + d.strategy_note.estimated_boost;
+    const b = d.strategy_note.boost;
+    document.getElementById('strategy-note-boost').textContent = b != null
+      ? `📊 年化提升 ${b >= 0 ? '+' : ''}${b.toFixed(1)}%（基準：${d.strategy_note.baseline_annual?.toFixed(1)}%  →  策略：${d.strategy_note.strategy_annual?.toFixed(1)}%）`
+      : '';
     document.getElementById('strategy-note-example').textContent = '💡 ' + d.strategy_note.example;
   } else { noteBox.classList.add('hidden'); }
 

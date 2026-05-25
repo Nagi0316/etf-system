@@ -120,6 +120,20 @@ async def add_security_headers(request: Request, call_next: Callable) -> Respons
     response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"]          = "1; mode=block"
     response.headers["Permissions-Policy"]        = "geolocation=(), microphone=(), camera=()"
+    # CSP：允許已知 CDN（Tailwind/Chart.js/FontAwesome）與 Google OAuth；
+    # 因模板使用大量 inline script/style，需保留 unsafe-inline，
+    # 但仍透過限制 connect-src / img-src / object-src 縮小攻擊面。
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+            "https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+        "font-src 'self' https://cdnjs.cloudflare.com; "
+        "img-src 'self' data: https://lh3.googleusercontent.com; "
+        "connect-src 'self'; "
+        "frame-src 'none'; "
+        "object-src 'none';"
+    )
     return response
 
 # ── 靜態檔案 ──

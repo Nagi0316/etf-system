@@ -349,6 +349,7 @@ async def run_backtest(body: BacktestIn):
                 _get_dividends, yt, body.ticker, market, body.start_date, body.end_date
             )
 
+        exit_tax_rate = 0.001 if market == "TW" else 0.0
         result = run_accumulate(
             hist,
             initial_amount=body.initial_amount,
@@ -360,6 +361,7 @@ async def run_backtest(body: BacktestIn):
             dip_threshold_60d=body.dip_threshold_60d,
             dip_extra_pct=body.dip_extra_pct,
             dividend_series=dividends,
+            exit_tax_rate=exit_tax_rate,
         )
 
         # Benchmark 對比
@@ -371,8 +373,9 @@ async def run_backtest(body: BacktestIn):
                 _download_hist, byt, body.start_date, body.end_date, body.benchmark_ticker, bm_market
             )
             if not bhist.empty:
+                bm_exit_tax = 0.001 if bm_market == "TW" else 0.0
                 benchmark_result = _summary_slim(
-                    run_benchmark(bhist, body.monthly_amount, body.price_mode)
+                    run_benchmark(bhist, body.monthly_amount, body.price_mode, bm_exit_tax)
                 )
                 benchmark_result["ticker"] = body.benchmark_ticker
 
@@ -384,7 +387,7 @@ async def run_backtest(body: BacktestIn):
                 enhancements.append("低檔加碼")
             if body.enable_drip:
                 enhancements.append("股息再投入 (DRIP)")
-            # 用相同 hist 跑純定期定額基準（月初買、無加碼、無 DRIP）
+            # 用相同 hist 跑純定期定額基準（月初買、無加碼、無 DRIP），也扣 STT 使比較公平
             baseline = run_accumulate(
                 hist,
                 initial_amount=body.initial_amount,
@@ -396,6 +399,7 @@ async def run_backtest(body: BacktestIn):
                 dip_threshold_60d=15,
                 dip_extra_pct=50,
                 dividend_series=None,
+                exit_tax_rate=exit_tax_rate,
             )
             base_ann     = baseline.get("annual_return", 0)
             strategy_ann = result.get("annual_return", 0)
@@ -453,6 +457,7 @@ async def compare_strategies(body: BacktestCompareIn):
                 _get_dividends, yt, body.ticker, market, body.start_date, body.end_date
             )
 
+        cmp_exit_tax = 0.001 if market == "TW" else 0.0
         common = dict(
             hist=hist,
             initial_amount=body.initial_amount,
@@ -463,6 +468,7 @@ async def compare_strategies(body: BacktestCompareIn):
             dip_threshold_60d=body.dip_threshold_60d,
             dip_extra_pct=body.dip_extra_pct,
             dividend_series=dividends,
+            exit_tax_rate=cmp_exit_tax,
         )
 
         strategies = {
