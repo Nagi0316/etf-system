@@ -154,7 +154,7 @@
         <input id="current-password" type="password" class="input">
       </div>
       <div>
-        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">新密碼（至少 6 字元）</label>
+        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">新密碼（至少 8 字元）</label>
         <input id="new-password" type="password" class="input">
       </div>
       <div>
@@ -248,7 +248,7 @@ async function changePassword() {
   const newp = document.getElementById('new-password').value;
   const conf = document.getElementById('confirm-password').value;
   if (!curr) { showToast('請輸入目前密碼', false); return; }
-  if (!newp || newp.length < 6) { showToast('新密碼至少 6 字元', false); return; }
+  if (!newp || newp.length < 8) { showToast('新密碼至少 8 字元', false); return; }
   if (newp !== conf) { showToast('兩次密碼不一致', false); return; }
   const data = await Auth.fetchJson('/api/auth/change-password', {
     method: 'POST',

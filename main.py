@@ -50,7 +50,7 @@ async def _startup_sequence():
     2. 歷史補齊在背景運行（不阻塞排行榜顯示）
 
     NOTE: sync_tw_etfs 已移至每日 08:00 排程執行（不在啟動時跑）
-    ‣ seed_etf_master() 已於啟動時植入 91 檔熱門 ETF，排行榜不依賴 TWSE 同步
+    ‣ seed_etf_master() 已於啟動時植入 38 檔熱門 ETF，排行榜不依賴 TWSE 同步
     ‣ 每次啟動呼叫 sync_tw_etfs 會多花 30-60 秒等待 TWSE HTTP API，屬不必要成本
     """
     await asyncio.sleep(3)
