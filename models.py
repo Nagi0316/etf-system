@@ -13,7 +13,7 @@ from datetime import date, datetime
 class RegisterIn(BaseModel):
     username: str = Field(..., min_length=2, max_length=50)
     email: EmailStr
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., min_length=8, max_length=128)
 
 class LoginIn(BaseModel):
     email: EmailStr

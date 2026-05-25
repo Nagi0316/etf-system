@@ -215,7 +215,7 @@ async def get_etf_index():
     """
     cached = cache.get("etf:index")
     if cached:
-        return safe_json({"status": "success", "data": cached})
+        return safe_json({"status": "success", **cached})
 
     try:
         with get_db() as (conn, cursor):
@@ -226,9 +226,18 @@ async def get_etf_index():
                 ORDER BY is_hot DESC, ticker
             """)
             rows = cursor.fetchall()
+            cursor.execute("""
+                SELECT COUNT(DISTINCT d.ticker) AS cnt
+                FROM etf_dividends d
+                JOIN etf_master m ON m.ticker = d.ticker
+                WHERE m.is_hot = 1 AND m.is_delisted = 0
+            """)
+            div_row = cursor.fetchone()
+            divs_count = int((div_row or {}).get("cnt") or 0)
 
-        cache.set("etf:index", rows, 1800)  # 30 分鐘快取（清單異動極少，5 分鐘過短）
-        return safe_json({"status": "success", "data": rows})
+        payload = {"data": rows, "divs_count": divs_count}
+        cache.set("etf:index", payload, 1800)  # 30 分鐘快取
+        return safe_json({"status": "success", **payload})
     except Exception as e:
         logger.error(f"etf index error: {e}", exc_info=True)
         return safe_json({"status": "success", "data": []})

@@ -49,14 +49,21 @@ def _score_clamp(raw: float, lo: float, hi: float) -> float:
     return max(0.0, min(1.0, (raw - lo) / (hi - lo)))
 
 
+def _median(vals: list) -> float | None:
+    """計算中位數（偶數個取兩中間值的平均）。"""
+    vs = sorted(v for v in vals if v is not None)
+    if not vs:
+        return None
+    n = len(vs)
+    return (vs[n // 2] + vs[(n - 1) // 2]) / 2
+
+
 def _fetch_peer_stats(cursor, market: str) -> dict:
-    """取同市場熱門 ETF 的統計中位數，作為評分基準。一次 query 全部欄位。"""
+    """取同市場熱門 ETF 的統計中位數，作為評分基準。
+    使用中位數而非平均值，避免少數極端值（如槓桿 ETF）扭曲基準線。
+    """
     cursor.execute("""
-        SELECT
-            AVG(d.annual_return_1y)  AS avg_r1y,
-            AVG(d.dividend_yield)    AS avg_yld,
-            AVG(d.expense_ratio)     AS avg_exp,
-            STDDEV(d.annual_return_1y) AS std_r1y
+        SELECT d.annual_return_1y, d.dividend_yield, d.expense_ratio
         FROM etf_master m
         JOIN (
             SELECT d1.ticker, d1.annual_return_1y, d1.dividend_yield, d1.expense_ratio
@@ -68,12 +75,25 @@ def _fetch_peer_stats(cursor, market: str) -> dict:
         ) d ON m.ticker = d.ticker
         WHERE m.is_hot = 1 AND m.market = %s AND m.is_delisted = 0
     """, (market,))
-    row = cursor.fetchone() or {}
+    rows = cursor.fetchall()
+
+    r1y_vals = [float(r["annual_return_1y"]) for r in rows if r.get("annual_return_1y") is not None]
+    yld_vals = [float(r["dividend_yield"])    for r in rows if r.get("dividend_yield")    is not None]
+    exp_vals = [float(r["expense_ratio"])     for r in rows if r.get("expense_ratio")     is not None]
+
+    med_r1y = _median(r1y_vals) or 8.0
+    # 標準差仍用全體計算（用於 Z-score 拉距）
+    if len(r1y_vals) > 1:
+        mean = sum(r1y_vals) / len(r1y_vals)
+        std  = (sum((x - mean) ** 2 for x in r1y_vals) / len(r1y_vals)) ** 0.5
+    else:
+        std = 10.0
+
     return {
-        "avg_r1y": float(row.get("avg_r1y") or 8.0),
-        "std_r1y": float(row.get("std_r1y") or 10.0),
-        "avg_yld": float(row.get("avg_yld") or 3.0),
-        "avg_exp": float(row.get("avg_exp") or 0.003),
+        "avg_r1y": med_r1y,
+        "std_r1y": max(std, 1.0),
+        "avg_yld": _median(yld_vals) or 3.0,
+        "avg_exp": _median(exp_vals) or 0.003,
     }
 
 

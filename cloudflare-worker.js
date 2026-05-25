@@ -11,7 +11,8 @@
  *        CF_PROXY_SECRET = <與 Worker SECRET 相同的字串>
  *
  * 呼叫格式（Python 端自動組裝，無需手動呼叫）：
- *   GET https://<worker-url>?s=<SECRET>&u=<encoded-yahoo-url>
+ *   GET https://<worker-url>?u=<encoded-yahoo-url>
+ *   Header: X-Proxy-Secret: <SECRET>   ← Secret 改從 Header 傳，不再出現在 URL
  */
 
 export default {
@@ -36,8 +37,8 @@ export default {
 
     const reqUrl = new URL(request.url);
 
-    // ── 驗證 Secret（防止公開濫用）──
-    const secret = reqUrl.searchParams.get("s");
+    // ── 驗證 Secret（從 Header 讀取，避免 Secret 出現在 URL/log 中）──
+    const secret = request.headers.get("X-Proxy-Secret");
     if (!env.SECRET || secret !== env.SECRET) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,

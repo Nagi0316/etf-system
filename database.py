@@ -125,10 +125,9 @@ class DbCursor:
                 sql = sql.replace("INSERT INTO", "INSERT OR REPLACE INTO", 1)
             elif up.startswith("INSERT IGNORE INTO"):
                 sql = sql.replace("INSERT IGNORE INTO", "INSERT OR IGNORE INTO", 1)
-            elif up.startswith("INSERT INTO"):
-                sql = sql.replace("INSERT INTO", "INSERT OR IGNORE INTO", 1)
             elif up.startswith("REPLACE INTO"):
                 sql = sql.replace("REPLACE INTO", "INSERT OR REPLACE INTO", 1)
+            # 注意：普通 INSERT INTO 不轉換，保留原有約束違反行為，避免靜默丟資料
         self._c.execute(sql, params if params else ())
         self.lastrowid = self._c.lastrowid
 
@@ -377,7 +376,8 @@ def init_db():
             try:
                 cursor.execute(ddl)
             except Exception as e:
-                logger.debug(f"DDL 略過: {e}")
+                # CREATE TABLE IF NOT EXISTS 失敗屬真實錯誤，記 warning
+                logger.warning(f"DDL 執行失敗（可能為權限或語法問題）: {e}")
         conn.commit()
 
     # 平滑升級舊資料庫（MODIFY 欄位型別 / DEFAULT，若無改動則靜默略過）
@@ -397,8 +397,8 @@ def init_db():
                     conn.commit()
                     col = stmt.split("COLUMN")[1].split()[0]
                     logger.info(f"✅ {col} 欄位定義已更新")
-                except Exception:
-                    pass  # 已是正確型別則略過
+                except Exception as e:
+                    logger.debug(f"MODIFY COLUMN 略過（已是正確型別）: {e}")
 
     new_cols = [
         ("etf_daily_data", "discount_premium",   "DECIMAL(10,2) DEFAULT 0"),
@@ -428,7 +428,7 @@ def init_db():
                 conn.commit()
                 logger.info(f"✅ 新增欄位 {tbl}.{col}")
             except Exception:
-                pass
+                pass  # 欄位已存在為預期情況，忽略
 
     # 效能索引（已存在則忽略）
     indexes = [
@@ -451,6 +451,6 @@ def init_db():
                 conn.commit()
                 logger.info(f"✅ 建立索引 {idx_name}")
             except Exception:
-                pass  # 已存在則忽略
+                pass  # 索引已存在為預期情況，忽略
 
     logger.info(f"✅ 資料庫初始化完成 ({'TiDB/MySQL' if USE_MYSQL else 'SQLite'})")

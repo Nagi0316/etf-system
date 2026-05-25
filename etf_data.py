@@ -75,8 +75,8 @@ def _cf_yahoo_get(url: str, timeout: int = 15) -> Optional[req_lib.Response]:
     if not CF_PROXY_URL or not CF_PROXY_SECRET:
         return None
     try:
-        endpoint = f"{CF_PROXY_URL}?s={CF_PROXY_SECRET}&u={_url_quote(url, safe='')}"
-        r = req_lib.get(endpoint, timeout=timeout)
+        endpoint = f"{CF_PROXY_URL}?u={_url_quote(url, safe='')}"
+        r = req_lib.get(endpoint, timeout=timeout, headers={"X-Proxy-Secret": CF_PROXY_SECRET})
         if r.status_code == 200:
             return r
         logger.debug(f"CF proxy HTTP {r.status_code} for {url[:70]}")

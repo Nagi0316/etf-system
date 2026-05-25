@@ -88,7 +88,7 @@ async def _startup_sequence():
         except Exception as e:
             logger.warning(f"啟動報酬率重算失敗（繼續）: {e}")
 
-    asyncio.ensure_future(_bg_backfill())
+    asyncio.create_task(_bg_backfill())
     logger.info("✅ 啟動序列完成（歷史補齊 + 報酬率重算已在背景啟動）")
 
 

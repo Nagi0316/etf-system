@@ -110,9 +110,12 @@ def get_current_user(
                     cursor.execute("SELECT is_revoked FROM user_sessions WHERE jti=%s", (jti,))
                     row = cursor.fetchone()
             except Exception as _db_err:
-                # TiDB 冷啟動或連線暫時失敗 → fail-open：允許此次請求，但不快取
-                logger.warning("JTI DB 驗證失敗，暫時以 JWT 本身為準: %s", _db_err)
-                row = None
+                # DB 不可用時拒絕請求（fail-closed），避免已撤銷 token 通過驗證
+                logger.warning("JTI DB 驗證失敗，拒絕請求以確保安全: %s", _db_err)
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="認證服務暫時不可用，請稍後再試",
+                )
             if row and row["is_revoked"]:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 已失效，請重新登入")
             if row:

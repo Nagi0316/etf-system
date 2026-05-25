@@ -153,27 +153,34 @@ async def add_transaction(body: TransactionIn, current_user: dict = Depends(get_
 
 
 @router.get("/api/portfolio/transactions")
-async def get_transactions(ticker: str = None, current_user: dict = Depends(get_current_user)):
+async def get_transactions(
+    ticker: str = None,
+    limit: int = 100,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user),
+):
     uid = current_user["id"]
+    limit  = max(1, min(limit, 500))   # 上限 500，防止一次傾倒過多資料
+    offset = max(0, offset)
     with get_db() as (conn, cursor):
         if ticker:
             cursor.execute(
                 "SELECT id, ticker, transaction_type, shares, price, commission, "
                 "transaction_date, note, created_at "
                 "FROM user_transactions WHERE user_id=%s AND ticker=%s "
-                "ORDER BY transaction_date DESC, id DESC",
-                (uid, ticker.upper())
+                "ORDER BY transaction_date DESC, id DESC LIMIT %s OFFSET %s",
+                (uid, ticker.upper(), limit, offset)
             )
         else:
             cursor.execute(
                 "SELECT id, ticker, transaction_type, shares, price, commission, "
                 "transaction_date, note, created_at "
                 "FROM user_transactions WHERE user_id=%s "
-                "ORDER BY transaction_date DESC, id DESC",
-                (uid,)
+                "ORDER BY transaction_date DESC, id DESC LIMIT %s OFFSET %s",
+                (uid, limit, offset)
             )
         rows = cursor.fetchall()
-    return safe_json({"status": "success", "data": rows})
+    return safe_json({"status": "success", "data": rows, "limit": limit, "offset": offset})
 
 
 @router.delete("/api/portfolio/transaction/{tid}")

@@ -241,11 +241,20 @@
 <script>
 // ══ 市場開盤狀態 ════════════════════════════════════════
 function _marketStatus() {
-  const now  = new Date();
+  const now = new Date();
+  // 台股：UTC+8 09:00–13:30，週一至週五
   const day  = now.getDay();
   const utc8 = ((now.getUTCHours() + 8) % 24) + now.getUTCMinutes() / 60;
   const twOpen = day >= 1 && day <= 5 && utc8 >= 9 && utc8 < 13.5;
-  const usOpen = day >= 1 && day <= 5 && (utc8 >= 21.5 || utc8 < 4);
+  // 美股：用 Intl API 取紐約時間，自動處理 DST（夏令 UTC-4 / 冬令 UTC-5）
+  const nyParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric', minute: 'numeric', weekday: 'short', hour12: false,
+  }).formatToParts(now);
+  const nyMap = Object.fromEntries(nyParts.map(p => [p.type, p.value]));
+  const nyMins = parseInt(nyMap.hour) * 60 + parseInt(nyMap.minute);
+  const nyWeekday = nyMap.weekday;
+  const usOpen = !['Sat', 'Sun'].includes(nyWeekday) && nyMins >= 9 * 60 + 30 && nyMins < 16 * 60;
   return { twOpen, usOpen };
 }
 
@@ -373,14 +382,10 @@ async function loadStats() {
     document.getElementById('stat-tw-count').textContent  = tw;
     document.getElementById('stat-us-count').textContent  = us;
     window._ETF_IDX = all;   // 供 navbar 搜尋共用
-  } catch {}
-  // 配息事件數
-  try {
-    const h = await fetch('/api/health/data').then(r => r.json()).catch(() => null);
-    const cnt = h?.summary?.etfs_with_real_dividends;
-    if (cnt != null) {
+    // 配息事件數（index 已順帶回傳，不需另打 /api/health/data）
+    if (d.divs_count != null) {
       const el = document.getElementById('stat-divs-count');
-      if (el) el.textContent = cnt + ' 支';
+      if (el) el.textContent = d.divs_count + ' 支';
     }
   } catch {}
 }
