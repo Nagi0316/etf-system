@@ -443,7 +443,6 @@ def init_db():
         ("idx_alerts_user",     "price_alerts",      "user_id, is_active"),
         ("idx_sessions_user",   "user_sessions",     "user_id, is_revoked"),
         ("idx_dividends_ticker","etf_dividends",     "ticker, ex_date"),
-        ("idx_txn_idem",        "user_transactions", "user_id, idempotency_key"),
     ]
     with get_db() as (conn, cursor):
         for idx_name, tbl, cols in indexes:
@@ -453,5 +452,18 @@ def init_db():
                 logger.info(f"✅ 建立索引 {idx_name}")
             except Exception:
                 pass  # 索引已存在為預期情況，忽略
+
+    # ── 冪等鍵 UNIQUE 索引（資料正確性關鍵：DB 層防重複交易）──────────────────
+    # 注意：使用獨立名稱 idx_txn_idem_uniq 而非 idx_txn_idem（後者可能以 non-unique 形式存在於舊 DB）
+    # NULL 值允許重複（MySQL/SQLite 皆如此），不影響正常未帶 idempotency_key 的舊交易。
+    with get_db() as (conn, cursor):
+        try:
+            cursor.execute(
+                "CREATE UNIQUE INDEX idx_txn_idem_uniq ON user_transactions (idempotency_key)"
+            )
+            conn.commit()
+            logger.info("✅ 建立唯一索引 idx_txn_idem_uniq（idempotency_key）")
+        except Exception:
+            pass  # 已存在或 NULL 衝突（NULL 在 UNIQUE 索引中允許多個）
 
     logger.info(f"✅ 資料庫初始化完成 ({'TiDB/MySQL' if USE_MYSQL else 'SQLite'})")

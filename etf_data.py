@@ -4,7 +4,7 @@ etf_data.py — ETF 靜態清單、資料抓取、DB 存取
 """
 from __future__ import annotations
 import os, random, time, logging, threading
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional
 from urllib.parse import quote as _url_quote
 
@@ -585,11 +585,11 @@ def seed_etf_master():
     """將靜態清單的 ETF 代碼與名稱寫入 etf_master，不寫入任何假價格。
 
     策略：
-      1. 38 檔熱門 ETF → INSERT/UPDATE，確保 is_hot=1
+      1. 全部熱門 ETF → INSERT/UPDATE，確保 is_hot=1
       2. 已在 DB 但不在熱門清單的舊 ETF → is_hot 重設為 0
          （避免歷史殘留 ETF 佔用排程更新資源）
     """
-    hot_tickers = [e['ticker'] for e in ALL_ETFS]   # ALL_ETFS = 全部 38 檔，均 hot=True
+    hot_tickers = [e['ticker'] for e in ALL_ETFS]   # ALL_ETFS = 全部熱門 ETF，均 hot=True
     with get_db() as (conn, cursor):
         # Step 1: 插入 / 更新熱門 ETF，強制設 is_hot=1
         for etf in ALL_ETFS:
@@ -700,7 +700,7 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
                     if events:
                         all_ev = [
                             (ticker,
-                             datetime.utcfromtimestamp(v["date"]).strftime("%Y-%m-%d"),
+                             datetime.fromtimestamp(v["date"], tz=timezone.utc).strftime("%Y-%m-%d"),
                              safe_float(v.get("amount", 0)))
                             for v in events.values()
                             if safe_float(v.get("amount", 0)) > 0
@@ -1056,7 +1056,7 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
                 # 持久化全部 5 年配息事件到 etf_dividends（回測 DRIP 使用）
                 all_ev = [
                     (ticker,
-                     datetime.utcfromtimestamp(v["date"]).strftime("%Y-%m-%d"),
+                     datetime.fromtimestamp(v["date"], tz=timezone.utc).strftime("%Y-%m-%d"),
                      safe_float(v.get("amount", 0)))
                     for v in events.values()
                     if safe_float(v.get("amount", 0)) > 0
@@ -1169,13 +1169,15 @@ def save_etf_data(data: dict):
               price_change_percent=VALUES(price_change_percent),
               volume=VALUES(volume), discount_premium=VALUES(discount_premium),
               -- 殖利率：IS NOT NULL 才更新
-              --   confirmed=True  且 yield=0 → NULL→NULL，仍更新為 0（正確清零）
+              --   confirmed=True  且 yield=0 → 傳 0（非 NULL），正確清零
               --   confirmed=False 且 yield=0 → 傳 NULL，保留 DB 舊值（API 失敗保護）
               dividend_yield=IF(VALUES(dividend_yield) IS NOT NULL,
                                 VALUES(dividend_yield),
                                 COALESCE(dividend_yield,0)),
-              -- 配息頻率：新值非「不配息」才更新（確保已知頻率不被清空）
-              payout_freq=IF(VALUES(payout_freq)!='不配息',
+              -- 配息頻率：以 dividend_yield IS NOT NULL 為確認信號（與殖利率同一 confirmed 語意）
+              --   confirmed=True  → 不論新值為何（含「不配息」），皆可更新（API 明確告知）
+              --   confirmed=False → yield=NULL，不更新頻率（保留 DB 已知值，防止 API 失敗誤清）
+              payout_freq=IF(VALUES(dividend_yield) IS NOT NULL,
                              VALUES(payout_freq),
                              COALESCE(payout_freq,'不配息')),
               -- 年化報酬：新值 IS NOT NULL 才更新（NULL = 資料不足，保留 DB 舊值）
