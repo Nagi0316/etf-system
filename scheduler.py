@@ -98,7 +98,7 @@ def _get_active_pool() -> list[dict]:
     try:
         with get_db() as (conn, cursor):
             cursor.execute("""
-                SELECT DISTINCT m.ticker, m.market
+                SELECT DISTINCT m.ticker, m.market, m.is_hot
                 FROM etf_master m
                 WHERE m.is_hot = 1
                   OR m.ticker IN (

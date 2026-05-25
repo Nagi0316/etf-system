@@ -479,8 +479,26 @@ TW_ETFS = [
     # ── 高股息（補充）──
     {'ticker': '00927',  'name': '群益半導體收益',          'market': 'TW', 'hot': True, 'issuer': '群益投信',     'listing_date': '2022-12-13', 'category': 'high_dividend'},
     {'ticker': '00918',  'name': '大華優利高填息30',        'market': 'TW', 'hot': True, 'issuer': '大華投信',     'listing_date': '2022-08-09', 'category': 'high_dividend'},
+    {'ticker': '00922',  'name': '國泰台灣領袖50',          'market': 'TW', 'hot': True, 'issuer': '國泰投信',     'listing_date': '2023-03-14', 'category': 'high_dividend'},
+    {'ticker': '00932',  'name': '兆豐永續高息等權重',      'market': 'TW', 'hot': True, 'issuer': '兆豐投信',     'listing_date': '2023-05-02', 'category': 'high_dividend'},
+    {'ticker': '00907',  'name': '永豐優息存股',            'market': 'TW', 'hot': True, 'issuer': '永豐投信',     'listing_date': '2022-09-08', 'category': 'high_dividend'},
+    # ── 寬基補充 ──
+    {'ticker': '00733',  'name': '富邦台灣中小',            'market': 'TW', 'hot': True, 'issuer': '富邦投信',     'listing_date': '2014-05-30', 'category': 'broad_market'},
+    # ── 產業補充 ──
+    {'ticker': '00762',  'name': '富邦NASDAQ',              'market': 'TW', 'hot': True, 'issuer': '富邦投信',     'listing_date': '2018-04-17', 'category': 'sector'},
+    {'ticker': '00861',  'name': '元大全球AI',              'market': 'TW', 'hot': True, 'issuer': '元大投信',     'listing_date': '2021-07-01', 'category': 'sector'},
+    {'ticker': '00875',  'name': '國泰智能電動車',          'market': 'TW', 'hot': True, 'issuer': '國泰投信',     'listing_date': '2021-07-13', 'category': 'sector'},
+    {'ticker': '00887',  'name': '永豐美國科技',            'market': 'TW', 'hot': True, 'issuer': '永豐投信',     'listing_date': '2021-09-16', 'category': 'sector'},
+    {'ticker': '00874',  'name': '國泰網路資安',            'market': 'TW', 'hot': True, 'issuer': '國泰投信',     'listing_date': '2021-03-23', 'category': 'sector'},
+    # ── ESG 補充 ──
+    {'ticker': '00923',  'name': '群益台ESG低碳50',         'market': 'TW', 'hot': True, 'issuer': '群益投信',     'listing_date': '2023-05-09', 'category': 'esg'},
     # ── 債券 ──
     {'ticker': '00679B', 'name': '元大美債20年',            'market': 'TW', 'hot': True, 'issuer': '元大投信',     'listing_date': '2017-01-11', 'category': 'bond'},
+    {'ticker': '00687B', 'name': '國泰20年美債',            'market': 'TW', 'hot': True, 'issuer': '國泰投信',     'listing_date': '2017-05-02', 'category': 'bond'},
+    {'ticker': '00696B', 'name': '富邦美債7至10年',         'market': 'TW', 'hot': True, 'issuer': '富邦投信',     'listing_date': '2017-09-29', 'category': 'bond'},
+    {'ticker': '00720B', 'name': '元大投資級公司債',        'market': 'TW', 'hot': True, 'issuer': '元大投信',     'listing_date': '2018-07-10', 'category': 'bond'},
+    {'ticker': '00725B', 'name': '國泰投資級公司債',        'market': 'TW', 'hot': True, 'issuer': '國泰投信',     'listing_date': '2018-11-15', 'category': 'bond'},
+    {'ticker': '00695B', 'name': '富邦美債1至3年',          'market': 'TW', 'hot': True, 'issuer': '富邦投信',     'listing_date': '2017-09-29', 'category': 'bond'},
 ]
 
 US_ETFS = [
@@ -515,7 +533,38 @@ US_ETFS = [
     {'ticker': 'BND',  'name': 'Vanguard Total Bond Market ETF',       'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2007-04-03', 'category': 'bond'},
     # ── 另類資產 ──
     {'ticker': 'GLD',  'name': 'SPDR Gold Shares',                     'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '2004-11-18', 'category': 'alternative'},
+    {'ticker': 'IAU',  'name': 'iShares Gold Trust',                   'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2005-01-21', 'category': 'alternative'},
+    {'ticker': 'SLV',  'name': 'iShares Silver Trust',                 'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2006-01-21', 'category': 'alternative'},
     {'ticker': 'IBIT', 'name': 'iShares Bitcoin Trust ETF',            'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2024-01-11', 'category': 'alternative'},
+    # ── 國際市場 ──
+    {'ticker': 'EFA',  'name': 'iShares MSCI EAFE ETF',                'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2001-08-14', 'category': 'international'},
+    {'ticker': 'VEA',  'name': 'Vanguard FTSE Developed Markets ETF',  'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2007-07-20', 'category': 'international'},
+    {'ticker': 'EEM',  'name': 'iShares MSCI Emerging Markets ETF',    'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2003-04-07', 'category': 'international'},
+    {'ticker': 'VWO',  'name': 'Vanguard FTSE Emerging Markets ETF',   'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2005-03-04', 'category': 'international'},
+    # ── 成長型 ──
+    {'ticker': 'VUG',  'name': 'Vanguard Growth ETF',                  'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2004-01-26', 'category': 'growth'},
+    {'ticker': 'SCHG', 'name': 'Schwab U.S. Large-Cap Growth ETF',     'market': 'US', 'hot': True, 'issuer': 'Schwab',       'listing_date': '2009-12-11', 'category': 'growth'},
+    {'ticker': 'QQQM', 'name': 'Invesco NASDAQ 100 ETF',               'market': 'US', 'hot': True, 'issuer': 'Invesco',      'listing_date': '2020-10-13', 'category': 'growth'},
+    # ── 價值型 ──
+    {'ticker': 'VTV',  'name': 'Vanguard Value ETF',                   'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2004-01-26', 'category': 'broad_market'},
+    {'ticker': 'SPLG', 'name': 'SPDR Portfolio S&P 500 ETF',           'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '2005-11-08', 'category': 'broad_market'},
+    {'ticker': 'VB',   'name': 'Vanguard Small-Cap ETF',               'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2004-01-26', 'category': 'broad_market'},
+    {'ticker': 'MDY',  'name': 'SPDR S&P MidCap 400 ETF',             'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '1995-05-04', 'category': 'broad_market'},
+    # ── 股息補充 ──
+    {'ticker': 'VIG',  'name': 'Vanguard Dividend Appreciation ETF',   'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2006-04-21', 'category': 'high_dividend'},
+    {'ticker': 'HDV',  'name': 'iShares Core High Dividend ETF',       'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2011-03-29', 'category': 'high_dividend'},
+    # ── 類股補充 ──
+    {'ticker': 'XLV',  'name': 'Health Care Select Sector SPDR Fund',  'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '1998-12-16', 'category': 'sector'},
+    {'ticker': 'XLY',  'name': 'Consumer Discretionary Select SPDR',   'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '1998-12-16', 'category': 'sector'},
+    {'ticker': 'XLI',  'name': 'Industrial Select Sector SPDR Fund',   'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '1998-12-16', 'category': 'sector'},
+    {'ticker': 'XLP',  'name': 'Consumer Staples Select Sector SPDR',  'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '1998-12-16', 'category': 'sector'},
+    {'ticker': 'XLU',  'name': 'Utilities Select Sector SPDR Fund',    'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '1998-12-16', 'category': 'sector'},
+    {'ticker': 'XBI',  'name': 'SPDR S&P Biotech ETF',                 'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '2006-01-31', 'category': 'sector'},
+    # ── 債券補充 ──
+    {'ticker': 'HYG',  'name': 'iShares iBoxx $ High Yield Corporate Bond ETF','market': 'US', 'hot': True, 'issuer': 'BlackRock', 'listing_date': '2007-04-04', 'category': 'bond'},
+    {'ticker': 'LQD',  'name': 'iShares iBoxx $ Investment Grade Corporate Bond ETF','market': 'US', 'hot': True, 'issuer': 'BlackRock', 'listing_date': '2002-07-22', 'category': 'bond'},
+    {'ticker': 'IEF',  'name': 'iShares 7-10 Year Treasury Bond ETF',  'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2002-07-22', 'category': 'bond'},
+    {'ticker': 'SHY',  'name': 'iShares 1-3 Year Treasury Bond ETF',   'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2002-07-22', 'category': 'bond'},
 ]
 
 # 去重
