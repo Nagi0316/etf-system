@@ -321,6 +321,35 @@ def _get_dividends(yt: str, raw_ticker: str = "", market: str = "",
     return pd.Series(dtype=float)
 
 
+def _check_data_availability(hist: pd.DataFrame, requested_start: str) -> dict | None:
+    """比對實際取得的歷史資料起點與使用者要求的起點。
+    若資料明顯較短（差距超過 60 天），回傳警示結構；否則回傳 None。
+    """
+    if hist.empty:
+        return None
+    actual_start = hist.index[0]
+    req_start    = pd.Timestamp(requested_start)
+    if actual_start <= req_start + pd.Timedelta(days=60):
+        return None
+
+    actual_years = max(0.0, (hist.index[-1] - actual_start).days / 365.25)
+    supported, unsupported = [], []
+    for y, label in [(1, "1年"), (3, "3年"), (5, "5年"), (10, "10年")]:
+        (supported if actual_years >= y else unsupported).append(label)
+
+    return {
+        "has_warning": True,
+        "actual_start": actual_start.strftime("%Y/%m"),
+        "available_years": round(actual_years, 1),
+        "supported_periods": supported,
+        "unsupported_periods": unsupported,
+        "message": (
+            f"⚠ 此 ETF 歷史資料自 {actual_start.strftime('%Y/%m')} 起，"
+            f"實際可回測區間已自動調整（{round(actual_years, 1)} 年）"
+        ),
+    }
+
+
 def _summary_slim(r: dict) -> dict:
     """回傳摘要欄位（排除 transactions，給策略比較用）"""
     return {k: v for k, v in r.items() if k != "transactions"}
@@ -348,6 +377,8 @@ async def run_backtest(body: BacktestIn):
             dividends = await asyncio.to_thread(
                 _get_dividends, yt, body.ticker, market, body.start_date, body.end_date
             )
+
+        data_warning = _check_data_availability(hist, body.start_date)
 
         exit_tax_rate = 0.001 if market == "TW" else 0.0
         result = run_accumulate(
@@ -423,6 +454,7 @@ async def run_backtest(body: BacktestIn):
                 **result,
                 "benchmark": benchmark_result,
                 "strategy_note": strategy_note,
+                "data_warning": data_warning,
                 "config": {
                     "ticker": body.ticker,
                     "enable_drip": body.enable_drip,

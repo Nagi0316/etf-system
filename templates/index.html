@@ -68,7 +68,7 @@
       </div>
 
       <!-- 右側統計數字 -->
-      <div class="grid grid-cols-2 gap-4 md:gap-5 md:min-w-[280px]">
+      <div class="grid grid-cols-3 gap-4 md:gap-5 md:min-w-[360px]">
         <div class="hero-stat">
           <div class="text-2xl font-black" id="stat-etf-count">—</div>
           <div class="text-xs text-indigo-200 mt-0.5">追蹤 ETF 數</div>
@@ -80,10 +80,6 @@
         <div class="hero-stat">
           <div class="text-2xl font-black" id="stat-us-count">—</div>
           <div class="text-xs text-indigo-200 mt-0.5">美股 ETF</div>
-        </div>
-        <div class="hero-stat">
-          <div class="text-2xl font-black" id="stat-divs-count">—</div>
-          <div class="text-xs text-indigo-200 mt-0.5">真實配息紀錄</div>
         </div>
       </div>
     </div>
@@ -416,12 +412,13 @@ async function loadStats() {
     const d = await fetch('/api/etf/index').then(r => r.json()).catch(() => null);
     if (!d?.data) return;
     const all = d.data;
-    const tw  = all.filter(e => e.market === 'TW').length;
-    const us  = all.filter(e => e.market === 'US').length;
-    document.getElementById('stat-etf-count').textContent = all.length;
+    const hot = all.filter(e => e.is_hot);
+    const tw  = hot.filter(e => e.market === 'TW').length;
+    const us  = hot.filter(e => e.market === 'US').length;
+    document.getElementById('stat-etf-count').textContent = hot.length;
     document.getElementById('stat-tw-count').textContent  = tw;
     document.getElementById('stat-us-count').textContent  = us;
-    window._ETF_IDX = all;   // 供 navbar 搜尋共用
+    window._ETF_IDX = all;   // 供 navbar 搜尋共用（保留全部供搜尋）
     // 配息事件數（index 已順帶回傳，不需另打 /api/health/data）
     if (d.divs_count != null) {
       const el = document.getElementById('stat-divs-count');

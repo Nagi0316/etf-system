@@ -451,55 +451,71 @@ def _annualized_return(closes: list, years: float) -> Optional[float]:
 
 TW_ETFS = [
     # ── 寬基指數 ──
-    {'ticker': '0050',   'name': '元大台灣50',              'market': 'TW', 'hot': True, 'issuer': '元大投信', 'listing_date': '2003-06-25'},
-    {'ticker': '0056',   'name': '元大高股息',              'market': 'TW', 'hot': True, 'issuer': '元大投信', 'listing_date': '2007-12-26'},
-    {'ticker': '006208', 'name': '富邦台50',                'market': 'TW', 'hot': True, 'issuer': '富邦投信', 'listing_date': '2012-07-17'},
-    {'ticker': '00850',  'name': '元大臺灣ESG永續',         'market': 'TW', 'hot': True, 'issuer': '',         'listing_date': None},
-    {'ticker': '00692',  'name': '富邦公司治理',            'market': 'TW', 'hot': True, 'issuer': '',         'listing_date': None},
+    {'ticker': '0050',   'name': '元大台灣50',              'market': 'TW', 'hot': True, 'issuer': '元大投信', 'listing_date': '2003-06-25', 'category': 'broad_market'},
+    {'ticker': '006208', 'name': '富邦台50',                'market': 'TW', 'hot': True, 'issuer': '富邦投信', 'listing_date': '2012-07-17', 'category': 'broad_market'},
+    {'ticker': '00646',  'name': '元大S&P500',              'market': 'TW', 'hot': True, 'issuer': '元大投信', 'listing_date': '2015-12-17', 'category': 'broad_market'},
+    # ── ESG ──
+    {'ticker': '00850',  'name': '元大臺灣ESG永續',         'market': 'TW', 'hot': True, 'issuer': '元大投信', 'listing_date': '2019-08-23', 'category': 'esg'},
     # ── 高股息 ──
-    {'ticker': '00878',  'name': '國泰永續高股息',          'market': 'TW', 'hot': True, 'issuer': '國泰投信', 'listing_date': '2020-07-20'},
-    {'ticker': '00919',  'name': '群益台灣精選高息',        'market': 'TW', 'hot': True, 'issuer': '群益投信', 'listing_date': '2022-10-20'},
-    {'ticker': '00929',  'name': '復華台灣科技優息',        'market': 'TW', 'hot': True, 'issuer': '復華投信', 'listing_date': '2023-03-31'},
-    {'ticker': '00713',  'name': '元大台灣高息低波',        'market': 'TW', 'hot': True, 'issuer': '元大投信', 'listing_date': '2017-09-27'},
-    {'ticker': '00940',  'name': '元大台灣價值高息',        'market': 'TW', 'hot': True, 'issuer': '元大投信', 'listing_date': '2024-03-20'},
-    {'ticker': '00939',  'name': '統一台灣高息動能',        'market': 'TW', 'hot': True, 'issuer': '',         'listing_date': None},
-    {'ticker': '00915',  'name': '凱基優選高股息30',        'market': 'TW', 'hot': True, 'issuer': '',         'listing_date': None},
-    {'ticker': '00900',  'name': '富邦特選高股息30',        'market': 'TW', 'hot': True, 'issuer': '',         'listing_date': None},
-    {'ticker': '00934',  'name': '中信成長高股息',          'market': 'TW', 'hot': True, 'issuer': '',         'listing_date': None},
-    # ── 科技 / 主題 ──
-    {'ticker': '00757',  'name': '統一FANG+',               'market': 'TW', 'hot': True, 'issuer': '',         'listing_date': None},
-    {'ticker': '00891',  'name': '中信關鍵半導體',          'market': 'TW', 'hot': True, 'issuer': '',         'listing_date': None},
+    {'ticker': '0056',   'name': '元大高股息',              'market': 'TW', 'hot': True, 'issuer': '元大投信', 'listing_date': '2007-12-26', 'category': 'high_dividend'},
+    {'ticker': '00878',  'name': '國泰永續高股息',          'market': 'TW', 'hot': True, 'issuer': '國泰投信', 'listing_date': '2020-07-20', 'category': 'high_dividend'},
+    {'ticker': '00919',  'name': '群益台灣精選高息',        'market': 'TW', 'hot': True, 'issuer': '群益投信', 'listing_date': '2022-10-20', 'category': 'high_dividend'},
+    {'ticker': '00929',  'name': '復華台灣科技優息',        'market': 'TW', 'hot': True, 'issuer': '復華投信', 'listing_date': '2023-03-31', 'category': 'high_dividend'},
+    {'ticker': '00713',  'name': '元大台灣高息低波',        'market': 'TW', 'hot': True, 'issuer': '元大投信', 'listing_date': '2017-09-27', 'category': 'high_dividend'},
+    {'ticker': '00940',  'name': '元大台灣價值高息',        'market': 'TW', 'hot': True, 'issuer': '元大投信', 'listing_date': '2024-03-20', 'category': 'high_dividend'},
+    {'ticker': '00939',  'name': '統一台灣高息動能',        'market': 'TW', 'hot': True, 'issuer': '統一投信', 'listing_date': '2023-07-04', 'category': 'high_dividend'},
+    {'ticker': '00915',  'name': '凱基優選高股息30',        'market': 'TW', 'hot': True, 'issuer': '凱基投信', 'listing_date': '2022-04-12', 'category': 'high_dividend'},
+    {'ticker': '00900',  'name': '富邦特選高股息30',        'market': 'TW', 'hot': True, 'issuer': '富邦投信', 'listing_date': '2021-12-15', 'category': 'high_dividend'},
+    {'ticker': '00934',  'name': '中信成長高股息',          'market': 'TW', 'hot': True, 'issuer': '中國信託投信', 'listing_date': '2023-06-07', 'category': 'high_dividend'},
+    # ── 產業 / 主題 ──
+    {'ticker': '00757',  'name': '統一FANG+',               'market': 'TW', 'hot': True, 'issuer': '統一投信',     'listing_date': '2018-12-13', 'category': 'sector'},
+    {'ticker': '00891',  'name': '中信關鍵半導體',          'market': 'TW', 'hot': True, 'issuer': '中國信託投信', 'listing_date': '2021-10-19', 'category': 'sector'},
+    {'ticker': '00830',  'name': '國泰費城半導體',          'market': 'TW', 'hot': True, 'issuer': '國泰投信',     'listing_date': '2020-01-09', 'category': 'sector'},
+    {'ticker': '00882',  'name': '中信美國科技',            'market': 'TW', 'hot': True, 'issuer': '中國信託投信', 'listing_date': '2021-01-19', 'category': 'sector'},
+    {'ticker': '00881',  'name': '國泰台灣5G+',             'market': 'TW', 'hot': True, 'issuer': '國泰投信',     'listing_date': '2020-10-15', 'category': 'sector'},
+    {'ticker': '00921',  'name': '兆豐台灣晶圓製造',        'market': 'TW', 'hot': True, 'issuer': '兆豐投信',     'listing_date': '2022-05-17', 'category': 'sector'},
+    {'ticker': '00896',  'name': '中信綠能及電動車',        'market': 'TW', 'hot': True, 'issuer': '中國信託投信', 'listing_date': '2021-12-15', 'category': 'sector'},
+    {'ticker': '00912',  'name': '中信臺灣智慧50',          'market': 'TW', 'hot': True, 'issuer': '中國信託投信', 'listing_date': '2022-07-26', 'category': 'sector'},
+    # ── 高股息（補充）──
+    {'ticker': '00927',  'name': '群益半導體收益',          'market': 'TW', 'hot': True, 'issuer': '群益投信',     'listing_date': '2022-12-13', 'category': 'high_dividend'},
+    {'ticker': '00918',  'name': '大華優利高填息30',        'market': 'TW', 'hot': True, 'issuer': '大華投信',     'listing_date': '2022-08-09', 'category': 'high_dividend'},
+    # ── 債券 ──
+    {'ticker': '00679B', 'name': '元大美債20年',            'market': 'TW', 'hot': True, 'issuer': '元大投信',     'listing_date': '2017-01-11', 'category': 'bond'},
 ]
 
 US_ETFS = [
     # ── 大盤指數 ──
-    {'ticker': 'SPY',  'name': 'SPDR S&P 500 ETF Trust',               'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '1993-01-22'},
-    {'ticker': 'VOO',  'name': 'Vanguard S&P 500 ETF',                 'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2010-09-07'},
-    {'ticker': 'IVV',  'name': 'iShares Core S&P 500 ETF',             'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
-    {'ticker': 'VTI',  'name': 'Vanguard Total Stock Market ETF',      'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2001-05-24'},
-    {'ticker': 'QQQ',  'name': 'Invesco QQQ Trust',                    'market': 'US', 'hot': True, 'issuer': 'Invesco',      'listing_date': '1999-03-10'},
-    {'ticker': 'VT',   'name': 'Vanguard Total World Stock ETF',       'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
-    {'ticker': 'IWM',  'name': 'iShares Russell 2000 ETF',             'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
-    {'ticker': 'DIA',  'name': 'SPDR Dow Jones Industrial Average ETF','market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
+    {'ticker': 'SPY',  'name': 'SPDR S&P 500 ETF Trust',               'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '1993-01-22', 'category': 'broad_market'},
+    {'ticker': 'VOO',  'name': 'Vanguard S&P 500 ETF',                 'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2010-09-07', 'category': 'broad_market'},
+    {'ticker': 'IVV',  'name': 'iShares Core S&P 500 ETF',             'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2000-05-15', 'category': 'broad_market'},
+    {'ticker': 'VTI',  'name': 'Vanguard Total Stock Market ETF',      'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2001-05-24', 'category': 'broad_market'},
+    {'ticker': 'IWM',  'name': 'iShares Russell 2000 ETF',             'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2000-05-22', 'category': 'broad_market'},
+    {'ticker': 'DIA',  'name': 'SPDR Dow Jones Industrial Average ETF','market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '1998-01-14', 'category': 'broad_market'},
+    # ── 國際 ──
+    {'ticker': 'VT',   'name': 'Vanguard Total World Stock ETF',       'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2008-06-24', 'category': 'international'},
+    {'ticker': 'VXUS', 'name': 'Vanguard Total International Stock ETF','market': 'US', 'hot': True, 'issuer': 'Vanguard',    'listing_date': '2011-01-26', 'category': 'international'},
     # ── 股息 ──
-    {'ticker': 'SCHD', 'name': 'Schwab U.S. Dividend Equity ETF',      'market': 'US', 'hot': True, 'issuer': 'Schwab',       'listing_date': '2011-10-20'},
-    {'ticker': 'VYM',  'name': 'Vanguard High Dividend Yield ETF',     'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
-    {'ticker': 'JEPI', 'name': 'JPMorgan Equity Premium Income ETF',   'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
+    {'ticker': 'SCHD', 'name': 'Schwab U.S. Dividend Equity ETF',      'market': 'US', 'hot': True, 'issuer': 'Schwab',       'listing_date': '2011-10-20', 'category': 'high_dividend'},
+    {'ticker': 'VYM',  'name': 'Vanguard High Dividend Yield ETF',     'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2006-11-10', 'category': 'high_dividend'},
+    {'ticker': 'JEPI', 'name': 'JPMorgan Equity Premium Income ETF',   'market': 'US', 'hot': True, 'issuer': 'JPMorgan',     'listing_date': '2020-05-20', 'category': 'high_dividend'},
+    {'ticker': 'JEPQ', 'name': 'JPMorgan Nasdaq Equity Premium Income ETF','market': 'US', 'hot': True, 'issuer': 'JPMorgan', 'listing_date': '2022-05-03', 'category': 'high_dividend'},
+    {'ticker': 'DGRO', 'name': 'iShares Core Dividend Growth ETF',     'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2014-06-10', 'category': 'high_dividend'},
     # ── 科技 / 半導體 ──
-    {'ticker': 'XLK',  'name': 'Technology Select Sector SPDR Fund',   'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
-    {'ticker': 'SOXX', 'name': 'iShares Semiconductor ETF',            'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
-    {'ticker': 'SMH',  'name': 'VanEck Semiconductor ETF',             'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
-    {'ticker': 'ARKK', 'name': 'ARK Innovation ETF',                   'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
+    {'ticker': 'QQQ',  'name': 'Invesco QQQ Trust',                    'market': 'US', 'hot': True, 'issuer': 'Invesco',      'listing_date': '1999-03-10', 'category': 'sector'},
+    {'ticker': 'XLK',  'name': 'Technology Select Sector SPDR Fund',   'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '1998-12-16', 'category': 'sector'},
+    {'ticker': 'SOXX', 'name': 'iShares Semiconductor ETF',            'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2001-07-10', 'category': 'sector'},
+    {'ticker': 'SMH',  'name': 'VanEck Semiconductor ETF',             'market': 'US', 'hot': True, 'issuer': 'VanEck',       'listing_date': '2011-12-20', 'category': 'sector'},
     # ── 類股 ──
-    {'ticker': 'XLF',  'name': 'Financial Select Sector SPDR Fund',    'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
-    {'ticker': 'XLE',  'name': 'Energy Select Sector SPDR Fund',       'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
-    {'ticker': 'VNQ',  'name': 'Vanguard Real Estate ETF',             'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
-    # ── 商品 ──
-    {'ticker': 'GLD',  'name': 'SPDR Gold Shares',                     'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '2004-11-18'},
+    {'ticker': 'XLF',  'name': 'Financial Select Sector SPDR Fund',    'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '1998-12-16', 'category': 'sector'},
+    {'ticker': 'XLE',  'name': 'Energy Select Sector SPDR Fund',       'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '1998-12-16', 'category': 'sector'},
+    {'ticker': 'VNQ',  'name': 'Vanguard Real Estate ETF',             'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2004-09-23', 'category': 'sector'},
     # ── 債券 ──
-    {'ticker': 'TLT',  'name': 'iShares 20+ Year Treasury Bond ETF',   'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
-    {'ticker': 'AGG',  'name': 'iShares Core U.S. Aggregate Bond ETF', 'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
-    {'ticker': 'BND',  'name': 'Vanguard Total Bond Market ETF',       'market': 'US', 'hot': True, 'issuer': '',             'listing_date': None},
+    {'ticker': 'TLT',  'name': 'iShares 20+ Year Treasury Bond ETF',   'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2002-07-22', 'category': 'bond'},
+    {'ticker': 'AGG',  'name': 'iShares Core U.S. Aggregate Bond ETF', 'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2003-09-22', 'category': 'bond'},
+    {'ticker': 'BND',  'name': 'Vanguard Total Bond Market ETF',       'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2007-04-03', 'category': 'bond'},
+    # ── 另類資產 ──
+    {'ticker': 'GLD',  'name': 'SPDR Gold Shares',                     'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '2004-11-18', 'category': 'alternative'},
+    {'ticker': 'IBIT', 'name': 'iShares Bitcoin Trust ETF',            'market': 'US', 'hot': True, 'issuer': 'BlackRock',    'listing_date': '2024-01-11', 'category': 'alternative'},
 ]
 
 # 去重
@@ -526,18 +542,20 @@ def seed_etf_master():
     """
     hot_tickers = [e['ticker'] for e in ALL_ETFS]   # ALL_ETFS = 全部 38 檔，均 hot=True
     with get_db() as (conn, cursor):
-        # Step 1: 插入 / 更新 38 檔熱門 ETF，強制設 is_hot=1
+        # Step 1: 插入 / 更新熱門 ETF，強制設 is_hot=1
         for etf in ALL_ETFS:
             issuer       = etf.get('issuer') or ''
             listing_date = etf.get('listing_date') or None
+            category     = etf.get('category') or None
             cursor.execute(
-                "INSERT INTO etf_master (ticker, name, market, is_hot, issuer, listing_date) "
-                "VALUES (%s, %s, %s, 1, %s, %s) "
+                "INSERT INTO etf_master (ticker, name, market, is_hot, issuer, listing_date, category) "
+                "VALUES (%s, %s, %s, 1, %s, %s, %s) "
                 "ON DUPLICATE KEY UPDATE "
                 "name=VALUES(name), market=VALUES(market), is_hot=1, "
                 "issuer=IF(VALUES(issuer)!='', VALUES(issuer), issuer), "
-                "listing_date=IF(VALUES(listing_date) IS NOT NULL, VALUES(listing_date), listing_date)",
-                (etf['ticker'], etf['name'], etf['market'], issuer, listing_date)
+                "listing_date=IF(VALUES(listing_date) IS NOT NULL, VALUES(listing_date), listing_date), "
+                "category=IF(VALUES(category) IS NOT NULL, VALUES(category), category)",
+                (etf['ticker'], etf['name'], etf['market'], issuer, listing_date, category)
             )
 
         # Step 2: 將不再熱門的舊 ETF 設 is_hot=0，停止自動排程更新
@@ -553,7 +571,7 @@ def seed_etf_master():
                 logger.info(f"🔄 {demoted} 檔 ETF 移出熱門清單（is_hot → 0）")
 
         conn.commit()
-    logger.info(f"✅ etf_master 種子資料完成（{len(ALL_ETFS)} 檔熱門 ETF）")
+    logger.info(f"✅ etf_master 種子資料完成（{len(ALL_ETFS)} 檔熱門 ETF，含 category）")
 
 
 # ══════════════════════════════════════════════════════════
