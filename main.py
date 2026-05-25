@@ -10,7 +10,6 @@ from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from config import TEMPLATES_DIR, STATIC_DIR, APP_URL
 from database import init_db, get_db

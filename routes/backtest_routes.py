@@ -138,21 +138,10 @@ def _get_dividends_from_db(ticker: str, start: str, end: str) -> pd.Series:
 
 # ── 原始 yfinance 下載（含 DB 優先策略）─────────────────────────────────────
 
-def _download_hist(yt: str, start: str, end: str,
-                   raw_ticker: str = "", market: str = "") -> pd.DataFrame:
-    """
-    取得歷史 OHLC DataFrame。
-    TW ETF：先嘗試 DB；DB 空時回退 yfinance（Railway 通常會失敗，但還是試）。
-    US ETF：直接用 yfinance。
-    """
-    if market == "TW" and raw_ticker:
-        df = _download_hist_from_db(raw_ticker, start, end)
-        if not df.empty:
-            return df
-        logger.warning(f"DB hist empty for TW ETF {raw_ticker}, falling back to yfinance")
-
+def _yf_download_safe(symbol: str, start: str, end: str) -> pd.DataFrame:
+    """yfinance 單一 symbol 下載，失敗回傳空 DataFrame。"""
     try:
-        df = yf.download(yt, start=start, end=end, progress=False, auto_adjust=True)
+        df = yf.download(symbol, start=start, end=end, progress=False, auto_adjust=True)
         if df.empty:
             return pd.DataFrame()
         if isinstance(df.columns, pd.MultiIndex):
@@ -166,8 +155,30 @@ def _download_hist(yt: str, start: str, end: str,
             result.index = result.index.tz_localize(None)
         return result
     except Exception as e:
-        logger.warning(f"yfinance download failed for {yt}: {e}")
+        logger.warning(f"yfinance download failed for {symbol}: {e}")
         return pd.DataFrame()
+
+
+def _download_hist(yt: str, start: str, end: str,
+                   raw_ticker: str = "", market: str = "") -> pd.DataFrame:
+    """
+    取得歷史 OHLC DataFrame。
+    TW ETF：先嘗試 DB；DB 空時依序試 .TW → .TWO（OTC 上櫃 ETF）。
+    US ETF：直接用 yfinance。
+    """
+    if market == "TW" and raw_ticker:
+        df = _download_hist_from_db(raw_ticker, start, end)
+        if not df.empty:
+            return df
+        logger.warning(f"DB hist empty for TW ETF {raw_ticker}, falling back to yfinance")
+        # 依序嘗試 TWSE (.TW) → TPEX (.TWO)
+        for suffix in (".TW", ".TWO"):
+            df = _yf_download_safe(f"{raw_ticker}{suffix}", start, end)
+            if not df.empty:
+                return df
+        return pd.DataFrame()
+
+    return _yf_download_safe(yt, start, end)
 
 
 def _get_dividends(yt: str, raw_ticker: str = "", market: str = "",

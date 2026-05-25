@@ -137,9 +137,15 @@ async def google_callback(code: str = "", state: str = "", error: str = ""):
 #  傳統帳密（保留向下相容，但 UI 已隱藏）
 # ══════════════════════════════════════════════════════════
 
+def _get_client_ip(request: Request) -> str:
+    """讀取真實客戶端 IP，優先解析 X-Forwarded-For（Railway / Cloudflare 反向代理場景）。"""
+    fwd = request.headers.get("x-forwarded-for", "")
+    return fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
+
+
 @router.post("/api/auth/register")
 async def register(request: Request, body: RegisterIn):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _get_client_ip(request)
     if _is_login_rate_limited(client_ip):
         return safe_json({"status": "error", "message": "請求次數過多，請 15 分鐘後再試"}, 429)
     try:
@@ -164,7 +170,7 @@ async def register(request: Request, body: RegisterIn):
 
 @router.post("/api/auth/login")
 async def login(request: Request, body: LoginIn):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _get_client_ip(request)
     if _is_login_rate_limited(client_ip):
         return safe_json({"status": "error", "message": "登入嘗試次數過多，請 15 分鐘後再試"}, 429)
     try:

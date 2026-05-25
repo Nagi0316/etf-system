@@ -15,7 +15,7 @@ scheduler.py — APScheduler 排程器
   07:00  _update_missing()  — 補漏掃描（熱門 ETF 超過 3 天未更新）
   08:00  sync_tw_etfs()     — 同步 TWSE/TPEX 全市場代碼
   14:35  _update_active()   — 台股收盤後確認收盤價
-  04:15  _update_active()   — 美股收盤後確認收盤價
+  05:15  _update_active()   — 美股收盤後確認收盤價（EDT/EST 皆正確）
   每 30 分 _evict_cache     — 清除過期快取
 """
 import asyncio
@@ -451,11 +451,12 @@ async def _check_price_alerts():
                 JOIN (
                     SELECT d1.ticker, d1.current_price FROM etf_daily_data d1
                     INNER JOIN (
-                        SELECT ticker, MAX(date) as md FROM etf_daily_data GROUP BY ticker
+                        SELECT ticker, MAX(date) as md FROM etf_daily_data
+                        WHERE current_price > 0 GROUP BY ticker
                     ) d2 ON d1.ticker=d2.ticker AND d1.date=d2.md
                 ) d ON pa.ticker=d.ticker
                 WHERE pa.is_active=1 AND pa.is_triggered=0
-                GROUP BY pa.ticker, d.current_price
+                GROUP BY pa.ticker
             """)
             rows = cursor.fetchall()
         for row in rows:
@@ -544,8 +545,10 @@ def start_scheduler() -> BackgroundScheduler:
     # 14:35 台股收盤後完整更新收盤資料
     sch.add_job(lambda: schedule_update(),    CronTrigger(hour=14, minute=35), max_instances=1)
 
-    # 04:15 美股收盤後完整更新收盤資料（美東 16:15，夏令對應台灣 04:15）
-    sch.add_job(lambda: schedule_update(),    CronTrigger(hour=4,  minute=15), max_instances=1)
+    # 05:15 美股收盤後完整更新收盤資料
+    # 美東 16:00 收盤：EDT(UTC-4)=台灣 04:00；EST(UTC-5)=台灣 05:00
+    # 取 05:15 確保冬令（EST）也在收盤後執行，夏令延遲 75 分鐘仍可接受
+    sch.add_job(lambda: schedule_update(),    CronTrigger(hour=5,  minute=15), max_instances=1)
 
     # 每日 03:00 增量補齊 TW ETF 歷史收盤價（只補缺月，冪等）
     sch.add_job(lambda: schedule_history_backfill(), CronTrigger(hour=3, minute=0), max_instances=1)
@@ -553,8 +556,11 @@ def start_scheduler() -> BackgroundScheduler:
     # 每日 03:30 從 DB 歷史收盤價重算年化報酬率（不依賴 Yahoo，補齊 03:00 補填的資料）
     sch.add_job(lambda: schedule_returns_recalc(),   CronTrigger(hour=3, minute=30), max_instances=1)
 
-    # 每日 04:30 增量補齊 US ETF 歷史收盤價（04:15 美股收盤更新完成後啟動，透過 CF 代理）
-    sch.add_job(lambda: schedule_us_history_backfill(), CronTrigger(hour=4, minute=30), max_instances=1)
+    # 每日 05:30 增量補齊 US ETF 歷史收盤價（05:15 美股收盤更新完成後啟動，透過 CF 代理）
+    sch.add_job(lambda: schedule_us_history_backfill(), CronTrigger(hour=5, minute=30), max_instances=1)
+
+    # 每日 05:50 US 歷史補齊後重算年化報酬率（確保 US ETF returns 在台灣早上有最新值）
+    sch.add_job(lambda: schedule_returns_recalc(), CronTrigger(hour=5, minute=50), max_instances=1)
 
     # 14:40 台股收盤後再次重算報酬率（取得當日最新收盤後重算）
     sch.add_job(lambda: schedule_returns_recalc(),   CronTrigger(hour=14, minute=40), max_instances=1)
@@ -573,6 +579,6 @@ def start_scheduler() -> BackgroundScheduler:
         "   【台股】09:00–13:30 Asia/Taipei\n"
         "   【美股】09:30–16:00 America/New_York（DST-aware）\n"
         "   03:00 TWSE 歷史補齊 | 03:30 報酬率重算 | 07:00 補漏掃描 | 08:00 TWSE 同步\n"
-        "   14:35 台股收盤完整更新 | 14:40 報酬率重算 | 04:15 美股收盤完整更新 | 04:30 US 歷史補齊 | 每30分清快取"
+        "   14:35 台股收盤完整更新 | 14:40 報酬率重算 | 05:15 美股收盤完整更新 | 05:30 US 歷史補齊 | 05:50 報酬率重算 | 每30分清快取"
     )
     return sch
