@@ -218,7 +218,7 @@ KNOWN_PAYOUT_FREQ: dict = {
     'VTI':    '季配',
     'QQQ':    '季配',
     'SCHD':   '季配',
-    'VUG':    '年配',    # Vanguard Growth ETF（每年配息）
+    'VUG':    '季配',    # Vanguard Growth ETF（每季配息：3/6/9/12月）
     'VT':     '季配',    # Vanguard Total World（每季配息）
     'IWM':    '季配',
     'DIA':    '月配',
@@ -271,7 +271,7 @@ KNOWN_ANNUAL_DIVIDEND: dict = {
     '00919':  2.52,  '00929':  1.80,  '00940':  0.90,
     '00939':  1.44,  '00934':  1.68,  '00918':  1.80,
     '00915':  1.60,  '00900':  2.40,  '00701':  2.20,
-    '00891':  3.00,  '00936':  1.56,  '00944':  2.00,
+    '00891':  1.00,  '00936':  1.56,  '00944':  2.00,  # 00891 半導體主題，非高股息，年息約1元
     '00907':  1.80,  '00892':  1.20,
     # ── 科技/主題 ──
     '00881':  1.00,  '00757':  2.50,  '00762':  0.50,
@@ -280,7 +280,7 @@ KNOWN_ANNUAL_DIVIDEND: dict = {
     '00631L': 0.00,  '00632R': 0.00,  '00675L': 0.00,
     '00637L': 0.00,  '00715L': 0.00,  '00642U': 0.00,
     # ── 其他台股 ──
-    '00861':  1.00,  '006205': 0.50,
+    '00861':  1.00,  '006205': 0.50,  # 00861 元大臺灣ESG永續ETF（季配，年息約1元）
     # ── 債券 ETF ──
     '00679B': 0.42,  '00687B': 0.38,
     '00695B': 0.36,  '00720B': 0.48,
@@ -520,13 +520,13 @@ def seed_etf_master():
     """將靜態清單的 ETF 代碼與名稱寫入 etf_master，不寫入任何假價格。
 
     策略：
-      1. 60 檔熱門 ETF → INSERT/UPDATE，確保 is_hot=1
+      1. 38 檔熱門 ETF → INSERT/UPDATE，確保 is_hot=1
       2. 已在 DB 但不在熱門清單的舊 ETF → is_hot 重設為 0
          （避免歷史殘留 ETF 佔用排程更新資源）
     """
-    hot_tickers = [e['ticker'] for e in ALL_ETFS]   # ALL_ETFS = 全部 60 檔，均 hot=True
+    hot_tickers = [e['ticker'] for e in ALL_ETFS]   # ALL_ETFS = 全部 38 檔，均 hot=True
     with get_db() as (conn, cursor):
-        # Step 1: 插入 / 更新 60 檔熱門 ETF，強制設 is_hot=1
+        # Step 1: 插入 / 更新 38 檔熱門 ETF，強制設 is_hot=1
         for etf in ALL_ETFS:
             cursor.execute(
                 "INSERT INTO etf_master (ticker, name, market, is_hot) "

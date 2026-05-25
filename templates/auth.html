@@ -73,7 +73,7 @@
       <p class="text-xs text-slate-400 text-center mb-3">— 開發模式（帳號註冊）—</p>
       <input type="text" id="dev-username" placeholder="使用者名稱（至少2字元）" class="input">
       <input type="email" id="dev-email2" placeholder="Email" class="input">
-      <input type="password" id="dev-password2" placeholder="密碼（至少6字元）" class="input">
+      <input type="password" id="dev-password2" placeholder="密碼（至少 8 字元）" class="input">
       <button onclick="devRegister()" class="btn-primary w-full justify-center">
         <i class="fas fa-user-plus"></i>註冊
       </button>
@@ -162,6 +162,7 @@
     const email = document.getElementById('dev-email2')?.value;
     const password = document.getElementById('dev-password2')?.value;
     if (!username || !email || !password) return showToast('請填寫所有欄位', false);
+    if (password.length < 8) return showToast('密碼至少需要 8 字元', false);
     const data = await fetch('/api/auth/register', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},

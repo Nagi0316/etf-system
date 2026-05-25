@@ -352,7 +352,9 @@ async def force_refresh_etf(ticker: str, request: Request, background_tasks: Bac
     from auth import get_current_user
     from fastapi import HTTPException
     try:
-        get_current_user(request)
+        # credentials=None → 略過 Bearer header，直接走 Cookie 驗證
+        # 若傳入 Depends(_bearer) 物件（預設值）會因無 .scheme 屬性而 AttributeError
+        get_current_user(request, credentials=None)
     except HTTPException:
         return safe_json({"status": "error", "message": "請先登入"}, 401)
 
@@ -973,7 +975,13 @@ async def update_one_etf(ticker: str):
 
 
 @router.post("/api/etf/force-update")
-async def force_update():
+async def force_update(request: Request):
+    from auth import get_current_user
+    from fastapi import HTTPException
+    try:
+        get_current_user(request, credentials=None)
+    except HTTPException:
+        return safe_json({"status": "error", "message": "請先登入"}, 401)
     from scheduler import schedule_update
     schedule_update()
     return safe_json({"status": "success", "message": "已觸發全量更新"})
@@ -1042,7 +1050,13 @@ async def get_top_scores(market: str = "TW", limit: int = 10):
 # ── 新增 ETF ──
 
 @router.post("/api/etf/add-to-master")
-async def add_etf_to_master(body: EtfAddIn):
+async def add_etf_to_master(body: EtfAddIn, request: Request):
+    from auth import get_current_user
+    from fastapi import HTTPException
+    try:
+        get_current_user(request, credentials=None)
+    except HTTPException:
+        return safe_json({"status": "error", "message": "請先登入"}, 401)
     with get_db() as (conn, cursor):
         cursor.execute(
             "INSERT INTO etf_master (ticker,name,market) VALUES (%s,%s,%s) "

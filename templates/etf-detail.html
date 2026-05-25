@@ -9,8 +9,8 @@
   .period-btn.active { background:#eef2ff; color:#4f46e5; font-weight:700; }
   .dark .period-btn:hover { background:#312e81; color:#a5b4fc; }
   .dark .period-btn.active { background:#312e81; color:#a5b4fc; }
-  /* 無資料的時段：dim 但保留版面（不用 display:none 避免版面跳動） */
-  .period-btn[style*="pointer-events: none"] { text-decoration: line-through; }
+  /* 無資料的時段：dim 但保留版面，data-failed="1" 加刪除線 */
+  .period-btn[data-failed="1"] { text-decoration: line-through; opacity: 0.4; }
 </style>
 {% endblock %}
 
@@ -429,7 +429,7 @@ async function loadDipAlert(ticker) {
   const rec = alert.recommendation || {};
   document.getElementById('dip-analysis-content').innerHTML = `
     <div class="flex items-center gap-3 p-3 bg-orange-50 dark:bg-orange-900/20 rounded-lg">
-      <div class="text-2xl">${rec.level === 'strong' ? '🔥' : rec.level === 'moderate' ? '⚡' : '📊'}</div>
+      <div class="text-2xl">${{'重大回撤':'🔥','深度修正':'🔥','中度修正':'⚡','輕度回調':'📊','觀察':'🔍'}[rec.level] || '📊'}</div>
       <div>
         <div class="font-semibold text-slate-800 dark:text-slate-200 text-sm">${rec.reason || '低於近期高點'}</div>
         <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">${rec.description || ''}</div>
@@ -448,27 +448,29 @@ const _periodStatus = {};
 /**
  * 標記某時段按鈕為「資料不足」：變灰 + 加 title 提示，但 **不隱藏**。
  * 隱藏（display:none）會造成按鈕逐一消失的詭異視覺效果（UX 大忌）；
- * 改用 opacity + pointer-events:none 讓版面穩定，使用者仍可看見完整按鈕集。
+ * 改用 data-failed 屬性讓版面穩定，使用者仍可看見完整按鈕集，並能直接點擊重試。
+ */
+/**
+ * 標記時段按鈕為「資料不足」：視覺變灰 + 刪除線，但 **保持可點擊**（onClick = 重試）。
+ * 不設 pointer-events:none，讓 changePeriod 的 retry 分支能正常觸發。
  */
 function _dimPeriodBtn(period) {
   document.querySelectorAll('.period-btn').forEach(b => {
     if (b.textContent.toUpperCase() === period.toUpperCase()) {
-      b.style.opacity       = '0.35';
-      b.style.pointerEvents = 'none';
-      b.style.cursor        = 'not-allowed';
-      b.title               = '此期間暫無資料（可點「刷新」後重試）';
+      b.dataset.failed = '1';
+      b.style.opacity  = '';    // 由 CSS [data-failed="1"] 統一控制
+      b.title          = '此期間暫無資料，點此重試';
     }
   });
 }
 
-/** 恢復按鈕為可點擊狀態（重刷後呼叫）。 */
+/** 恢復按鈕為正常狀態（重試成功或重刷後呼叫）。 */
 function _restorePeriodBtn(period) {
   document.querySelectorAll('.period-btn').forEach(b => {
     if (b.textContent.toUpperCase() === period.toUpperCase()) {
-      b.style.opacity       = '';
-      b.style.pointerEvents = '';
-      b.style.cursor        = '';
-      b.title               = '';
+      delete b.dataset.failed;
+      b.style.opacity = '';
+      b.title         = '';
     }
   });
 }
@@ -631,7 +633,11 @@ async function forceRefresh() {
   } else {
     btn.disabled = false;
     btn.innerHTML = '<i class="fas fa-sync-alt"></i>';
-    showToast(data?.message || '重算失敗，請稍後再試', false);
+    // 僅在「60 秒冷卻」時提示使用者，其餘失敗靜默處理（沒刷到就算了）
+    if (data?.message && data.message.includes('60 秒')) {
+      showToast(data.message, false);
+    }
+    // 其他錯誤（網路、伺服器）靜默還原按鈕即可，不顯示恐怖紅色提示
   }
 }
 
@@ -743,10 +749,10 @@ async function _liveRefreshPrice() {
         document.getElementById('volume').textContent = vol >= 1e6 ? (vol/1e6).toFixed(2)+'M' : vol.toLocaleString();
       }
     }
-    // 更新最後更新時間
-    const nowStr = new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    const el = document.getElementById('last-updated');
-    if (el) { el.textContent = `更新 ${nowStr}`; el.classList.remove('hidden'); }
+    // 盤中更新時間顯示在 live-badge 旁，不覆蓋 #last-updated（那裡是 DB 資料日期指示器）
+    const nowStr = new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
+    const liveBadge = document.getElementById('live-badge');
+    if (liveBadge) liveBadge.textContent = `● LIVE · ${nowStr}`;
   } catch(e) { /* silent fail — 不因網路問題中斷頁面 */ }
 }
 
