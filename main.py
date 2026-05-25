@@ -111,6 +111,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── 公開 API 快取策略（啟用瀏覽器 HTTP 快取，減少冗餘伺服器往返）──
+# 只對 GET 請求且 2xx 回應的公開 ETF/FX 端點加 Cache-Control；
+# 用戶私有資料（auth/portfolio/watchlist）不在此清單，回傳 no-store。
+_API_CACHE_MAP: list[tuple[str, int]] = [
+    ("/api/etf/index",          1800),   # 30 min — ETF master 清單鮮少變動
+    ("/api/etf/rankings/",       300),   # 5 min  — 行情排行
+    ("/api/etf/scores/top",      600),   # 10 min — 評分榜
+    ("/api/etf/score/",          600),   # 10 min — 單一評分
+    ("/api/etf/detail/",         300),   # 5 min  — 單一詳情
+    ("/api/etf/price-history/",   60),   # 1 min  — 走勢圖（價格變動頻繁）
+    ("/api/etf/dip-alert/",      120),   # 2 min  — 低檔警示
+    ("/api/fx/",                 300),   # 5 min  — 匯率
+]
+
+@app.middleware("http")
+async def add_cache_control(request: Request, call_next: Callable) -> Response:
+    response = await call_next(request)
+    if request.method == "GET" and response.status_code < 300:
+        path = request.url.path
+        for prefix, ttl in _API_CACHE_MAP:
+            if path.startswith(prefix):
+                # stale-while-revalidate = 2×ttl：過期後背景重驗證，前景不等待
+                response.headers.setdefault(
+                    "Cache-Control",
+                    f"public, max-age={ttl}, stale-while-revalidate={ttl * 2}"
+                )
+                break
+    return response
+
+
 # ── 安全 HTTP 標頭（防 Clickjacking / MIME-sniffing / 資訊洩漏）──
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next: Callable) -> Response:

@@ -109,20 +109,19 @@ def score_etf(ticker: str) -> Optional[dict]:
 
     try:
         with get_db() as (conn, cursor):
-            # ── 取標的最新資料 ──────────────────────────
+            # ── 取標的最新資料（相關子查詢 + idx_daily_date 索引，不掃全表）──
             cursor.execute("""
                 SELECT m.ticker, m.market,
                     d.current_price, d.annual_return_1y, d.dividend_yield,
                     d.expense_ratio, d.fifty_two_week_high, d.fifty_two_week_low,
                     d.price_change_percent
                 FROM etf_master m
-                JOIN (
-                    SELECT d1.* FROM etf_daily_data d1
-                    INNER JOIN (
-                        SELECT ticker, MAX(date) AS md FROM etf_daily_data
-                        WHERE current_price > 0 GROUP BY ticker
-                    ) d2 ON d1.ticker = d2.ticker AND d1.date = d2.md
-                ) d ON m.ticker = d.ticker
+                JOIN etf_daily_data d
+                  ON d.ticker = m.ticker
+                 AND d.date = (
+                       SELECT MAX(d2.date) FROM etf_daily_data d2
+                       WHERE d2.ticker = m.ticker AND d2.current_price > 0
+                     )
                 WHERE m.ticker = %s
             """, (ticker,))
             row = cursor.fetchone()

@@ -57,6 +57,17 @@ LEFT JOIN (
 ) d ON m.ticker = d.ticker
 """
 
+# 單一 ticker 查詢專用：相關子查詢搭配 idx_daily_date(ticker,date) 索引，
+# 避免 GROUP BY 掃描全表（90 ETF × 500 天 = 45K 行 → 只掃該 ticker 的行）
+LATEST_DAILY_JOIN_SINGLE = """
+LEFT JOIN etf_daily_data d
+  ON d.ticker = m.ticker
+ AND d.date = (
+       SELECT MAX(d2.date) FROM etf_daily_data d2
+       WHERE d2.ticker = m.ticker AND d2.current_price > 0
+     )
+"""
+
 _ETF_DETAIL_SELECT = """
     SELECT m.ticker, m.name, m.market,
         m.issuer, m.listing_date,
@@ -84,8 +95,9 @@ _ETF_DETAIL_SELECT = """
 """
 
 def _fetch_etf_detail_row(cursor, ticker: str) -> Optional[dict]:
-    """查詢單一 ETF 詳情，避免在同一請求內重複撰寫相同的 SQL。"""
-    cursor.execute(_ETF_DETAIL_SELECT.format(join=LATEST_DAILY_JOIN), (ticker,))
+    """查詢單一 ETF 詳情，使用相關子查詢（LATEST_DAILY_JOIN_SINGLE）
+    避免全表 GROUP BY，搭配 idx_daily_date(ticker,date) 走索引。"""
+    cursor.execute(_ETF_DETAIL_SELECT.format(join=LATEST_DAILY_JOIN_SINGLE), (ticker,))
     return cursor.fetchone()
 
 
@@ -787,10 +799,15 @@ async def get_price_history(ticker: str, period: str = "1y"):
     yf_interval = INTERVAL_MAP.get(p, "1d")
     is_intraday = p in ("1D", "5D")
 
-    with get_db() as (conn, cursor):
-        cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
-        row = cursor.fetchone()
-        market = (row or {}).get("market") or ("TW" if ticker[:4].isdigit() else "US")
+    # market 欄位不會變動 → 快取 1 小時，省掉每次走勢圖請求的 DB round-trip
+    _market_key = f"market:{ticker}"
+    market = cache.get(_market_key)
+    if not market:
+        with get_db() as (conn, cursor):
+            cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
+            row = cursor.fetchone()
+            market = (row or {}).get("market") or ("TW" if ticker[:4].isdigit() else "US")
+        cache.set(_market_key, market, 3600)
 
     yt = _yahoo_ticker(ticker, market)
     # 時區偏移：台股 UTC+8；美股動態判斷 EDT(UTC-4) / EST(UTC-5)
