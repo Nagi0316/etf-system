@@ -144,18 +144,25 @@ def score_etf(ticker: str) -> Optional[dict]:
 def _compute_score(row: dict, peer: dict) -> dict:
     """給定 etf 資料列和同類別統計，計算評分並組裝回傳結果。"""
     cp   = float(row.get("current_price") or 0)
-    r1y  = float(row.get("annual_return_1y") or 0)
     yld  = float(row.get("dividend_yield") or 0)
     exp  = float(row.get("expense_ratio") or 0)
     h52  = float(row.get("fifty_two_week_high") or cp)
     l52  = float(row.get("fifty_two_week_low")  or cp)
     chg  = float(row.get("price_change_percent") or 0)
 
+    raw_r1y = row.get("annual_return_1y")
+    r1y_known = raw_r1y is not None
+    r1y  = float(raw_r1y) if r1y_known else None
+
     # ── ① 報酬力（30分）────────────────────────────────
     # 以 Z-score 方式：均值 ± 2σ 區間映射到 [0,1]
+    # 無回報資料時給同類別中位分（15分），不以 0% 計算懲罰
     avg_r, std_r = peer["avg_r1y"], max(peer["std_r1y"], 1.0)
-    r_z = (r1y - avg_r) / std_r  # -2 ~ +2 為正常
-    r_score = _score_clamp(r_z, -2, 2) * 30
+    if r1y_known:
+        r_z = (r1y - avg_r) / std_r  # -2 ~ +2 為正常
+        r_score = _score_clamp(r_z, -2, 2) * 30
+    else:
+        r_score = 15.0  # 中立分
 
     # ── ② 配息力（20分）─────────────────────────────────
     avg_yld = peer["avg_yld"]
@@ -208,7 +215,7 @@ def _compute_score(row: dict, peer: dict) -> dict:
         "grade_color": g["color"],
         "breakdown": breakdown,
         "meta": {
-            "annual_return_1y": round(r1y, 2),
+            "annual_return_1y": round(r1y, 2) if r1y_known else None,
             "dividend_yield":   round(yld, 2),
             "expense_ratio":    round(exp * 100, 4),   # 轉為百分比
             "peer_avg_return":  round(peer["avg_r1y"], 2),

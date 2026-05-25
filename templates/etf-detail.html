@@ -654,7 +654,8 @@ function openTradeModal() {
   if (!Auth.isLoggedIn()) { showToast('請先登入', false); setTimeout(()=>location.href='/auth',1000); return; }
   document.getElementById('modal-title').textContent = `${etfData.ticker} — 交易`;
   document.getElementById('trade-price').value = (parseFloat(etfData.current_price)||0).toFixed(2);
-  const today = new Date().toISOString().split('T')[0];
+  const _d = new Date();
+  const today = `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,'0')}-${String(_d.getDate()).padStart(2,'0')}`;
   document.getElementById('trade-date').value = document.getElementById('trade-date').max = today;
   document.getElementById('trade-shares').value = '';
   document.getElementById('trade-commission').value = '0';

@@ -277,7 +277,9 @@ async def search_etf(request: Request, q: str = Query(..., min_length=1)):
 
     # ── 隨需探索：資料庫找不到且輸入看起來像代碼 ──
     if not rows and _looks_like_ticker(q_up):
-        client_ip  = request.client.host if request.client else "unknown"
+        # 優先讀 X-Forwarded-For（Railway/Cloudflare 反向代理場景），避免永遠得到 proxy IP
+        fwd = request.headers.get("x-forwarded-for", "")
+        client_ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
         discovered = await _on_demand_fetch(q_up, client_ip)
         if discovered:
             rows = [discovered]
@@ -791,8 +793,20 @@ async def get_price_history(ticker: str, period: str = "1y"):
         market = (row or {}).get("market") or ("TW" if ticker[:4].isdigit() else "US")
 
     yt = _yahoo_ticker(ticker, market)
-    # 時區偏移：台股 UTC+8，美股 EDT = UTC-4（夏令）
-    tz_offset_h = 8 if market == "TW" else -4
+    # 時區偏移：台股 UTC+8；美股動態判斷 EDT(UTC-4) / EST(UTC-5)
+    # DST：3月第二個週日 ~ 11月第一個週日（美東）
+    if market == "TW":
+        tz_offset_h = 8
+    else:
+        _now = datetime.now(tz=timezone.utc)
+        _y = _now.year
+        # 3月第二個週日
+        _mar2 = datetime(_y, 3, 8, 7, tzinfo=timezone.utc)
+        _mar2 += timedelta(days=(6 - _mar2.weekday()) % 7)
+        # 11月第一個週日
+        _nov1 = datetime(_y, 11, 1, 6, tzinfo=timezone.utc)
+        _nov1 += timedelta(days=(6 - _nov1.weekday()) % 7)
+        tz_offset_h = -4 if _mar2 <= _now < _nov1 else -5  # EDT or EST
 
     # timeout 策略：1D/5D (intraday) 用 5s 快速失敗；非即時歷史資料用 12s（US ETF 1Y 回傳 ~252 筆）
     yahoo_timeout = 5 if is_intraday else 12
