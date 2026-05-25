@@ -155,7 +155,7 @@ async def _update_active():
                 logger.warning(f"  save {ticker} 失敗: {e}")
                 continue
             try:
-                from routes.notification_routes import check_price_alerts
+                from services.alerts import check_price_alerts
                 check_price_alerts(ticker, current_price)
             except Exception as e:
                 logger.debug(f"  price alert {ticker}: {e}")
@@ -441,7 +441,7 @@ async def _run_twse_sync():
 # ──────────────────────────────────────────────
 
 async def _check_price_alerts():
-    from routes.notification_routes import check_price_alerts
+    from services.alerts import check_price_alerts
     from database import get_db
     try:
         with get_db() as (conn, cursor):

@@ -21,7 +21,7 @@ class LoginIn(BaseModel):
 
 class ChangePasswordIn(BaseModel):
     current_password: str
-    new_password: str = Field(..., min_length=6)
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 
 # ══════════════════════════════════════════════════════════

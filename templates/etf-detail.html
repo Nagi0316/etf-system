@@ -389,10 +389,28 @@ function renderData() {
   const yld = parseFloat(d.dividend_yield) || 0;
   document.getElementById('dividend-yield').textContent = yld > 0 ? yld.toFixed(2)+'%' : '-';
 
-  // 第一次渲染完成 → 顯示更新時間 + 啟動盤中自動更新
-  const nowStr = new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
+  // 第一次渲染完成 → 顯示「資料日期」（非本地渲染時間）+ 過期警告 + 啟動盤中更新
   const updEl = document.getElementById('last-updated');
-  if (updEl) { updEl.textContent = `更新 ${nowStr}`; updEl.classList.remove('hidden'); }
+  if (updEl) {
+    const dataDate = d.data_date ? String(d.data_date).slice(0, 10) : null;
+    if (dataDate) {
+      const msAgo  = Date.now() - new Date(dataDate).getTime();
+      const daysAgo = Math.floor(msAgo / 86400000);
+      if (daysAgo <= 1) {
+        // 1 天以內：正常顯示日期
+        updEl.textContent = `資料日期 ${dataDate}`;
+        updEl.className = 'text-[10px] text-slate-400 dark:text-slate-500 mt-1';
+      } else {
+        // 超過 1 天：以橘色警告標記，提示使用者點「刷新」
+        updEl.textContent = `⚠ 資料日期 ${dataDate}（${daysAgo} 天前）`;
+        updEl.className = 'text-[10px] text-amber-500 dark:text-amber-400 mt-1 font-medium';
+      }
+      updEl.classList.remove('hidden');
+    } else {
+      updEl.textContent = '資料日期未知';
+      updEl.className = 'text-[10px] text-slate-300 dark:text-slate-600 mt-1 hidden';
+    }
+  }
   if (!_liveTimer) _startLiveRefresh();
 }
 

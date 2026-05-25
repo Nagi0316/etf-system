@@ -572,12 +572,12 @@ def _maybe_background_refresh(ticker: str, row: dict):
             _refresh_in_progress.discard(ticker)
 
     try:
-        # asyncio.get_event_loop() 在 Python 3.10+ 非 async 上下文中已廢棄
-        # 改用 get_running_loop()；若無 running loop（單元測試等）則靜默略過
+        # get_running_loop() 在有 event loop 的 async 上下文中才會成功
+        # loop.create_task() 是 3.7+ 推薦做法，ensure_future(loop=) 已於 3.10 廢棄
         loop = asyncio.get_running_loop()
-        asyncio.ensure_future(_do(), loop=loop)
+        loop.create_task(_do())
     except RuntimeError:
-        pass  # 無 running loop，略過背景更新（不影響主流程）
+        pass  # 無 running loop（單元測試等），略過背景更新不影響主流程
     except Exception:
         pass
 

@@ -128,44 +128,6 @@ def push_notification(user_id: int, ntype: str, title: str, content: str, ticker
         conn.commit()
 
 
-def check_price_alerts(ticker: str, current_price: float):
-    """排程器呼叫：檢查到價提醒並推送通知。
-    單一 DB 連線完成讀取、批次插入通知、批次更新狀態，避免 N×3 次連線開銷。
-    """
-    with get_db() as (conn, cursor):
-        cursor.execute(
-            "SELECT pa.*, m.name FROM price_alerts pa "
-            "LEFT JOIN etf_master m ON pa.ticker=m.ticker "
-            "WHERE pa.ticker=%s AND pa.is_active=1 AND pa.is_triggered=0",
-            (ticker,)
-        )
-        alerts = cursor.fetchall()
-
-        triggered_ids = []
-        for alert in alerts:
-            hit = (
-                (alert["alert_type"] == "above" and current_price >= float(alert["target_price"])) or
-                (alert["alert_type"] == "below" and current_price <= float(alert["target_price"]))
-            )
-            if not hit:
-                continue
-
-            direction = "突破" if alert["alert_type"] == "above" else "跌破"
-            title   = f"📈 {alert.get('name', ticker)} ({ticker}) {direction}目標價"
-            content = (
-                f"{alert.get('name', ticker)} 目前價格 {current_price}，"
-                f"已{direction}您設定的目標價 {float(alert['target_price'])}。"
-            )
-            cursor.execute(
-                "INSERT INTO notifications (user_id,type,title,content,ticker) VALUES (%s,%s,%s,%s,%s)",
-                (alert["user_id"], "price_alert", title, content, ticker)
-            )
-            triggered_ids.append(alert["id"])
-
-        if triggered_ids:
-            placeholders = ",".join(["%s"] * len(triggered_ids))
-            cursor.execute(
-                f"UPDATE price_alerts SET is_triggered=1 WHERE id IN ({placeholders})",
-                triggered_ids
-            )
-            conn.commit()
+# check_price_alerts 已移至 services/alerts.py（修正架構倒置：基礎設施層不應依賴展示層）
+# 此處保留 re-export 以避免任何尚未更新的呼叫點出現 ImportError
+from services.alerts import check_price_alerts  # noqa: E402, F401

@@ -15,6 +15,18 @@
   font-weight:800; font-size:.85rem;
 }
 .hero-stat { border-left:3px solid rgba(255,255,255,.3); padding-left:1rem; }
+/* Skeleton loading：取代純 spinner，保留佔位結構讓 CLS (Layout Shift) 最小化 */
+@keyframes shimmer { 0%{background-position:-400px 0} 100%{background-position:400px 0} }
+.skeleton {
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 400px 100%;
+  animation: shimmer 1.4s infinite linear;
+  border-radius: 4px;
+}
+.dark .skeleton {
+  background: linear-gradient(90deg, #334155 25%, #475569 50%, #334155 75%);
+  background-size: 400px 100%;
+}
 </style>
 {% endblock %}
 
@@ -92,7 +104,14 @@
         <a href="/etf-list" class="text-xs text-indigo-500 hover:underline">全部 →</a>
       </div>
       <div id="tw-movers" class="divide-y divide-slate-50 dark:divide-slate-700/50">
-        <div class="p-6 text-center text-slate-400 text-sm"><span class="spinner mr-2"></span>載入中…</div>
+        <div class="px-4 py-2.5 space-y-2.5" id="tw-movers-skeleton">
+          <div class="flex items-center justify-between" aria-hidden="true"><div class="skeleton h-3.5 w-16 rounded"></div><div class="skeleton h-3.5 w-20 rounded"></div></div>
+          <div class="flex items-center justify-between" aria-hidden="true"><div class="skeleton h-3.5 w-20 rounded"></div><div class="skeleton h-3.5 w-16 rounded"></div></div>
+          <div class="flex items-center justify-between" aria-hidden="true"><div class="skeleton h-3.5 w-14 rounded"></div><div class="skeleton h-3.5 w-20 rounded"></div></div>
+          <div class="flex items-center justify-between" aria-hidden="true"><div class="skeleton h-3.5 w-18 rounded"></div><div class="skeleton h-3.5 w-14 rounded"></div></div>
+          <div class="flex items-center justify-between" aria-hidden="true"><div class="skeleton h-3.5 w-16 rounded"></div><div class="skeleton h-3.5 w-18 rounded"></div></div>
+          <div class="flex items-center justify-between" aria-hidden="true"><div class="skeleton h-3.5 w-20 rounded"></div><div class="skeleton h-3.5 w-16 rounded"></div></div>
+        </div>
       </div>
     </div>
 
@@ -105,7 +124,14 @@
         <a href="/etf-list" class="text-xs text-indigo-500 hover:underline">全部 →</a>
       </div>
       <div id="us-movers" class="divide-y divide-slate-50 dark:divide-slate-700/50">
-        <div class="p-6 text-center text-slate-400 text-sm"><span class="spinner mr-2"></span>載入中…</div>
+        <div class="px-4 py-2.5 space-y-2.5" id="us-movers-skeleton">
+          <div class="flex items-center justify-between" aria-hidden="true"><div class="skeleton h-3.5 w-14 rounded"></div><div class="skeleton h-3.5 w-20 rounded"></div></div>
+          <div class="flex items-center justify-between" aria-hidden="true"><div class="skeleton h-3.5 w-18 rounded"></div><div class="skeleton h-3.5 w-16 rounded"></div></div>
+          <div class="flex items-center justify-between" aria-hidden="true"><div class="skeleton h-3.5 w-16 rounded"></div><div class="skeleton h-3.5 w-18 rounded"></div></div>
+          <div class="flex items-center justify-between" aria-hidden="true"><div class="skeleton h-3.5 w-20 rounded"></div><div class="skeleton h-3.5 w-14 rounded"></div></div>
+          <div class="flex items-center justify-between" aria-hidden="true"><div class="skeleton h-3.5 w-14 rounded"></div><div class="skeleton h-3.5 w-20 rounded"></div></div>
+          <div class="flex items-center justify-between" aria-hidden="true"><div class="skeleton h-3.5 w-16 rounded"></div><div class="skeleton h-3.5 w-18 rounded"></div></div>
+        </div>
       </div>
     </div>
   </div>
@@ -121,7 +147,13 @@
         <span class="text-[10px] text-slate-400">報酬·配息·費用·穩定·動能 綜合評分</span>
       </div>
       <div id="tw-scores" class="divide-y divide-slate-50 dark:divide-slate-700/50">
-        <div class="p-6 text-center text-slate-400 text-sm"><span class="spinner mr-2"></span>計算中…</div>
+        <div class="px-4 py-2.5 space-y-2.5" id="tw-scores-skeleton">
+          <div class="flex items-center gap-3" aria-hidden="true"><div class="skeleton w-8 h-8 rounded-lg flex-shrink-0"></div><div class="flex-1 space-y-1.5"><div class="skeleton h-3 w-24 rounded"></div><div class="skeleton h-2.5 w-32 rounded"></div></div></div>
+          <div class="flex items-center gap-3" aria-hidden="true"><div class="skeleton w-8 h-8 rounded-lg flex-shrink-0"></div><div class="flex-1 space-y-1.5"><div class="skeleton h-3 w-20 rounded"></div><div class="skeleton h-2.5 w-28 rounded"></div></div></div>
+          <div class="flex items-center gap-3" aria-hidden="true"><div class="skeleton w-8 h-8 rounded-lg flex-shrink-0"></div><div class="flex-1 space-y-1.5"><div class="skeleton h-3 w-28 rounded"></div><div class="skeleton h-2.5 w-24 rounded"></div></div></div>
+          <div class="flex items-center gap-3" aria-hidden="true"><div class="skeleton w-8 h-8 rounded-lg flex-shrink-0"></div><div class="flex-1 space-y-1.5"><div class="skeleton h-3 w-16 rounded"></div><div class="skeleton h-2.5 w-32 rounded"></div></div></div>
+          <div class="flex items-center gap-3" aria-hidden="true"><div class="skeleton w-8 h-8 rounded-lg flex-shrink-0"></div><div class="flex-1 space-y-1.5"><div class="skeleton h-3 w-24 rounded"></div><div class="skeleton h-2.5 w-20 rounded"></div></div></div>
+        </div>
       </div>
     </div>
 
@@ -133,7 +165,13 @@
         <span class="text-[10px] text-slate-400">報酬·配息·費用·穩定·動能 綜合評分</span>
       </div>
       <div id="us-scores" class="divide-y divide-slate-50 dark:divide-slate-700/50">
-        <div class="p-6 text-center text-slate-400 text-sm"><span class="spinner mr-2"></span>計算中…</div>
+        <div class="px-4 py-2.5 space-y-2.5" id="us-scores-skeleton">
+          <div class="flex items-center gap-3" aria-hidden="true"><div class="skeleton w-8 h-8 rounded-lg flex-shrink-0"></div><div class="flex-1 space-y-1.5"><div class="skeleton h-3 w-20 rounded"></div><div class="skeleton h-2.5 w-28 rounded"></div></div></div>
+          <div class="flex items-center gap-3" aria-hidden="true"><div class="skeleton w-8 h-8 rounded-lg flex-shrink-0"></div><div class="flex-1 space-y-1.5"><div class="skeleton h-3 w-24 rounded"></div><div class="skeleton h-2.5 w-24 rounded"></div></div></div>
+          <div class="flex items-center gap-3" aria-hidden="true"><div class="skeleton w-8 h-8 rounded-lg flex-shrink-0"></div><div class="flex-1 space-y-1.5"><div class="skeleton h-3 w-16 rounded"></div><div class="skeleton h-2.5 w-32 rounded"></div></div></div>
+          <div class="flex items-center gap-3" aria-hidden="true"><div class="skeleton w-8 h-8 rounded-lg flex-shrink-0"></div><div class="flex-1 space-y-1.5"><div class="skeleton h-3 w-28 rounded"></div><div class="skeleton h-2.5 w-20 rounded"></div></div></div>
+          <div class="flex items-center gap-3" aria-hidden="true"><div class="skeleton w-8 h-8 rounded-lg flex-shrink-0"></div><div class="flex-1 space-y-1.5"><div class="skeleton h-3 w-24 rounded"></div><div class="skeleton h-2.5 w-28 rounded"></div></div></div>
+        </div>
       </div>
     </div>
   </div>
@@ -279,12 +317,6 @@ async function loadMovers() {
     ]);
     renderMovers('tw-movers', tw?.volume?.slice(0, 6) || [], 'TW');
     renderMovers('us-movers', us?.volume?.slice(0, 6) || [], 'US');
-
-    // FX 匯率
-    try {
-      const fx = await fetch('/api/etf/detail/USDTWD').then(r => r.json()).catch(() => null);
-      // 從 summary API 取匯率
-    } catch {}
   } catch(e) {
     console.warn('movers load error', e);
   }
@@ -293,6 +325,10 @@ async function loadMovers() {
 function renderMovers(elId, rows, market) {
   const el = document.getElementById(elId);
   if (!el) return;
+  // 移除 skeleton（資料到了就換成真實內容）
+  const skeletonId = elId.replace('-movers', '-movers-skeleton');
+  const sk = document.getElementById(skeletonId);
+  if (sk) sk.remove();
   if (!rows || !rows.length) {
     el.innerHTML = `<div class="p-4 text-center text-slate-400 text-xs">暫無資料</div>`;
     return;
@@ -340,6 +376,10 @@ async function loadScores() {
 function renderScoreList(elId, items) {
   const el = document.getElementById(elId);
   if (!el) return;
+  // 移除 skeleton
+  const skeletonId = elId.replace('-scores', '-scores-skeleton');
+  const sk = document.getElementById(skeletonId);
+  if (sk) sk.remove();
   if (!items.length) { el.innerHTML = `<div class="p-4 text-center text-slate-400 text-xs">暫無資料</div>`; return; }
   el.innerHTML = items.map((item, idx) => {
     const gradeColors = { A:'#16a34a', B:'#2563eb', C:'#d97706', D:'#dc2626', F:'#64748b' };
