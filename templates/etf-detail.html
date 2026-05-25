@@ -9,8 +9,6 @@
   .period-btn.active { background:#eef2ff; color:#4f46e5; font-weight:700; }
   .dark .period-btn:hover { background:#312e81; color:#a5b4fc; }
   .dark .period-btn.active { background:#312e81; color:#a5b4fc; }
-  /* 無資料的時段：dim 但保留版面，data-failed="1" 加刪除線 */
-  .period-btn[data-failed="1"] { text-decoration: line-through; opacity: 0.4; }
 </style>
 {% endblock %}
 
@@ -443,43 +441,6 @@ async function loadDipAlert(ticker) {
 }
 
 // ── 圖表 ──
-const _periodStatus = {};
-
-/**
- * 標記某時段按鈕為「資料不足」：變灰 + 加 title 提示，但 **不隱藏**。
- * 隱藏（display:none）會造成按鈕逐一消失的詭異視覺效果（UX 大忌）；
- * 改用 data-failed 屬性讓版面穩定，使用者仍可看見完整按鈕集，並能直接點擊重試。
- */
-/**
- * 標記時段按鈕為「資料不足」：視覺變灰 + 刪除線，但 **保持可點擊**（onClick = 重試）。
- * 不設 pointer-events:none，讓 changePeriod 的 retry 分支能正常觸發。
- */
-function _dimPeriodBtn(period) {
-  document.querySelectorAll('.period-btn').forEach(b => {
-    if (b.textContent.toUpperCase() === period.toUpperCase()) {
-      b.dataset.failed = '1';
-      b.style.opacity  = '';    // 由 CSS [data-failed="1"] 統一控制
-      b.title          = '此期間暫無資料，點此重試';
-    }
-  });
-}
-
-/** 恢復按鈕為正常狀態（重試成功或重刷後呼叫）。 */
-function _restorePeriodBtn(period) {
-  document.querySelectorAll('.period-btn').forEach(b => {
-    if (b.textContent.toUpperCase() === period.toUpperCase()) {
-      delete b.dataset.failed;
-      b.style.opacity = '';
-      b.title         = '';
-    }
-  });
-}
-
-// probeAllPeriods 已移除。
-// 原本在頁面載入後自動對全部 7 個時段送探測請求，每 250ms 一顆；
-// 失敗的時段呼叫 display:none → 使用者眼睜睜看按鈕一個個消失（「慢慢變少」bug）。
-// 新邏輯：只在使用者「主動點選」某時段後才判斷是否有資料；
-// 失敗時在圖表區域顯示提示、按鈕變灰但不隱藏，讓版面保持穩定。
 
 async function loadPriceHistory(ticker, period = '1Y') {
   const reqId = ++_chartReqId;
@@ -498,7 +459,6 @@ async function loadPriceHistory(ticker, period = '1Y') {
       const cleanPrices = prices.map(p => parseFloat(p)).filter(p => !isNaN(p) && p > 0);
       const cleanLabels = labels.slice(labels.length - cleanPrices.length);
       if (cleanPrices.length >= 2) {
-        _periodStatus[period] = 'ok';
         drawChart(cleanLabels, cleanPrices, false, intraday);
         const noteEl = document.getElementById('chart-note');
         if (data.is_partial) {
@@ -510,14 +470,10 @@ async function loadPriceHistory(ticker, period = '1Y') {
         return;
       }
     }
-    _periodStatus[period] = 'fail';
-    _dimPeriodBtn(period);
     showNoChart(period);
   } catch(e) {
     if (reqId !== _chartReqId) return;
     document.getElementById('chart-loading').classList.add('hidden');
-    _periodStatus[period] = 'fail';
-    _dimPeriodBtn(period);
     showNoChart(period);
   }
 }
@@ -584,11 +540,6 @@ function changePeriod(p) {
   document.querySelectorAll('.period-btn').forEach(b =>
     b.classList.toggle('active', b.textContent.toUpperCase() === pUp));
   document.getElementById('chart-note').classList.add('hidden');
-  // 若此時段先前失敗，允許重試（先恢復按鈕狀態）
-  if (_periodStatus[pUp] === 'fail') {
-    delete _periodStatus[pUp];
-    _restorePeriodBtn(pUp);
-  }
   if (currentTicker) loadPriceHistory(currentTicker, pUp);
 }
 
@@ -616,11 +567,6 @@ async function forceRefresh() {
   btn.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i>';
   const ticker = etfData?.ticker;
   if (!ticker) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt"></i>'; return; }
-
-  // 刷新前：清除所有時段的失敗狀態，讓圖表按鈕全部恢復可點擊
-  Object.keys(_periodStatus).forEach(p => {
-    if (_periodStatus[p] === 'fail') { delete _periodStatus[p]; _restorePeriodBtn(p); }
-  });
 
   const data = await Auth.fetchJson(`/api/etf/force-refresh/${ticker}`, { method: 'POST' });
   if (data?.status === 'success' || data?.status === 'processing') {
