@@ -98,7 +98,17 @@ async def get_price_alerts(current_user: dict = Depends(get_current_user)):
 @router.post("/api/price-alerts")
 async def create_price_alert(body: PriceAlertIn, current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
+    _MAX_ALERTS = 50
     with get_db() as (conn, cursor):
+        cursor.execute(
+            "SELECT COUNT(*) AS cnt FROM price_alerts WHERE user_id=%s AND is_active=1", (uid,)
+        )
+        cnt = (cursor.fetchone() or {}).get("cnt", 0)
+        if cnt >= _MAX_ALERTS:
+            return safe_json(
+                {"status": "error", "message": f"到價提醒最多設定 {_MAX_ALERTS} 筆，請先刪除舊的再新增"},
+                400,
+            )
         cursor.execute(
             "INSERT INTO price_alerts (user_id,ticker,alert_type,target_price) VALUES (%s,%s,%s,%s)",
             (uid, body.ticker, body.alert_type, body.target_price)

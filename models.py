@@ -91,9 +91,8 @@ class TransactionIn(BaseModel):
             raise ValueError("transaction_date 格式必須為 YYYY-MM-DD")
         today = date.today()
         min_date = date(max(1970, today.year - 50), 1, 1)
-        max_date = date(today.year + 1, 12, 31)
-        if d < min_date or d > max_date:
-            raise ValueError(f"交易日期超出合理範圍（{min_date} ~ {max_date}）")
+        if d < min_date or d > today:
+            raise ValueError(f"交易日期超出合理範圍（{min_date} ~ {today}）")
         return v
 
 

@@ -102,7 +102,11 @@ def get_current_user(
     jti = payload.get("jti")
     if jti:
         from cache import cache
-        cache_key = f"jti:ok:{jti}"
+        cache_key         = f"jti:ok:{jti}"
+        revoked_cache_key = f"jti:revoked:{jti}"
+        # 快速路徑：已知撤銷（負快取 60s），避免每次打 DB
+        if cache.get(revoked_cache_key):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 已失效，請重新登入")
         if not cache.get(cache_key):
             # Cache miss → 查 DB
             try:
@@ -117,6 +121,7 @@ def get_current_user(
                     detail="認證服務暫時不可用，請稍後再試",
                 )
             if row and row["is_revoked"]:
+                cache.set(revoked_cache_key, 1, 60)  # 負快取 60s，減少 DB 查詢
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 已失效，請重新登入")
             if row:
                 # 只有確認有效才快取（5 分鐘），DB 無此紀錄（row is None）時不快取

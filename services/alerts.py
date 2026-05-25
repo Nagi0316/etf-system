@@ -98,10 +98,7 @@ def _build_dip_recommendation(drop_pct: float) -> dict:
         "level": level,
         "reason": reason,
         "extra_pct": extra_pct,
-        "description": (
-            f"建議在本月定期定額之外，額外加碼 {extra_pct}%。"
-            f"例如每月固定投入 10,000 元，本月建議總投入 {10000 * (1 + extra_pct/100):,.0f} 元。"
-        )
+        "description": f"建議在本月定期定額之外，額外加碼 {extra_pct}%。",
     }
 
 

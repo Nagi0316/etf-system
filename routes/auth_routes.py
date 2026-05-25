@@ -183,8 +183,19 @@ async def login(request: Request, body: LoginIn):
         # 統一回傳相同錯誤訊息，防止 email 枚舉攻擊
         if not user or not user.get("password_hash"):
             return safe_json({"status": "error", "message": "信箱或密碼錯誤"}, 401)
-        if not verify_password(body.password, user["password_hash"]):
+        stored_hash = user["password_hash"]
+        if not verify_password(body.password, stored_hash):
             return safe_json({"status": "error", "message": "信箱或密碼錯誤"}, 401)
+        # 舊帳號若使用 SHA-256，靜默升級為 bcrypt（SHA-256 可被暴力破解）
+        if len(stored_hash) == 64 and all(c in "0123456789abcdef" for c in stored_hash):
+            try:
+                with get_db() as (upd_conn, upd_cur):
+                    upd_cur.execute("UPDATE users SET password_hash=%s WHERE id=%s",
+                                    (hash_password(body.password), user["id"]))
+                    upd_conn.commit()
+                logger.info("SHA-256 → bcrypt upgrade for user %s", user["id"])
+            except Exception as _ue:
+                logger.warning("hash upgrade failed: %s", _ue)
         token, _ = create_access_token(user["id"], body.email.lower())
         resp = safe_json({
             "status": "success",

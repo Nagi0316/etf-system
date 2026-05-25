@@ -77,10 +77,15 @@ async def upload_avatar(
     current_user: dict = Depends(get_current_user),
 ):
     uid = current_user["id"]
-    if file.size and file.size > 5 * 1024 * 1024:
+    _MAX_SIZE = 5 * 1024 * 1024  # 5 MB
+    if file.size and file.size > _MAX_SIZE:
         return safe_json({"status": "error", "message": "圖片大小不能超過 5MB"}, 400)
 
     content = await file.read()
+
+    # file.size 在 streaming 上傳時可能為 None/0，讀取後再確認一次
+    if len(content) > _MAX_SIZE:
+        return safe_json({"status": "error", "message": "圖片大小不能超過 5MB"}, 400)
 
     # 驗證 magic bytes（不信任 content-type，防止偽造）
     ext = _detect_image_ext(content)

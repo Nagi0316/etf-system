@@ -534,19 +534,21 @@ async def get_etf_detail(ticker: str):
     return safe_json({"status": "success", "data": row})
 
 
-_refresh_in_progress: set = set()
-_refresh_last_ts: dict = {}      # ticker → last refresh timestamp
 _REFRESH_COOLDOWN = 300          # 同一 ticker 5 分鐘內最多觸發一次
 
 def _maybe_background_refresh(ticker: str, row: dict):
-    """若資料超過 1 天或關鍵欄位缺失，在背景靜默重抓一次。"""
+    """若資料超過 1 天或關鍵欄位缺失，在背景靜默重抓一次。
+
+    使用 cache 作為跨執行緒共享鎖（取代 process-level set/dict）。
+    鎖在 create_task 前設定，防止同一 ticker 在事件循環中建立多個重複任務。
+    """
     import asyncio
     from datetime import date as _date
-    if ticker in _refresh_in_progress:
-        return
-    # 冷卻：同 ticker 5 分鐘內不重複觸發
-    if time.time() - _refresh_last_ts.get(ticker, 0) < _REFRESH_COOLDOWN:
-        return
+
+    lock_key = f"bg_refresh:{ticker}"
+    if cache.get(lock_key):
+        return  # 冷卻中或正在更新
+
     data_date = row.get("data_date")
     try:
         if isinstance(data_date, str):
@@ -559,9 +561,10 @@ def _maybe_background_refresh(ticker: str, row: dict):
     if not (is_stale or missing_returns):
         return
 
+    # 設定鎖後才建立任務，防止多個請求同時進來時重複排程
+    cache.set(lock_key, 1, _REFRESH_COOLDOWN)
+
     async def _do():
-        _refresh_in_progress.add(ticker)
-        _refresh_last_ts[ticker] = time.time()
         try:
             market = row.get("market") or ("TW" if ticker[:4].isdigit() else "US")
             data = await asyncio.to_thread(fetch_one_etf, ticker, market)
@@ -573,18 +576,15 @@ def _maybe_background_refresh(ticker: str, row: dict):
                 logger.info(f"🔄 背景更新 {ticker} 完成")
         except Exception as e:
             logger.debug(f"背景更新 {ticker}: {e}")
-        finally:
-            _refresh_in_progress.discard(ticker)
+            cache.delete(lock_key)  # 失敗時釋放鎖，允許更快重試
 
     try:
-        # get_running_loop() 在有 event loop 的 async 上下文中才會成功
-        # loop.create_task() 是 3.7+ 推薦做法，ensure_future(loop=) 已於 3.10 廢棄
         loop = asyncio.get_running_loop()
         loop.create_task(_do())
     except RuntimeError:
-        pass  # 無 running loop（單元測試等），略過背景更新不影響主流程
+        cache.delete(lock_key)  # 無 running loop → 立即釋放
     except Exception:
-        pass
+        cache.delete(lock_key)
 
 
 # ── 歷史走勢 ──
