@@ -9,6 +9,8 @@
   .period-btn.active { background:#eef2ff; color:#4f46e5; font-weight:700; }
   .dark .period-btn:hover { background:#312e81; color:#a5b4fc; }
   .dark .period-btn.active { background:#312e81; color:#a5b4fc; }
+  /* 無資料的時段：dim 但保留版面（不用 display:none 避免版面跳動） */
+  .period-btn[style*="pointer-events: none"] { text-decoration: line-through; }
 </style>
 {% endblock %}
 
@@ -285,9 +287,7 @@ async function loadETFDetail() {
         checkWatchlistStatus(currentTicker),
         loadDipAlert(currentTicker),
         loadEtfScore(currentTicker),
-      ]).then(() => {
-        probeAllPeriods(currentTicker);
-      });
+      ]);
 
       const d = etfData;
       const missingReturns = !parseFloat(d.annual_return_1y) && !parseFloat(d.annual_return_3y) && !parseFloat(d.annual_return_5y);
@@ -445,32 +445,39 @@ async function loadDipAlert(ticker) {
 // ── 圖表 ──
 const _periodStatus = {};
 
-function _hidePeriodBtn(period) {
+/**
+ * 標記某時段按鈕為「資料不足」：變灰 + 加 title 提示，但 **不隱藏**。
+ * 隱藏（display:none）會造成按鈕逐一消失的詭異視覺效果（UX 大忌）；
+ * 改用 opacity + pointer-events:none 讓版面穩定，使用者仍可看見完整按鈕集。
+ */
+function _dimPeriodBtn(period) {
   document.querySelectorAll('.period-btn').forEach(b => {
-    if (b.textContent.toUpperCase() === period.toUpperCase()) b.style.display = 'none';
+    if (b.textContent.toUpperCase() === period.toUpperCase()) {
+      b.style.opacity       = '0.35';
+      b.style.pointerEvents = 'none';
+      b.style.cursor        = 'not-allowed';
+      b.title               = '此期間暫無資料（可點「刷新」後重試）';
+    }
   });
 }
 
-async function probeAllPeriods(ticker) {
-  const ALL_PERIODS = ['1D','5D','1M','6M','YTD','5Y','ALL'];
-  for (const p of ALL_PERIODS) {
-    if (_periodStatus[p] === 'ok') continue;
-    await new Promise(res => setTimeout(res, 250));
-    fetch(`/api/etf/price-history/${ticker}?period=${p}`)
-      .then(r => r.json())
-      .then(d => {
-        const prices = d.prices || d.data?.prices;
-        const clean  = (prices || []).map(v => parseFloat(v)).filter(v => !isNaN(v) && v > 0);
-        if (d.status === 'success' && clean.length >= 2) {
-          _periodStatus[p] = 'ok';
-        } else {
-          _periodStatus[p] = 'fail';
-          _hidePeriodBtn(p);
-        }
-      })
-      .catch(() => { _periodStatus[p] = 'fail'; _hidePeriodBtn(p); });
-  }
+/** 恢復按鈕為可點擊狀態（重刷後呼叫）。 */
+function _restorePeriodBtn(period) {
+  document.querySelectorAll('.period-btn').forEach(b => {
+    if (b.textContent.toUpperCase() === period.toUpperCase()) {
+      b.style.opacity       = '';
+      b.style.pointerEvents = '';
+      b.style.cursor        = '';
+      b.title               = '';
+    }
+  });
 }
+
+// probeAllPeriods 已移除。
+// 原本在頁面載入後自動對全部 7 個時段送探測請求，每 250ms 一顆；
+// 失敗的時段呼叫 display:none → 使用者眼睜睜看按鈕一個個消失（「慢慢變少」bug）。
+// 新邏輯：只在使用者「主動點選」某時段後才判斷是否有資料；
+// 失敗時在圖表區域顯示提示、按鈕變灰但不隱藏，讓版面保持穩定。
 
 async function loadPriceHistory(ticker, period = '1Y') {
   const reqId = ++_chartReqId;
@@ -502,22 +509,31 @@ async function loadPriceHistory(ticker, period = '1Y') {
       }
     }
     _periodStatus[period] = 'fail';
-    _hidePeriodBtn(period);
-    showNoChart();
+    _dimPeriodBtn(period);
+    showNoChart(period);
   } catch(e) {
     if (reqId !== _chartReqId) return;
     document.getElementById('chart-loading').classList.add('hidden');
     _periodStatus[period] = 'fail';
-    _hidePeriodBtn(period);
-    showNoChart();
+    _dimPeriodBtn(period);
+    showNoChart(period);
   }
 }
 
-function showNoChart() {
+function showNoChart(period) {
   const canvas = document.getElementById('price-chart');
   canvas.style.display = 'none';
   canvas.classList.add('hidden');
-  document.getElementById('no-chart-msg').classList.remove('hidden');
+  const msgEl = document.getElementById('no-chart-msg');
+  const isIntraday = period && ['1D','5D'].includes(period.toUpperCase());
+  msgEl.innerHTML = isIntraday
+    ? `<i class="fas fa-clock text-slate-300 block mb-2 text-2xl"></i>
+       <span class="block">${period} 即時資料尚未開盤或暫時無法取得</span>
+       <span class="text-xs mt-1 block">盤中資料需 Yahoo Finance 連線，有時會受到網路延遲影響</span>`
+    : `<i class="fas fa-database text-slate-300 block mb-2 text-2xl"></i>
+       <span class="block">此期間暫無歷史價格資料</span>
+       <span class="text-xs mt-1 block">可點右上角 <i class="fas fa-sync-alt"></i> 刷新後重試</span>`;
+  msgEl.classList.remove('hidden');
 }
 
 function drawChart(labels, prices, isFallback = false, isIntraday = false) {
@@ -562,10 +578,16 @@ function drawChart(labels, prices, isFallback = false, isIntraday = false) {
 
 function changePeriod(p) {
   currentPeriod = p;
+  const pUp = p.toUpperCase();
   document.querySelectorAll('.period-btn').forEach(b =>
-    b.classList.toggle('active', b.textContent.toUpperCase() === p.toUpperCase()));
+    b.classList.toggle('active', b.textContent.toUpperCase() === pUp));
   document.getElementById('chart-note').classList.add('hidden');
-  if (currentTicker) loadPriceHistory(currentTicker, p.toUpperCase());
+  // 若此時段先前失敗，允許重試（先恢復按鈕狀態）
+  if (_periodStatus[pUp] === 'fail') {
+    delete _periodStatus[pUp];
+    _restorePeriodBtn(pUp);
+  }
+  if (currentTicker) loadPriceHistory(currentTicker, pUp);
 }
 
 async function checkWatchlistStatus(ticker) {
@@ -592,6 +614,12 @@ async function forceRefresh() {
   btn.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i>';
   const ticker = etfData?.ticker;
   if (!ticker) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt"></i>'; return; }
+
+  // 刷新前：清除所有時段的失敗狀態，讓圖表按鈕全部恢復可點擊
+  Object.keys(_periodStatus).forEach(p => {
+    if (_periodStatus[p] === 'fail') { delete _periodStatus[p]; _restorePeriodBtn(p); }
+  });
+
   const data = await Auth.fetchJson(`/api/etf/force-refresh/${ticker}`, { method: 'POST' });
   if (data?.status === 'success' || data?.status === 'processing') {
     const reloadDelay = data.status === 'processing' ? 10000 : 1500;
