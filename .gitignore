@@ -33,3 +33,4 @@ static/uploads/
 # Log
 *.log
 logs/
+node_modules

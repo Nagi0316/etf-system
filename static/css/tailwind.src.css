@@ -1,0 +1,4 @@
+/* Tailwind 指令 — 建置時由 CLI 展開，勿手動編輯此檔 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

@@ -6,8 +6,8 @@
   <title>{% block title %}ETF 投資管理系統{% endblock %}</title>
   <!-- 防止深色模式 FOUC：必須在所有 CSS 之前執行 -->
   <script>(function(){var t=localStorage.getItem('theme');var p=window.matchMedia('(prefers-color-scheme:dark)').matches;if(t==='dark'||(t===null&&p))document.documentElement.classList.add('dark');}());</script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config={darkMode:'class'}</script>
+  <!-- 生產版 Tailwind（由 tailwindcss CLI purge 後壓縮，~35KB vs Play-CDN ~350KB JS）-->
+  <link href="/static/css/tailwind.min.css" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
   <link href="/static/css/main.css" rel="stylesheet">
   {% block extra_head %}{% endblock %}
