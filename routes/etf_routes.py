@@ -59,6 +59,7 @@ LEFT JOIN (
 
 _ETF_DETAIL_SELECT = """
     SELECT m.ticker, m.name, m.market,
+        m.issuer, m.listing_date,
         COALESCE(d.current_price,0) as current_price,
         COALESCE(d.price_change,0) as price_change,
         COALESCE(d.price_change_percent,0) as price_change_percent,
@@ -689,10 +690,11 @@ def _fetch_twse_month(ticker: str, year: int, month: int) -> list[dict]:
                 result = []
                 for row in tpex_data:
                     try:
-                        # TPEX aaData: [日期, 收盤, 漲跌, ...] — 收盤在 index 2
+                        # TPEX aaData: [日期, 成交股數, 成交金額, 開盤, 最高, 最低, 收盤, 漲跌, 成交筆數]
+                        # 收盤價在 index 6（不是 2，2 是成交金額）
                         parts = str(row[0]).strip().split("/")
                         iso_date = f"{int(parts[0]) + 1911}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
-                        raw = str(row[2]).strip().replace(",", "")
+                        raw = str(row[6]).strip().replace(",", "")
                         close = float(''.join(c for c in raw if c.isdigit() or c == '.'))
                         if close > 0:
                             result.append({"date": iso_date, "close": close})
