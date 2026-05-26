@@ -466,4 +466,22 @@ def init_db():
         except Exception:
             pass  # 已存在或 NULL 衝突（NULL 在 UNIQUE 索引中允許多個）
 
+    # ── etf_dividends.currency 資料修正（歷史 TW ETF 配息錯誤標記為 USD）──────
+    # DEFAULT 'USD' 為 schema 原始設計失誤；TW ETF 配息幣別應為 TWD。
+    # 此遷移只更新「currency='USD' 且對應 etf_master.market='TW'」的記錄，冪等安全。
+    with get_db() as (conn, cursor):
+        try:
+            cursor.execute("""
+                UPDATE etf_dividends d
+                JOIN etf_master m ON d.ticker = m.ticker
+                SET d.currency = 'TWD'
+                WHERE m.market = 'TW' AND d.currency = 'USD'
+            """)
+            fixed = cursor.rowcount
+            conn.commit()
+            if fixed:
+                logger.info(f"✅ 修正 {fixed} 筆 TW ETF 配息幣別（USD → TWD）")
+        except Exception as e:
+            logger.debug(f"etf_dividends currency migration 略過: {e}")
+
     logger.info(f"✅ 資料庫初始化完成 ({'TiDB/MySQL' if USE_MYSQL else 'SQLite'})")

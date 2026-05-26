@@ -387,27 +387,39 @@ def _classify_freq(n: int) -> str:
 # 頻率等級對照（數字越大頻率越高）
 _FREQ_RANK: dict = {'不配息': 0, '年配': 1, '半年配': 2, '季配': 3, '雙月配': 4, '月配': 5}
 
+# 各頻率的預期年配息次數（用於判斷 Yahoo 取得事件數是否充足）
+_FREQ_EXPECTED: dict = {'月配': 12, '雙月配': 6, '季配': 4, '半年配': 2, '年配': 1, '不配息': 0}
+
 
 def _best_freq(yf_count: int, ticker: str) -> str:
-    """取 Yahoo 事件數推算頻率 與 靜態備援 兩者中等級較高的。
+    """取 Yahoo 事件數推算頻率 與 靜態備援，輸出最可靠的配息頻率。
 
-    設計原則：
-    - Yahoo 事件數 > 靜態備援：ETF 升頻（例如年配→半年配），信任最新資料。
-    - 靜態備援 > Yahoo 事件數：Yahoo 漏抓事件（常見於台股月配），以靜態備援校正。
-    - 若靜態備援無記錄：直接使用 Yahoo 推算結果。
+    設計原則（已修正降頻鎖問題）：
+    - Yahoo 取得 ≥ 靜態預期次數 50% 的事件 → Yahoo 有足夠證據，完全信任（含降頻）
+      例：靜態='月配'(預期12次), Yahoo取得9次 → 9≥6, 信任Yahoo推算（含若降為季配）
+    - Yahoo 取得 < 靜態預期次數 50% 的事件 → 可能漏抓，取兩者較高值，防止因 API 失敗誤降頻
+      例：靜態='月配'(預期12次), Yahoo取得4次 → 4<6, 保留靜態'月配'
+    - 若靜態備援無記錄 → 直接使用 Yahoo 推算結果。
     """
     yf_freq    = _classify_freq(yf_count)
     known_freq = KNOWN_PAYOUT_FREQ.get(ticker, '')
     if not known_freq:
         return yf_freq
-    return (known_freq if _FREQ_RANK.get(known_freq, 0) >= _FREQ_RANK.get(yf_freq, 0)
-            else yf_freq)
+    known_expected = _FREQ_EXPECTED.get(known_freq, 0)
+    # Yahoo 事件數達靜態預期的 50% → 有足夠統計證據，完全信任（包含降頻）
+    if known_expected > 0 and yf_count >= known_expected * 0.5:
+        return yf_freq
+    # 事件數不足（可能漏抓）→ 取兩者較高等級，保守防止誤降頻
+    known_rank = _FREQ_RANK.get(known_freq, 0)
+    yf_rank    = _FREQ_RANK.get(yf_freq, 0)
+    return known_freq if known_rank >= yf_rank else yf_freq
 
 
-def _save_dividend_events(ticker: str, events: list[tuple]):
+def _save_dividend_events(ticker: str, events: list[tuple], currency: str = "USD"):
     """將配息事件批次寫入 etf_dividends 表，供回測 DRIP 使用。
 
-    events: [(ticker, ex_date_str, amount_float), ...]
+    events:   [(ticker, ex_date_str, amount_float), ...]
+    currency: 配息幣別（TW ETF 傳 'TWD'，US ETF 傳 'USD'）
     ON DUPLICATE KEY UPDATE amount=VALUES(amount)：允許金額更正（如除息日補正）。
     """
     if not events:
@@ -417,13 +429,13 @@ def _save_dividend_events(ticker: str, events: list[tuple]):
             for _ticker, ex_date, amount in events:
                 if amount and float(amount) > 0:
                     cursor.execute(
-                        "INSERT INTO etf_dividends (ticker, ex_date, amount) "
-                        "VALUES (%s, %s, %s) "
-                        "ON DUPLICATE KEY UPDATE amount=VALUES(amount)",
-                        (_ticker, ex_date, float(amount)),
+                        "INSERT INTO etf_dividends (ticker, ex_date, amount, currency) "
+                        "VALUES (%s, %s, %s, %s) "
+                        "ON DUPLICATE KEY UPDATE amount=VALUES(amount), currency=VALUES(currency)",
+                        (_ticker, ex_date, float(amount), currency),
                     )
             conn.commit()
-        logger.debug(f"dividend events saved: {ticker} ({len(events)} events)")
+        logger.debug(f"dividend events saved: {ticker} ({len(events)} events, {currency})")
     except Exception as e:
         logger.debug(f"save_dividend_events {ticker}: {e}")
 
@@ -705,7 +717,7 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
                             for v in events.values()
                             if safe_float(v.get("amount", 0)) > 0
                         ]
-                        _save_dividend_events(ticker, all_ev)
+                        _save_dividend_events(ticker, all_ev, currency="TWD")
 
                     cutoff = time.time() - 365 * 86400
                     recent = [v["amount"] for v in events.values()
@@ -1101,8 +1113,9 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         div_yield = round(yf_yield, 4)
         if div_yield > 0 and payout_freq == "不配息":
             payout_freq = KNOWN_PAYOUT_FREQ.get(ticker, "季配")
-    # 最終備援：若仍為「不配息」但靜態資料有記錄，以靜態資料為準
-    if payout_freq == "不配息" and ticker in KNOWN_PAYOUT_FREQ:
+    # 最終備援：API 失敗（div_confirmed=False）且頻率仍為「不配息」，用靜態資料補填
+    # 注意：confirmed=True 時不套用，避免靜態備援覆蓋 Yahoo 已確認的配息頻率（含降頻）
+    if not div_confirmed and payout_freq == "不配息" and ticker in KNOWN_PAYOUT_FREQ:
         payout_freq = KNOWN_PAYOUT_FREQ[ticker]
 
     # 靜態殖利率備援：Yahoo 完全失敗（div_confirmed=False）且 yield=0 時、
