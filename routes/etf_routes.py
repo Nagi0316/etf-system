@@ -519,10 +519,11 @@ async def get_etf_detail(ticker: str):
     if cached:
         return safe_json({"status": "success", "data": cached})
 
-    try:
-        usd_twd = get_usd_twd()
-    except Exception:
-        usd_twd = 32.0   # fallback 匯率
+    # ── DB query 先行，FX 匯率只在 US ETF 才需要 ──
+    # 舊做法：在 DB query 前先同步呼叫 get_usd_twd()，TW ETF 根本用不到卻白白等待；
+    # 若 FX 快取失效（每 5 分鐘）則 requests.get(timeout=8) 直接阻塞 event loop
+    # 最長 24 秒 → 同期所有輪詢請求也全部卡住 → 前端 timeout → error box。
+    # 正確做法：DB query 完後，根據 market 決定是否取匯率，且用 asyncio.to_thread。
 
     try:
         with get_db() as (conn, cursor):
@@ -544,6 +545,11 @@ async def get_etf_detail(ticker: str):
             return safe_json({"status": "error", "message": f"找不到 ETF {ticker}"}, 404)
 
     if row.get("market") == "US":
+        # US ETF 才需要 USD/TWD 匯率；asyncio.to_thread 確保不阻塞 event loop
+        try:
+            usd_twd = await asyncio.to_thread(get_usd_twd)
+        except Exception:
+            usd_twd = 32.0
         row["price_twd"] = round(float(row.get("current_price", 0)) * usd_twd, 2)
         row["usd_twd_rate"] = usd_twd
 
