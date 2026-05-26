@@ -305,9 +305,9 @@ async function loadETFDetail() {
       // _tFetch 限制 3s：超時視為已接收請求（後台繼續跑），不影響輪詢
       _tFetch(`/api/etf/update/${currentTicker}`, { method: 'POST' }, 3000).catch(() => {});
 
-      // 輪詢：每 3 秒重試 detail，最多 4 次（共 12 秒）
-      // 若後台 fetch_one_etf 成功（5-15s）輪詢即能取得資料
-      const MAX_RETRY = 4;
+      // 輪詢：每 3 秒重試 detail，最多 6 次（共 18 秒）
+      // TiDB Serverless 冷啟動最長約 15 秒，18 秒足夠覆蓋
+      const MAX_RETRY = 6;
       for (let i = 0; i < MAX_RETRY; i++) {
         await new Promise(r => setTimeout(r, 3000));
         const remaining = (MAX_RETRY - 1 - i) * 3;

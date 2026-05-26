@@ -71,20 +71,29 @@ def _ensure_pool():
 
 
 def _get_mysql_conn():
-    """從連線池取得連線（重用通道）；池不可用時退回直接建立（效能降級但功能不中斷）。"""
+    """從連線池取得連線（重用通道）；池不可用時退回直接建立（效能降級但功能不中斷）。
+
+    重要：ping 失敗時不得返回死連線給呼叫方。
+    TiDB Serverless 或 Railway NAT 閒置後會關閉 TCP，pool 內連線全部變 stale。
+    舊做法 'except: pass + return conn' 會把死連線交給 query，query 必然失敗。
+    """
     _ensure_pool()
     if _mysql_pool is not None:
         try:
             conn = _mysql_pool.get_connection()
-            # 偵測 TiDB Serverless idle timeout 後的失效連線並自動重連
+            # attempts=2 delay=1：給 TiDB 最多 2 秒重建 TCP；
+            # 若仍失敗 → 關閉此死連線改用新直連，而非繼續用壞掉的連線。
             try:
-                conn.ping(reconnect=True, attempts=1, delay=0)
-            except Exception:
-                pass  # ping 失敗 → 由 get_db() 的重試邏輯處理
-            return conn
+                conn.ping(reconnect=True, attempts=2, delay=1)
+                return conn   # ← ping 成功才返回，確保連線有效
+            except Exception as ping_err:
+                logger.debug(f"池連線 ping 失敗，關閉死連線改用新直連: {ping_err}")
+                try: conn.close()
+                except: pass
+                # 不 return 死連線，直接落穿到下方新直連邏輯
         except Exception as pool_err:
             logger.debug(f"連線池異常，退回直接連線: {pool_err}")
-    # 退回：直接建立連線（不走池，較慢但確保功能不中斷）
+    # 退回：直接建立新連線（不走池，較慢但確保功能不中斷）
     import mysql.connector
     return mysql.connector.connect(**_mysql_conn_params())
 

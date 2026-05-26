@@ -494,6 +494,29 @@ async def _run_session_cleanup():
 
 
 # ──────────────────────────────────────────────
+#  DB 保活（防止 TiDB Serverless 連線因閒置而斷線）
+# ──────────────────────────────────────────────
+
+def _db_keepalive():
+    """每 10 分鐘對 TiDB 發送輕量查詢，防止連線池內的 TCP 通道因以下原因失效：
+    - Railway NAT 閒置超時（通常 30–90 分鐘）
+    - TiDB Serverless wait_timeout（預設 1 小時）
+
+    不保活 → 閒置後 pool 連線全部 stale → 下一個請求遭遇「Dead Connection」
+    → query 失敗 → 3 次 retry（含重建 SSL）→ 最長 45 秒才報錯 → 用戶看到 503。
+
+    保活成本：~2ms / 10 分鐘，可忽略 TiDB Serverless 免費額度（RU）。
+    """
+    try:
+        from database import get_db
+        with get_db() as (conn, cursor):
+            cursor.execute("SELECT 1")
+        logger.debug("DB keepalive ✓")
+    except Exception as e:
+        logger.warning(f"DB keepalive 失敗（下次請求將重建連線）: {e}")
+
+
+# ──────────────────────────────────────────────
 #  快取清理
 # ──────────────────────────────────────────────
 
@@ -570,6 +593,10 @@ def start_scheduler() -> BackgroundScheduler:
 
     # 快取維護（每 30 分鐘）
     sch.add_job(_evict_cache, "interval", minutes=30, max_instances=1)
+
+    # DB 連線保活（每 10 分鐘）— 防止 TiDB Serverless TCP 斷線
+    # 此 job 是同步函數，APScheduler 直接在 background thread 執行，無需橋接
+    sch.add_job(_db_keepalive, "interval", minutes=10, max_instances=1, id="db_keepalive")
 
     sch.start()
     logger.info(
