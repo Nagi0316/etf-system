@@ -12,14 +12,15 @@ from utils import safe_json
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-LATEST_DAILY_JOIN = """
-LEFT JOIN (
-    SELECT d1.* FROM etf_daily_data d1
-    INNER JOIN (
-        SELECT ticker, MAX(date) AS max_date FROM etf_daily_data
-        WHERE current_price > 0 GROUP BY ticker
-    ) d2 ON d1.ticker = d2.ticker AND d1.date = d2.max_date
-) d ON w.ticker = d.ticker
+# 相關子查詢：只查詢用戶自選清單內的 ticker，避免 GROUP BY 掃全表
+# 搭配 idx_daily_date(ticker,date) 索引，每個 ticker 只掃自己的行
+_WATCHLIST_DAILY_JOIN = """
+LEFT JOIN etf_daily_data d
+  ON d.ticker = w.ticker
+ AND d.date = (
+       SELECT MAX(d2.date) FROM etf_daily_data d2
+       WHERE d2.ticker = w.ticker AND d2.current_price > 0
+     )
 """
 
 
@@ -40,7 +41,7 @@ async def get_watchlist(current_user: dict = Depends(get_current_user)):
                 d.annual_return_1y
             FROM user_watchlist w
             JOIN etf_master m ON w.ticker = m.ticker
-            {LATEST_DAILY_JOIN}
+            {_WATCHLIST_DAILY_JOIN}
             WHERE w.user_id=%s ORDER BY w.added_at DESC
         """, (uid,))
         rows = cursor.fetchall()
@@ -58,7 +59,7 @@ async def add_watchlist(body: WatchlistAddIn, current_user: dict = Depends(get_c
         cursor.execute("SELECT ticker FROM etf_master WHERE ticker=%s", (ticker,))
         if not cursor.fetchone():
             cursor.execute(
-                "INSERT OR IGNORE INTO etf_master (ticker,name,market) VALUES (%s,%s,%s)",
+                "INSERT IGNORE INTO etf_master (ticker,name,market) VALUES (%s,%s,%s)",
                 (ticker, name, market)
             )
         cursor.execute("SELECT id FROM user_watchlist WHERE user_id=%s AND ticker=%s", (uid, ticker))

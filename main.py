@@ -59,7 +59,7 @@ async def _startup_sequence():
     logger.info("▶ 開始更新活躍 ETF 行情...")
     await _update_active()
 
-    # Step 3: 背景補齊 TW ETF 歷史收盤價，補齊後立即重算年化報酬率
+    # Step 2: 背景補齊 TW ETF 歷史收盤價，補齊後立即重算年化報酬率
     async def _bg_backfill():
         await asyncio.sleep(30)  # 等 _update_active 完成後再開始，避免同時競爭 DB
         try:
@@ -150,13 +150,15 @@ async def add_security_headers(request: Request, call_next: Callable) -> Respons
     response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"]          = "1; mode=block"
     response.headers["Permissions-Policy"]        = "geolocation=(), microphone=(), camera=()"
-    # CSP：允許已知 CDN（Tailwind/Chart.js/FontAwesome）與 Google OAuth；
+    # CSP：Tailwind 已改用本地 production build（static/css/tailwind.min.css），
+    # 移除舊的 cdn.tailwindcss.com（不再使用）；保留 cdn.jsdelivr.net（Chart.js）
+    # 與 cdnjs.cloudflare.com（FontAwesome）。
     # 因模板使用大量 inline script/style，需保留 unsafe-inline，
     # 但仍透過限制 connect-src / img-src / object-src 縮小攻擊面。
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
-            "https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
+            "https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
         "font-src 'self' https://cdnjs.cloudflare.com; "
         "img-src 'self' data: https://lh3.googleusercontent.com; "

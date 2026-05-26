@@ -1,7 +1,7 @@
 """
 routes/user_routes.py — 使用者個人資料、大頭照上傳
 """
-import os, time, logging
+import asyncio, os, time, logging
 from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.templating import Jinja2Templates
 
@@ -95,8 +95,12 @@ async def upload_avatar(
     fname = f"avatar_{uid}_{int(time.time())}.{ext}"
     fpath = os.path.join(AVATAR_DIR, fname)
 
-    with open(fpath, "wb") as fp:
-        fp.write(content)
+    # 使用 asyncio.to_thread 避免同步 I/O 阻塞事件迴圈
+    def _write():
+        with open(fpath, "wb") as fp:
+            fp.write(content)
+
+    await asyncio.to_thread(_write)
 
     avatar_url = f"/static/uploads/avatars/{fname}"
     with get_db() as (conn, cursor):

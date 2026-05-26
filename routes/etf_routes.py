@@ -267,6 +267,9 @@ async def search_etf(request: Request, q: str = Query(..., min_length=1)):
         return safe_json({"status": "success", "data": cached})
 
     with get_db() as (conn, cursor):
+        # 使用相關子查詢（LATEST_DAILY_JOIN_SINGLE 模式）：
+        # WHERE 先過濾符合的 m.ticker，再對每個結果 ticker 各查一次最新 date，
+        # 走 idx_daily_date(ticker,date) 索引，避免預先 GROUP BY 掃全表。
         cursor.execute(f"""
             SELECT m.ticker, m.name, m.market,
                 COALESCE(d.current_price,0) as current_price,
@@ -275,7 +278,12 @@ async def search_etf(request: Request, q: str = Query(..., min_length=1)):
                 COALESCE(d.payout_freq,'不配息') as payout_freq,
                 COALESCE(d.annual_return_1y,0) as annual_return_1y
             FROM etf_master m
-            {LATEST_DAILY_JOIN}
+            LEFT JOIN etf_daily_data d
+              ON d.ticker = m.ticker
+             AND d.date = (
+                   SELECT MAX(d2.date) FROM etf_daily_data d2
+                   WHERE d2.ticker = m.ticker AND d2.current_price > 0
+                 )
             WHERE (m.ticker LIKE %s OR m.name LIKE %s)
               AND COALESCE(m.is_delisted, 0) = 0
             ORDER BY
@@ -954,6 +962,34 @@ async def get_dividends(ticker: str):
     yt = _yahoo_ticker(ticker, market)
 
     def _get_divs():
+        # 優先走 CF Proxy（繞過 Railway IP 封鎖）；fallback 直連 Yahoo Chart API
+        # 採用 v8 chart API 取得 events.dividends，與 price-history 同一路徑，
+        # 不依賴 yf.Ticker().dividends（該方法無法受益於 CF Proxy）
+        try:
+            url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
+                   f"?range=3y&interval=1mo&events=div")
+            r = (_cf_yahoo_get(url, timeout=10)
+                 or _new_session(f"https://finance.yahoo.com/quote/{yt}").get(url, timeout=10))
+            if r and r.status_code == 200:
+                chart = r.json().get("chart", {}).get("result")
+                if chart:
+                    raw_divs = (chart[0].get("events") or {}).get("dividends") or {}
+                    if raw_divs:
+                        cutoff = pd.Timestamp.now() - pd.DateOffset(years=3)
+                        results = []
+                        for ts_str, info in raw_divs.items():
+                            ts_val = int(ts_str)
+                            dt = datetime.fromtimestamp(ts_val, tz=timezone.utc).replace(tzinfo=None)
+                            if pd.Timestamp(dt) >= cutoff:
+                                results.append({
+                                    "date": dt.strftime("%Y-%m-%d"),
+                                    "amount": round(float(info.get("amount", 0)), 6),
+                                })
+                        return sorted(results, key=lambda x: x["date"])
+        except Exception:
+            pass
+
+        # Fallback：直接用 yf.Ticker（適用本機開發或 CF 代理不可用時）
         try:
             t = yf.Ticker(yt)
             divs = t.dividends
