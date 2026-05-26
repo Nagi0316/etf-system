@@ -1368,6 +1368,8 @@ def save_etf_data(data: dict):
         cache.delete(f"rank:combined:{market}")
         for rank_type in ("volume", "return", "yield"):
             cache.delete(f"rank:{rank_type}:{market}")
+        # rank:all 彙總 TW + US 兩市場，任一 ETF 更新都必須清除，否則會殘留舊資料
+        cache.delete("rank:all")
     else:
         cache.delete_prefix("rank:")
 
@@ -1442,6 +1444,7 @@ def save_price_only(data: dict):
         cache.delete(f"rank:combined:{market}")
         for rank_type in ("volume", "return", "yield"):
             cache.delete(f"rank:{rank_type}:{market}")
+        cache.delete("rank:all")
     else:
         cache.delete_prefix("rank:")
 

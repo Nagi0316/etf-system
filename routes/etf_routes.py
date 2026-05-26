@@ -295,7 +295,7 @@ async def search_etf(request: Request, q: str = Query(..., min_length=1)):
                     COALESCE(d.price_change_percent,0) as price_change_percent,
                     COALESCE(d.dividend_yield,0) as dividend_yield,
                     COALESCE(d.payout_freq,'不配息') as payout_freq,
-                    COALESCE(d.annual_return_1y,0) as annual_return_1y
+                    d.annual_return_1y
                 FROM etf_master m
                 {LATEST_DAILY_JOIN}
                 WHERE (m.ticker LIKE %s OR m.name LIKE %s)
@@ -599,8 +599,8 @@ def _maybe_background_refresh(ticker: str, row: dict):
         is_stale = (not data_date) or ((_date.today() - data_date).days >= 1)
     except Exception:
         is_stale = True
-    missing_returns = (not row.get("annual_return_1y") and
-                       not row.get("annual_return_3y"))
+    missing_returns = (row.get("annual_return_1y") is None and
+                       row.get("annual_return_3y") is None)
     if not (is_stale or missing_returns):
         return
 

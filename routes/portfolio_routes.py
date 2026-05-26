@@ -75,14 +75,21 @@ async def get_portfolio(current_user: dict = Depends(get_current_user)):
         """, (uid,))
         rows = cursor.fetchall()
 
-        # 所有 ticker 的已實現損益合計（含已全部賣出的）
+        # 所有 ticker（含已清倉）的已實現損益，JOIN market 後才能正確做 FX 換算
+        # 已實現損益儲存在原始貨幣（TW=TWD、US=USD），必須各自乘以當前匯率才能加總
         cursor.execute(
-            "SELECT COALESCE(SUM(realized_profit), 0) AS total_realized "
-            "FROM user_portfolio WHERE user_id=%s",
+            "SELECT p.realized_profit, m.market "
+            "FROM user_portfolio p "
+            "JOIN etf_master m ON p.ticker = m.ticker "
+            "WHERE p.user_id=%s",
             (uid,)
         )
-        r_row = cursor.fetchone()
-        total_realized_twd_raw = float((r_row or {}).get("total_realized") or 0)
+        rp_rows = cursor.fetchall()
+        # 對每筆套用正確匯率後加總
+        total_realized_twd_raw = sum(
+            float(r.get("realized_profit") or 0) * (usd_twd if r.get("market") == "US" else 1.0)
+            for r in rp_rows
+        )
 
     result, total_cost_twd, total_value_twd = [], 0.0, 0.0
     for r in rows:
@@ -193,12 +200,34 @@ async def delete_transaction(tid: int, current_user: dict = Depends(get_current_
     uid = current_user["id"]
     with get_db() as (conn, cursor):
         cursor.execute(
-            "SELECT ticker FROM user_transactions WHERE id=%s AND user_id=%s", (tid, uid)
+            "SELECT ticker, transaction_type FROM user_transactions WHERE id=%s AND user_id=%s",
+            (tid, uid)
         )
         row = cursor.fetchone()
         if not row:
             return safe_json({"status": "error", "message": "找不到此交易"}, 404)
-        ticker = row["ticker"]
+        ticker   = row["ticker"]
+        tx_type  = row["transaction_type"]
+
+        # 安全警示：刪除「買入」紀錄時，若後續仍有賣出紀錄，已實現損益將被重算為 0
+        # （因為賣出時的 avg_cost 基礎不再存在），提前偵測並拒絕，保護損益紀錄正確性
+        if tx_type == "buy":
+            cursor.execute(
+                "SELECT COUNT(*) AS sell_count FROM user_transactions "
+                "WHERE user_id=%s AND ticker=%s AND transaction_type='sell' AND id != %s",
+                (uid, ticker, tid)
+            )
+            sell_check = cursor.fetchone()
+            sell_count = int((sell_check or {}).get("sell_count") or 0)
+            if sell_count > 0:
+                return safe_json({
+                    "status": "error",
+                    "message": (
+                        f"無法刪除此買入紀錄：{ticker} 尚有 {sell_count} 筆賣出交易以此為成本基礎。"
+                        " 請先刪除所有賣出紀錄後再操作，否則已實現損益將被歸零。"
+                    ),
+                }, 409)
+
         cursor.execute(
             "DELETE FROM user_transactions WHERE id=%s AND user_id=%s", (tid, uid)
         )
@@ -294,11 +323,20 @@ def _insert_transaction(uid: int, data: dict, idem_key: str):
             )
 
         # 賣出前檢查庫存（浮點容差 1e-6）
+        # MySQL/TiDB：使用 SELECT ... FOR UPDATE 鎖定該列，防止並發請求同時讀到相同持股數後各自賣出（超賣 race condition）
+        # SQLite：WAL 模式下寫操作本身是 serial 的，FOR UPDATE 語法不支援但效果等同
         if tx_type == "sell":
-            cursor.execute(
-                "SELECT shares FROM user_portfolio WHERE user_id=%s AND ticker=%s",
-                (uid, ticker)
-            )
+            try:
+                cursor.execute(
+                    "SELECT shares FROM user_portfolio WHERE user_id=%s AND ticker=%s FOR UPDATE",
+                    (uid, ticker)
+                )
+            except Exception:
+                # SQLite 不支援 FOR UPDATE，退回一般 SELECT（WAL 模式下仍安全）
+                cursor.execute(
+                    "SELECT shares FROM user_portfolio WHERE user_id=%s AND ticker=%s",
+                    (uid, ticker)
+                )
             row  = cursor.fetchone()
             held = float(row["shares"]) if row else 0.0
             if held < shares - 1e-6:

@@ -263,8 +263,8 @@ def _summarize(transactions: list, total_invested: float, total_shares: float,
         "total_profit": round(total_profit, 2),
         "total_return": round(total_return, 2),
         "annual_return": round(annual_return, 2),
-        "return_3y": round(annual_return, 2) if years >= 3 else None,
-        "return_5y": round(annual_return, 2) if years >= 5 else None,
+        # 不輸出 return_3y / return_5y：這兩個欄位過去等於整段年化報酬（不是真正的 3Y/5Y 子期間報酬），
+        # 容易誤導前端。前端應直接使用 annual_return 搭配 years_span 自行判斷回測長度。
         "final_price": round(final_price, 2),
         "total_shares": round(total_shares, 4),
         "years_span": round(years, 2),

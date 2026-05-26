@@ -123,6 +123,10 @@ class DbCursor:
                 idx = up.index("ON DUPLICATE KEY UPDATE")
                 sql = sql[:idx].strip().rstrip(",")
                 sql = sql.replace("INSERT INTO", "INSERT OR REPLACE INTO", 1)
+                # 去掉 UPDATE 子句後 ? 數量減少，需截斷 params 否則 sqlite3 拋 ProgrammingError
+                n_placeholders = sql.count("?")
+                if params and len(params) > n_placeholders:
+                    params = params[:n_placeholders]
             elif up.startswith("INSERT IGNORE INTO"):
                 sql = sql.replace("INSERT IGNORE INTO", "INSERT OR IGNORE INTO", 1)
             elif up.startswith("REPLACE INTO"):
