@@ -59,7 +59,7 @@ async def _startup_sequence():
     logger.info("▶ 開始更新活躍 ETF 行情...")
     await _update_active()
 
-    # Step 2: 背景補齊 TW ETF 歷史收盤價，補齊後立即重算年化報酬率
+    # Step 3: 背景補齊 TW ETF 歷史收盤價，補齊後立即重算年化報酬率
     async def _bg_backfill():
         await asyncio.sleep(30)  # 等 _update_active 完成後再開始，避免同時競爭 DB
         try:
@@ -111,36 +111,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── 公開 API 快取策略（啟用瀏覽器 HTTP 快取，減少冗餘伺服器往返）──
-# 只對 GET 請求且 2xx 回應的公開 ETF/FX 端點加 Cache-Control；
-# 用戶私有資料（auth/portfolio/watchlist）不在此清單，回傳 no-store。
-_API_CACHE_MAP: list[tuple[str, int]] = [
-    ("/api/etf/index",          1800),   # 30 min — ETF master 清單鮮少變動
-    ("/api/etf/rankings/",       300),   # 5 min  — 行情排行
-    ("/api/etf/scores/top",      600),   # 10 min — 評分榜
-    ("/api/etf/score/",          600),   # 10 min — 單一評分
-    ("/api/etf/detail/",         300),   # 5 min  — 單一詳情
-    ("/api/etf/price-history/",   60),   # 1 min  — 走勢圖（價格變動頻繁）
-    ("/api/etf/dip-alert/",      120),   # 2 min  — 低檔警示
-    ("/api/fx/",                 300),   # 5 min  — 匯率
-]
-
-@app.middleware("http")
-async def add_cache_control(request: Request, call_next: Callable) -> Response:
-    response = await call_next(request)
-    if request.method == "GET" and response.status_code < 300:
-        path = request.url.path
-        for prefix, ttl in _API_CACHE_MAP:
-            if path.startswith(prefix):
-                # stale-while-revalidate = 2×ttl：過期後背景重驗證，前景不等待
-                response.headers.setdefault(
-                    "Cache-Control",
-                    f"public, max-age={ttl}, stale-while-revalidate={ttl * 2}"
-                )
-                break
-    return response
-
-
 # ── 安全 HTTP 標頭（防 Clickjacking / MIME-sniffing / 資訊洩漏）──
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next: Callable) -> Response:
@@ -150,15 +120,13 @@ async def add_security_headers(request: Request, call_next: Callable) -> Respons
     response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"]          = "1; mode=block"
     response.headers["Permissions-Policy"]        = "geolocation=(), microphone=(), camera=()"
-    # CSP：Tailwind 已改用本地 production build（static/css/tailwind.min.css），
-    # 移除舊的 cdn.tailwindcss.com（不再使用）；保留 cdn.jsdelivr.net（Chart.js）
-    # 與 cdnjs.cloudflare.com（FontAwesome）。
+    # CSP：允許已知 CDN（Tailwind/Chart.js/FontAwesome）與 Google OAuth；
     # 因模板使用大量 inline script/style，需保留 unsafe-inline，
     # 但仍透過限制 connect-src / img-src / object-src 縮小攻擊面。
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
-            "https://cdn.jsdelivr.net; "
+            "https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
         "font-src 'self' https://cdnjs.cloudflare.com; "
         "img-src 'self' data: https://lh3.googleusercontent.com; "

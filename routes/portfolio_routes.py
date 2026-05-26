@@ -33,12 +33,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 LATEST_DAILY_JOIN = """
-LEFT JOIN etf_daily_data d
-  ON d.ticker = p.ticker
- AND d.date = (
-       SELECT MAX(d2.date) FROM etf_daily_data d2
-       WHERE d2.ticker = p.ticker AND d2.current_price > 0
-     )
+LEFT JOIN (
+    SELECT d1.* FROM etf_daily_data d1
+    INNER JOIN (
+        SELECT ticker, MAX(date) AS max_date FROM etf_daily_data
+        WHERE current_price > 0 GROUP BY ticker
+    ) d2 ON d1.ticker = d2.ticker AND d1.date = d2.max_date
+) d ON p.ticker = d.ticker
 """
 
 

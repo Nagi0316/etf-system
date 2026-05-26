@@ -19,23 +19,11 @@ _DB_RETRIES = 3
 
 
 # ══════════════════════════════════════════════════════════
-#  MySQL 直連（不使用連線池）
+#  MySQL 連線池（重用 TCP+SSL 通道，省去每次 ~200ms 的握手開銷）
 # ══════════════════════════════════════════════════════════
-#
-#  設計決策：Railway 單 worker + TiDB Serverless + 多層快取
-#  ─────────────────────────────────────────────────────────
-#  ❌ 連線池的問題（已移除）：
-#    - Railway NAT / TiDB wait_timeout 閒置後 TCP 靜默中斷
-#    - pool 內連線全部 stale；ping 在「黑洞 TCP」環境下無限 hang
-#    - 即使加 ping + fallback，下次請求仍從 pool 拿到同一個壞連線
-#    - 複雜度高、debug 困難、可靠性差
-#
-#  ✅ 直連的優勢：
-#    - 無 stale 問題：每次 get_db() 建立全新 TCP + SSL
-#    - 無池耗盡：不存在「等待可用連線」的情況
-#    - 90%+ 請求命中快取，實際需要 DB 的請求量極低
-#    - SSL 握手 ~150ms，快取命中時完全無此開銷
-#    - 程式碼簡單，行為可預測
+
+_mysql_pool = None           # MySQLConnectionPool 單例
+_pool_lock  = threading.Lock()
 
 
 def _mysql_conn_params() -> dict:
@@ -45,7 +33,7 @@ def _mysql_conn_params() -> dict:
         host=DB_HOST, port=DB_PORT,
         user=DB_USER, password=DB_PASSWORD,
         database=DB_NAME,
-        connection_timeout=10,   # 10s：快於舊的 15s，避免 retry 時累積太長
+        connection_timeout=15,
         autocommit=False,
         charset="utf8mb4",
         collation="utf8mb4_unicode_ci",
@@ -60,10 +48,43 @@ def _mysql_conn_params() -> dict:
     return params
 
 
+def _ensure_pool():
+    """初始化連線池（雙重鎖定，只執行一次；失敗時下次請求自動重試）。"""
+    global _mysql_pool
+    if _mysql_pool is not None:
+        return
+    with _pool_lock:
+        if _mysql_pool is not None:
+            return
+        try:
+            import mysql.connector.pooling
+            _mysql_pool = mysql.connector.pooling.MySQLConnectionPool(
+                pool_name="etf_pool",
+                pool_size=5,          # 單 worker Railway，5 條並發連線綽綽有餘
+                pool_reset_session=True,  # 歸還時自動回滾未提交事務
+                **_mysql_conn_params(),
+            )
+            logger.info("✅ MySQL 連線池已初始化（pool_size=5）")
+        except Exception as e:
+            logger.warning(f"連線池初始化失敗（將退回直接連線）: {e}")
+            _mysql_pool = None    # 確保下次呼叫可重試
+
+
 def _get_mysql_conn():
-    """每次建立全新 MySQL 連線（無池）。
-    連線建立後若 TiDB 有問題，get_db() 的 retry 邏輯負責重試。
-    """
+    """從連線池取得連線（重用通道）；池不可用時退回直接建立（效能降級但功能不中斷）。"""
+    _ensure_pool()
+    if _mysql_pool is not None:
+        try:
+            conn = _mysql_pool.get_connection()
+            # 偵測 TiDB Serverless idle timeout 後的失效連線並自動重連
+            try:
+                conn.ping(reconnect=True, attempts=1, delay=0)
+            except Exception:
+                pass  # ping 失敗 → 由 get_db() 的重試邏輯處理
+            return conn
+        except Exception as pool_err:
+            logger.debug(f"連線池異常，退回直接連線: {pool_err}")
+    # 退回：直接建立連線（不走池，較慢但確保功能不中斷）
     import mysql.connector
     return mysql.connector.connect(**_mysql_conn_params())
 
@@ -422,6 +443,7 @@ def init_db():
         ("idx_alerts_user",     "price_alerts",      "user_id, is_active"),
         ("idx_sessions_user",   "user_sessions",     "user_id, is_revoked"),
         ("idx_dividends_ticker","etf_dividends",     "ticker, ex_date"),
+        ("idx_txn_idem",        "user_transactions", "user_id, idempotency_key"),
     ]
     with get_db() as (conn, cursor):
         for idx_name, tbl, cols in indexes:
@@ -431,36 +453,5 @@ def init_db():
                 logger.info(f"✅ 建立索引 {idx_name}")
             except Exception:
                 pass  # 索引已存在為預期情況，忽略
-
-    # ── 冪等鍵 UNIQUE 索引（資料正確性關鍵：DB 層防重複交易）──────────────────
-    # 注意：使用獨立名稱 idx_txn_idem_uniq 而非 idx_txn_idem（後者可能以 non-unique 形式存在於舊 DB）
-    # NULL 值允許重複（MySQL/SQLite 皆如此），不影響正常未帶 idempotency_key 的舊交易。
-    with get_db() as (conn, cursor):
-        try:
-            cursor.execute(
-                "CREATE UNIQUE INDEX idx_txn_idem_uniq ON user_transactions (idempotency_key)"
-            )
-            conn.commit()
-            logger.info("✅ 建立唯一索引 idx_txn_idem_uniq（idempotency_key）")
-        except Exception:
-            pass  # 已存在或 NULL 衝突（NULL 在 UNIQUE 索引中允許多個）
-
-    # ── etf_dividends.currency 資料修正（歷史 TW ETF 配息錯誤標記為 USD）──────
-    # DEFAULT 'USD' 為 schema 原始設計失誤；TW ETF 配息幣別應為 TWD。
-    # 此遷移只更新「currency='USD' 且對應 etf_master.market='TW'」的記錄，冪等安全。
-    with get_db() as (conn, cursor):
-        try:
-            cursor.execute("""
-                UPDATE etf_dividends d
-                JOIN etf_master m ON d.ticker = m.ticker
-                SET d.currency = 'TWD'
-                WHERE m.market = 'TW' AND d.currency = 'USD'
-            """)
-            fixed = cursor.rowcount
-            conn.commit()
-            if fixed:
-                logger.info(f"✅ 修正 {fixed} 筆 TW ETF 配息幣別（USD → TWD）")
-        except Exception as e:
-            logger.debug(f"etf_dividends currency migration 略過: {e}")
 
     logger.info(f"✅ 資料庫初始化完成 ({'TiDB/MySQL' if USE_MYSQL else 'SQLite'})")

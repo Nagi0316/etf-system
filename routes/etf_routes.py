@@ -57,17 +57,6 @@ LEFT JOIN (
 ) d ON m.ticker = d.ticker
 """
 
-# 單一 ticker 查詢專用：相關子查詢搭配 idx_daily_date(ticker,date) 索引，
-# 避免 GROUP BY 掃描全表（90 ETF × 500 天 = 45K 行 → 只掃該 ticker 的行）
-LATEST_DAILY_JOIN_SINGLE = """
-LEFT JOIN etf_daily_data d
-  ON d.ticker = m.ticker
- AND d.date = (
-       SELECT MAX(d2.date) FROM etf_daily_data d2
-       WHERE d2.ticker = m.ticker AND d2.current_price > 0
-     )
-"""
-
 _ETF_DETAIL_SELECT = """
     SELECT m.ticker, m.name, m.market,
         m.issuer, m.listing_date,
@@ -95,9 +84,8 @@ _ETF_DETAIL_SELECT = """
 """
 
 def _fetch_etf_detail_row(cursor, ticker: str) -> Optional[dict]:
-    """查詢單一 ETF 詳情，使用相關子查詢（LATEST_DAILY_JOIN_SINGLE）
-    避免全表 GROUP BY，搭配 idx_daily_date(ticker,date) 走索引。"""
-    cursor.execute(_ETF_DETAIL_SELECT.format(join=LATEST_DAILY_JOIN_SINGLE), (ticker,))
+    """查詢單一 ETF 詳情，避免在同一請求內重複撰寫相同的 SQL。"""
+    cursor.execute(_ETF_DETAIL_SELECT.format(join=LATEST_DAILY_JOIN), (ticker,))
     return cursor.fetchone()
 
 
@@ -267,9 +255,6 @@ async def search_etf(request: Request, q: str = Query(..., min_length=1)):
         return safe_json({"status": "success", "data": cached})
 
     with get_db() as (conn, cursor):
-        # 使用相關子查詢（LATEST_DAILY_JOIN_SINGLE 模式）：
-        # WHERE 先過濾符合的 m.ticker，再對每個結果 ticker 各查一次最新 date，
-        # 走 idx_daily_date(ticker,date) 索引，避免預先 GROUP BY 掃全表。
         cursor.execute(f"""
             SELECT m.ticker, m.name, m.market,
                 COALESCE(d.current_price,0) as current_price,
@@ -278,12 +263,7 @@ async def search_etf(request: Request, q: str = Query(..., min_length=1)):
                 COALESCE(d.payout_freq,'不配息') as payout_freq,
                 COALESCE(d.annual_return_1y,0) as annual_return_1y
             FROM etf_master m
-            LEFT JOIN etf_daily_data d
-              ON d.ticker = m.ticker
-             AND d.date = (
-                   SELECT MAX(d2.date) FROM etf_daily_data d2
-                   WHERE d2.ticker = m.ticker AND d2.current_price > 0
-                 )
+            {LATEST_DAILY_JOIN}
             WHERE (m.ticker LIKE %s OR m.name LIKE %s)
               AND COALESCE(m.is_delisted, 0) = 0
             ORDER BY
@@ -519,39 +499,31 @@ async def get_etf_detail(ticker: str):
     if cached:
         return safe_json({"status": "success", "data": cached})
 
-    # ── DB query 先行，FX 匯率只在 US ETF 才需要 ──
-    # 舊做法：在 DB query 前先同步呼叫 get_usd_twd()，TW ETF 根本用不到卻白白等待；
-    # 若 FX 快取失效（每 5 分鐘）則 requests.get(timeout=8) 直接阻塞 event loop
-    # 最長 24 秒 → 同期所有輪詢請求也全部卡住 → 前端 timeout → error box。
-    # 正確做法：DB query 完後，根據 market 決定是否取匯率，且用 asyncio.to_thread。
+    try:
+        usd_twd = get_usd_twd()
+    except Exception:
+        usd_twd = 32.0   # fallback 匯率
 
     try:
         with get_db() as (conn, cursor):
             row = _fetch_etf_detail_row(cursor, ticker)
     except Exception as e:
-        err_cls = type(e).__name__
-        err_msg = str(e)[:300]
-        logger.error(f"etf detail DB error ({ticker}) [{err_cls}]: {err_msg}", exc_info=True)
-        # 暫時在 response 中暴露錯誤類型以利診斷（確認問題後移除）
-        return safe_json({
-            "status":  "error",
-            "message": "資料庫暫時無法連線，請稍後再試",
-            "_debug":  f"[{err_cls}] {err_msg}",
-        }, 503)
+        logger.error(f"etf detail DB error ({ticker}): {e}", exc_info=True)
+        return safe_json({"status": "error", "message": "資料庫暫時無法連線，請稍後再試"}, 503)
 
     if not row:
-        # 資料庫找不到 → 立即回傳 processing，讓前端 POST /api/etf/update 觸發背景抓取後輪詢
-        # 舊做法：await _on_demand_fetch() 阻塞 30 秒等 Yahoo Finance，佔用 event loop
-        # 新做法：立即回傳，update_one_etf._bg() 在背景執行，前端輪詢即可感知完成
-        logger.info(f"detail: {ticker} 不在 DB，回傳 processing 等前端觸發背景更新")
-        return safe_json({"status": "processing", "message": f"{ticker} 資料尚未就緒，正在後台抓取中"})
+        # 資料庫找不到 → 嘗試即時爬取並寫入
+        logger.info(f"detail cache miss: {ticker}，觸發即時爬取")
+        discovered = await _on_demand_fetch(ticker)
+        if not discovered:
+            return safe_json({"status": "error", "message": f"找不到 ETF {ticker}，請確認代碼是否正確"}, 404)
+        # 爬取後重查 DB（共用相同 SQL 函數）
+        with get_db() as (conn, cursor):
+            row = _fetch_etf_detail_row(cursor, ticker)
+        if not row:
+            return safe_json({"status": "error", "message": f"找不到 ETF {ticker}"}, 404)
 
     if row.get("market") == "US":
-        # US ETF 才需要 USD/TWD 匯率；asyncio.to_thread 確保不阻塞 event loop
-        try:
-            usd_twd = await asyncio.to_thread(get_usd_twd)
-        except Exception:
-            usd_twd = 32.0
         row["price_twd"] = round(float(row.get("current_price", 0)) * usd_twd, 2)
         row["usd_twd_rate"] = usd_twd
 
@@ -815,15 +787,10 @@ async def get_price_history(ticker: str, period: str = "1y"):
     yf_interval = INTERVAL_MAP.get(p, "1d")
     is_intraday = p in ("1D", "5D")
 
-    # market 欄位不會變動 → 快取 1 小時，省掉每次走勢圖請求的 DB round-trip
-    _market_key = f"market:{ticker}"
-    market = cache.get(_market_key)
-    if not market:
-        with get_db() as (conn, cursor):
-            cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
-            row = cursor.fetchone()
-            market = (row or {}).get("market") or ("TW" if ticker[:4].isdigit() else "US")
-        cache.set(_market_key, market, 3600)
+    with get_db() as (conn, cursor):
+        cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
+        row = cursor.fetchone()
+        market = (row or {}).get("market") or ("TW" if ticker[:4].isdigit() else "US")
 
     yt = _yahoo_ticker(ticker, market)
     # 時區偏移：台股 UTC+8；美股動態判斷 EDT(UTC-4) / EST(UTC-5)
@@ -970,34 +937,6 @@ async def get_dividends(ticker: str):
     yt = _yahoo_ticker(ticker, market)
 
     def _get_divs():
-        # 優先走 CF Proxy（繞過 Railway IP 封鎖）；fallback 直連 Yahoo Chart API
-        # 採用 v8 chart API 取得 events.dividends，與 price-history 同一路徑，
-        # 不依賴 yf.Ticker().dividends（該方法無法受益於 CF Proxy）
-        try:
-            url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
-                   f"?range=3y&interval=1mo&events=div")
-            r = (_cf_yahoo_get(url, timeout=10)
-                 or _new_session(f"https://finance.yahoo.com/quote/{yt}").get(url, timeout=10))
-            if r and r.status_code == 200:
-                chart = r.json().get("chart", {}).get("result")
-                if chart:
-                    raw_divs = (chart[0].get("events") or {}).get("dividends") or {}
-                    if raw_divs:
-                        cutoff = pd.Timestamp.now() - pd.DateOffset(years=3)
-                        results = []
-                        for ts_str, info in raw_divs.items():
-                            ts_val = int(ts_str)
-                            dt = datetime.fromtimestamp(ts_val, tz=timezone.utc).replace(tzinfo=None)
-                            if pd.Timestamp(dt) >= cutoff:
-                                results.append({
-                                    "date": dt.strftime("%Y-%m-%d"),
-                                    "amount": round(float(info.get("amount", 0)), 6),
-                                })
-                        return sorted(results, key=lambda x: x["date"])
-        except Exception:
-            pass
-
-        # Fallback：直接用 yf.Ticker（適用本機開發或 CF 代理不可用時）
         try:
             t = yf.Ticker(yt)
             divs = t.dividends
@@ -1018,60 +957,37 @@ async def get_dividends(ticker: str):
 # ── 手動強制更新 ──
 
 @router.post("/api/etf/update/{ticker}")
-async def update_one_etf(ticker: str, background_tasks: BackgroundTasks):
-    """觸發單一 ETF 資料更新。
-
-    設計原則：**立即回傳 processing**，實際 Yahoo Finance 抓取在背景執行。
-    呼叫方不應 await 此端點的完成（否則 Yahoo 封鎖時會卡 30 秒）。
-    前端應採 fire-and-forget + 輪詢 /api/etf/detail/{ticker} 的方式偵測更新完成。
-
-    去重機制：同一 ticker 60 秒內最多觸發一次，防止重複排隊。
-    """
+async def update_one_etf(ticker: str):
     ticker = ticker.upper()
 
-    # ── 同步快速部分：只做 DB 讀取（~5ms）──
-    try:
-        with get_db() as (conn, cursor):
-            cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
-            row = cursor.fetchone()
-    except Exception:
-        row = None
+    # 先讀取 market，不預先寫入 DB（避免垃圾代碼污染資料庫）
+    with get_db() as (conn, cursor):
+        cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
+        row = cursor.fetchone()
     market = (row or {}).get("market") or ("TW" if ticker[:4].isdigit() else "US")
 
-    # 去重：60 秒內已在更新中，直接回傳
-    rate_key = f"bg_update:{ticker}"
-    if cache.get(rate_key):
-        return safe_json({"status": "processing", "message": f"{ticker} 已在更新中，約 5-15 秒後可重新整理"})
-    cache.set(rate_key, 1, 60)
+    # 先抓取資料，確認 ticker 真實存在後才寫入 DB
+    def _fetch():
+        return fetch_one_etf(ticker, market)
 
-    # ── 背景慢速部分：Yahoo Finance 抓取 + DB 寫入 ──
-    def _bg():
-        try:
-            data = fetch_one_etf(ticker, market)
-            if not data or not data.get("current_price"):
-                return  # 抓取失敗，等排程器下次重試
-            data["ticker"] = ticker
-            data["market"] = market
-            # 確認資料有效後才 INSERT（避免垃圾 ticker 寫入 master）
-            if not row:
-                with get_db() as (c2, cur2):
-                    cur2.execute(
-                        "INSERT IGNORE INTO etf_master (ticker, name, market, auto_discovered) "
-                        "VALUES (%s, %s, %s, 1)",
-                        (ticker, data.get("name", ticker), market),
-                    )
-                    c2.commit()
-            save_etf_data(data)
-            cache.delete(f"detail:{ticker}")
-            cache.delete_prefix("search:")
-            logger.info(f"✅ bg_update {ticker} 完成 price={data.get('current_price')}")
-        except Exception as e:
-            logger.warning(f"bg_update {ticker} 失敗: {e}")
-        finally:
-            cache.delete(rate_key)   # 無論成敗都解鎖，讓前端可再次觸發
+    data = await asyncio.to_thread(_fetch)
+    if not data or not data.get("current_price"):
+        return safe_json({"status": "error", "message": f"無法取得 {ticker} 資料，請確認代碼是否正確"}, 400)
 
-    background_tasks.add_task(_bg)
-    return safe_json({"status": "processing", "message": f"{ticker} 資料更新中，約 5-15 秒後請重新整理"})
+    data["ticker"] = ticker
+    data["market"] = market
+    # 確認有效資料後才 INSERT（INSERT IGNORE 確保已存在時不覆蓋）
+    if not row:
+        with get_db() as (conn, cursor):
+            cursor.execute(
+                "INSERT IGNORE INTO etf_master (ticker, name, market, auto_discovered) VALUES (%s, %s, %s, 1)",
+                (ticker, data.get("name", ticker), market),
+            )
+            conn.commit()
+
+    cache.delete(f"detail:{ticker}")
+    save_etf_data(data)
+    return safe_json({"status": "success", "message": f"{ticker} 已更新", "data": data})
 
 
 @router.post("/api/etf/force-update")

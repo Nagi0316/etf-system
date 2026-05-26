@@ -494,29 +494,6 @@ async def _run_session_cleanup():
 
 
 # ──────────────────────────────────────────────
-#  DB 保活（防止 TiDB Serverless 進入休眠）
-# ──────────────────────────────────────────────
-
-def _db_keepalive():
-    """每 10 分鐘對 TiDB 發送輕量查詢，防止 TiDB Serverless free tier 進入休眠模式。
-
-    注意：database.py 已移除連線池，改為每次請求直連。
-    此 keepalive 的目的不再是「維持 pool TCP」，而是：
-    - 防止 TiDB Serverless 因長時間無請求而休眠（休眠後首次連線需 20-30s 冷啟動）
-    - 排程期間建立新連線 → SELECT 1 → 關閉（不快取連線）
-
-    保活成本：每次建立新 TCP+SSL 連線 ~150ms，每 10 分鐘一次，可忽略。
-    """
-    try:
-        from database import get_db
-        with get_db() as (conn, cursor):
-            cursor.execute("SELECT 1")
-        logger.debug("DB keepalive ✓")
-    except Exception as e:
-        logger.warning(f"DB keepalive 失敗（TiDB 可能暫時無法連線）: {e}")
-
-
-# ──────────────────────────────────────────────
 #  快取清理
 # ──────────────────────────────────────────────
 
@@ -593,10 +570,6 @@ def start_scheduler() -> BackgroundScheduler:
 
     # 快取維護（每 30 分鐘）
     sch.add_job(_evict_cache, "interval", minutes=30, max_instances=1)
-
-    # DB 連線保活（每 10 分鐘）— 防止 TiDB Serverless TCP 斷線
-    # 此 job 是同步函數，APScheduler 直接在 background thread 執行，無需橋接
-    sch.add_job(_db_keepalive, "interval", minutes=10, max_instances=1, id="db_keepalive")
 
     sch.start()
     logger.info(

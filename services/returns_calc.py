@@ -24,16 +24,14 @@ logger = logging.getLogger(__name__)
 
 
 def _compute_annualized(price_now: float, price_then: float, years: float) -> float | None:
-    """計算年化報酬率（%）。任一價格 ≤ 0 或 years ≤ 0 回傳 None。
-
-    一律使用複利公式 (price_now/price_then)^(1/years) - 1，
-    不再為 years<=1 特例使用簡單報酬（避免呼叫端傳入 years<1 時低估報酬）。
-    當 years==1 時兩公式數學等價，無行為變化。
-    """
+    """計算年化報酬率（%）。任一價格 ≤ 0 或 years ≤ 0 回傳 None。"""
     if not price_now or not price_then or price_now <= 0 or price_then <= 0 or years <= 0:
         return None
     try:
-        return round(((price_now / price_then) ** (1 / years) - 1) * 100, 2)
+        total = price_now / price_then - 1
+        if years <= 1:                           # < 1 年：直接用累計報酬
+            return round(total * 100, 2)
+        return round(((1 + total) ** (1 / years) - 1) * 100, 2)
     except Exception:
         return None
 

@@ -163,37 +163,6 @@ def _tx(tx_type: str, date, amount: float, price: float, shares: float, fee: flo
     }
 
 
-def _trailing_return(hist: pd.DataFrame, years: int) -> float | None:
-    """從回測尾端計算純股價 trailing N 年年化報酬率。
-
-    注意：此為純價格報酬（不含 DCA 加碼貢獻與 DRIP 股息再投入），
-    用於評估標的本身在該期間的市場表現，與整體策略年化報酬（annual_return）互補。
-
-    允許 ±45 天容差尋找目標日期對應價格；若資料不足（實際跨度 < 預期 70%）則回傳 None。
-    """
-    if hist.empty:
-        return None
-    end_date  = hist.index[-1]
-    end_price = float(hist["Close"].iloc[-1])
-    target    = end_date - pd.DateOffset(years=years)
-    # 找距目標日期 ±45 天內最接近的有效收盤
-    lo = target - pd.Timedelta(days=45)
-    hi = target + pd.Timedelta(days=45)
-    window = hist[(hist.index >= lo) & (hist.index <= hi)]
-    if window.empty:
-        return None
-    # 以天數差的絕對值找最近日期（timedelta / 1D 取數值，相容舊版 pandas）
-    days_diff    = np.abs((window.index - target) / pd.Timedelta("1D"))
-    closest_idx  = int(np.argmin(days_diff))
-    ref_date     = window.index[closest_idx]
-    ref_price    = float(window["Close"].iloc[closest_idx])
-    actual_years = (end_date - ref_date).days / 365.25
-    # 實際跨度 < 預期年數的 70% 視為資料不足
-    if actual_years < years * 0.7 or ref_price <= 0 or end_price <= 0:
-        return None
-    return round(((end_price / ref_price) ** (1 / years) - 1) * 100, 2)
-
-
 def _compute_risk_metrics(hist: pd.DataFrame, annual_return_pct: float) -> dict:
     """從每日收盤價計算六項風險指標，全部皆用真實歷史資料，無推估成分。
 
@@ -294,10 +263,8 @@ def _summarize(transactions: list, total_invested: float, total_shares: float,
         "total_profit": round(total_profit, 2),
         "total_return": round(total_return, 2),
         "annual_return": round(annual_return, 2),
-        # ── 純股價 trailing 報酬（不含 DCA/DRIP；年數不足則為 None）──
-        # 與 annual_return（全期策略報酬）相輔，可評估標的近期市場表現
-        "return_3y": _trailing_return(hist, 3),
-        "return_5y": _trailing_return(hist, 5),
+        "return_3y": round(annual_return, 2) if years >= 3 else None,
+        "return_5y": round(annual_return, 2) if years >= 5 else None,
         "final_price": round(final_price, 2),
         "total_shares": round(total_shares, 4),
         "years_span": round(years, 2),

@@ -6,8 +6,8 @@
   <title>{% block title %}ETF 投資管理系統{% endblock %}</title>
   <!-- 防止深色模式 FOUC：必須在所有 CSS 之前執行 -->
   <script>(function(){var t=localStorage.getItem('theme');var p=window.matchMedia('(prefers-color-scheme:dark)').matches;if(t==='dark'||(t===null&&p))document.documentElement.classList.add('dark');}());</script>
-  <!-- 生產版 Tailwind（由 tailwindcss CLI purge 後壓縮，~35KB vs Play-CDN ~350KB JS）-->
-  <link href="/static/css/tailwind.min.css" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config={darkMode:'class'}</script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
   <link href="/static/css/main.css" rel="stylesheet">
   {% block extra_head %}{% endblock %}
@@ -154,21 +154,26 @@ function _initMobileSearch() {
 }
 
 // ── 共用搜尋（本地索引優先，0 API round-trip；fallback → server）──
-// Promise 去重：同一時刻多個搜尋觸發只發一次 fetch；成功後快取於 window._ETF_IDX
-let _etfIdxPromise = null;
+let _etfIdxLoading = false;
 async function _ensureEtfIdx() {
-  if (window._ETF_IDX?.length > 0) return window._ETF_IDX;
-  if (!_etfIdxPromise) {
-    _etfIdxPromise = fetch('/api/etf/index')
-      .then(r => r.json())
-      .then(d => { window._ETF_IDX = d.data || []; return window._ETF_IDX; })
-      .catch(() => [])
-      .finally(() => { _etfIdxPromise = null; }); // 失敗後允許重試
+  if (window._ETF_IDX) return window._ETF_IDX;
+  if (_etfIdxLoading) {
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      if (window._ETF_IDX) return window._ETF_IDX;
+    }
+    return null;
   }
-  return _etfIdxPromise;
+  _etfIdxLoading = true;
+  try {
+    const d = await fetch('/api/etf/index').then(r => r.json());
+    window._ETF_IDX = d.data || [];
+  } catch { window._ETF_IDX = []; }
+  _etfIdxLoading = false;
+  return window._ETF_IDX;
 }
-// 頁面載入後立即預載（0ms delay；若 loadStats 已先設好 _ETF_IDX 則直接返回快取）
-document.addEventListener('DOMContentLoaded', () => { _ensureEtfIdx(); });
+// 頁面載入 2 秒後靜默預載（不阻塞主流程）
+document.addEventListener('DOMContentLoaded', () => { setTimeout(_ensureEtfIdx, 2000); });
 
 async function _doSearch(q, dropEl) {
   if (!q || !dropEl) return;
