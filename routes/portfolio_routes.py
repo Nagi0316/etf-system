@@ -49,8 +49,13 @@ LEFT JOIN (
 
 @router.get("/api/portfolio")
 async def get_portfolio(current_user: dict = Depends(get_current_user)):
+    import asyncio as _asyncio
     uid = current_user["id"]
-    usd_twd = get_usd_twd()
+    # 用 to_thread 避免 FX cache miss 時（每 5 分鐘）阻塞 event loop 最多 24 秒
+    try:
+        usd_twd = await _asyncio.to_thread(get_usd_twd)
+    except Exception:
+        usd_twd = 32.0
 
     with get_db() as (conn, cursor):
         # 持倉中部位（shares > 0）

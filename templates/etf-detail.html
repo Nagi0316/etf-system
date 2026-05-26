@@ -261,19 +261,42 @@ const STATIC_INFO = {
 let etfData = null, priceChart = null, inWatchlist = false, currentPeriod = '1Y', currentTicker = '';
 let _chartReqId = 0;
 
+/** fetch 包裝：超過 ms 毫秒自動中止，避免頁面無限等待 */
+async function _tFetch(url, opts = {}, ms = 12000) {
+  const ctrl = new AbortController();
+  const tid  = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
 async function loadETFDetail() {
   const parts = window.location.pathname.split('/');
   currentTicker = parts[parts.length - 1].toUpperCase();
   document.title = `${currentTicker} — ETF投資系統`;
 
   try {
-    let res = await fetch(`/api/etf/detail/${currentTicker}`);
-    let result = await res.json();
+    let result;
+    try {
+      const res = await _tFetch(`/api/etf/detail/${currentTicker}`, {}, 12000);
+      result = await res.json();
+    } catch(e) {
+      result = { status: 'error', message: '連線逾時，請稍後重試' };
+    }
     if (result.status !== 'success') {
       document.getElementById('loading-msg').textContent = '正在即時抓取數據，請稍候…';
-      await fetch(`/api/etf/update/${currentTicker}`, { method: 'POST' });
-      res = await fetch(`/api/etf/detail/${currentTicker}`);
-      result = await res.json();
+      // fire-and-forget：觸發背景更新，不等待結果
+      _tFetch(`/api/etf/update/${currentTicker}`, { method: 'POST' }, 5000).catch(() => {});
+      // 等 3 秒後重查（給 update 時間完成）
+      await new Promise(r => setTimeout(r, 3000));
+      try {
+        const res2 = await _tFetch(`/api/etf/detail/${currentTicker}`, {}, 12000);
+        result = await res2.json();
+      } catch(e) {
+        result = { status: 'error', message: '連線逾時，請稍後重試' };
+      }
     }
     if (result.status === 'success') {
       etfData = result.data;
@@ -596,8 +619,15 @@ async function toggleWatchlist() {
   else showToast(data?.message || '操作失敗', false);
 }
 
+let _tradeIdemKey = null;  // modal 開啟時生成，確保每筆交易唯一
+
 function openTradeModal() {
   if (!Auth.isLoggedIn()) { showToast('請先登入', false); setTimeout(()=>location.href='/auth',1000); return; }
+  // 每次開 modal 生成新的冪等鍵（UUID v4 簡易實作）
+  _tradeIdemKey = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
   document.getElementById('modal-title').textContent = `${etfData.ticker} — 交易`;
   document.getElementById('trade-price').value = (parseFloat(etfData.current_price)||0).toFixed(2);
   const _d = new Date();
@@ -632,7 +662,7 @@ async function saveTrade(btn) {
   btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 處理中…'; btn.disabled = true;
   const data = await Auth.fetchJson('/api/portfolio/transaction', {
     method: 'POST',
-    body: JSON.stringify({ ticker: etfData.ticker, transaction_type: type, shares, price, commission, transaction_date: date, name: etfData.name||etfData.ticker, market: etfData.market||'TW' })
+    body: JSON.stringify({ ticker: etfData.ticker, transaction_type: type, shares, price, commission, transaction_date: date, name: etfData.name||etfData.ticker, market: etfData.market||'TW', idempotency_key: _tradeIdemKey })
   });
   btn.innerHTML = orig; btn.disabled = false;
   if (data?.status === 'success') { showToast(`成功${type==='buy'?'買入':'賣出'} ${etfData.ticker}`); closeTradeModal(); }

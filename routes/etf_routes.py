@@ -254,35 +254,44 @@ async def search_etf(request: Request, q: str = Query(..., min_length=1)):
     if cached:
         return safe_json({"status": "success", "data": cached})
 
-    with get_db() as (conn, cursor):
-        cursor.execute(f"""
-            SELECT m.ticker, m.name, m.market,
-                COALESCE(d.current_price,0) as current_price,
-                COALESCE(d.price_change_percent,0) as price_change_percent,
-                COALESCE(d.dividend_yield,0) as dividend_yield,
-                COALESCE(d.payout_freq,'不配息') as payout_freq,
-                COALESCE(d.annual_return_1y,0) as annual_return_1y
-            FROM etf_master m
-            {LATEST_DAILY_JOIN}
-            WHERE (m.ticker LIKE %s OR m.name LIKE %s)
-              AND COALESCE(m.is_delisted, 0) = 0
-            ORDER BY
-                CASE WHEN m.ticker = %s     THEN 0
-                     WHEN m.ticker LIKE %s  THEN 1
-                     ELSE                        2 END,
-                m.ticker
-            LIMIT 30
-        """, (f"%{q_up}%", f"%{q}%", q_up, f"{q_up}%"))
-        rows = cursor.fetchall()
+    try:
+        with get_db() as (conn, cursor):
+            cursor.execute(f"""
+                SELECT m.ticker, m.name, m.market,
+                    COALESCE(d.current_price,0) as current_price,
+                    COALESCE(d.price_change_percent,0) as price_change_percent,
+                    COALESCE(d.dividend_yield,0) as dividend_yield,
+                    COALESCE(d.payout_freq,'不配息') as payout_freq,
+                    COALESCE(d.annual_return_1y,0) as annual_return_1y
+                FROM etf_master m
+                {LATEST_DAILY_JOIN}
+                WHERE (m.ticker LIKE %s OR m.name LIKE %s)
+                  AND COALESCE(m.is_delisted, 0) = 0
+                ORDER BY
+                    CASE WHEN m.ticker = %s     THEN 0
+                         WHEN m.ticker LIKE %s  THEN 1
+                         ELSE                        2 END,
+                    m.ticker
+                LIMIT 30
+            """, (f"%{q_up}%", f"%{q}%", q_up, f"{q_up}%"))
+            rows = cursor.fetchall()
+    except Exception as e:
+        logger.warning(f"search_etf DB error: {e}")
+        return safe_json({"status": "success", "data": []})
 
     # ── 隨需探索：資料庫找不到且輸入看起來像代碼 ──
+    # 改為 fire-and-forget：背景觸發後立即回傳「尚未找到」，下次搜尋時會有結果
+    # （不再 await 30 秒，避免搜尋框卡死）
     if not rows and _looks_like_ticker(q_up):
-        # 優先讀 X-Forwarded-For（Railway/Cloudflare 反向代理場景），避免永遠得到 proxy IP
         fwd = request.headers.get("x-forwarded-for", "")
         client_ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
-        discovered = await _on_demand_fetch(q_up, client_ip)
-        if discovered:
-            rows = [discovered]
+        if not _check_demand_rate(client_ip):
+            # 觸發背景探索，不等待結果
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_on_demand_fetch(q_up, client_ip))
+            except Exception:
+                pass
 
     cache.set(cache_key, rows, 60)
     return safe_json({"status": "success", "data": rows})
@@ -499,11 +508,7 @@ async def get_etf_detail(ticker: str):
     if cached:
         return safe_json({"status": "success", "data": cached})
 
-    try:
-        usd_twd = get_usd_twd()
-    except Exception:
-        usd_twd = 32.0   # fallback 匯率
-
+    # ── 1. 先查 DB（不在此處呼叫 FX，避免 TW ETF 白跑一次同步 HTTP）──
     try:
         with get_db() as (conn, cursor):
             row = _fetch_etf_detail_row(cursor, ticker)
@@ -523,7 +528,12 @@ async def get_etf_detail(ticker: str):
         if not row:
             return safe_json({"status": "error", "message": f"找不到 ETF {ticker}"}, 404)
 
+    # ── 2. 僅 US ETF 才需要 FX，且以 asyncio.to_thread 執行避免阻塞 event loop ──
     if row.get("market") == "US":
+        try:
+            usd_twd = await asyncio.to_thread(get_usd_twd)
+        except Exception:
+            usd_twd = 32.0
         row["price_twd"] = round(float(row.get("current_price", 0)) * usd_twd, 2)
         row["usd_twd_rate"] = usd_twd
 

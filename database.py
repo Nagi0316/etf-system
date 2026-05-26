@@ -15,7 +15,7 @@ from config import (
 )
 
 logger = logging.getLogger(__name__)
-_DB_RETRIES = 3
+_DB_RETRIES = 2   # 最多重試 1 次；sleep 改為短延遲，避免阻塞 asyncio event loop 過久
 
 
 # ══════════════════════════════════════════════════════════
@@ -71,17 +71,17 @@ def _ensure_pool():
 
 
 def _get_mysql_conn():
-    """從連線池取得連線（重用通道）；池不可用時退回直接建立（效能降級但功能不中斷）。"""
+    """從連線池取得連線（重用通道）；池不可用時退回直接建立（效能降級但功能不中斷）。
+
+    不呼叫 ping()：
+      • ping() 在 Railway NAT black-hole 狀態下會掛無限久（無 socket-level timeout）
+      • 連線池有 pool_reset_session=True，歸還時已自動驗證 / 重置
+      • 壞連線由 get_db() 的重試邏輯（最多 2 次）負責偵測並跳過
+    """
     _ensure_pool()
     if _mysql_pool is not None:
         try:
-            conn = _mysql_pool.get_connection()
-            # 偵測 TiDB Serverless idle timeout 後的失效連線並自動重連
-            try:
-                conn.ping(reconnect=True, attempts=1, delay=0)
-            except Exception:
-                pass  # ping 失敗 → 由 get_db() 的重試邏輯處理
-            return conn
+            return _mysql_pool.get_connection()
         except Exception as pool_err:
             logger.debug(f"連線池異常，退回直接連線: {pool_err}")
     # 退回：直接建立連線（不走池，較慢但確保功能不中斷）
@@ -196,8 +196,10 @@ def get_db():
             break
         except Exception as e:
             last_err = e
-            wait = 1.5 * (2 ** attempt)
-            logger.warning(f"DB 連線失敗 ({attempt+1}/{_DB_RETRIES}): {e}，{wait:.1f}s 後重試")
+            # 短延遲（0.3s）：比原本 1.5s/3.0s 大幅縮短，減少 event loop 凍結時間
+            # 不能用 asyncio.sleep（此為同步 contextmanager），維持最小化阻塞
+            wait = 0.3
+            logger.warning(f"DB 連線失敗 ({attempt+1}/{_DB_RETRIES}): {e}，{wait}s 後重試")
             time.sleep(wait)
 
     if conn_ctx is None:
