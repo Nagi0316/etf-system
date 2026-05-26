@@ -494,18 +494,18 @@ async def _run_session_cleanup():
 
 
 # ──────────────────────────────────────────────
-#  DB 保活（防止 TiDB Serverless 連線因閒置而斷線）
+#  DB 保活（防止 TiDB Serverless 進入休眠）
 # ──────────────────────────────────────────────
 
 def _db_keepalive():
-    """每 10 分鐘對 TiDB 發送輕量查詢，防止連線池內的 TCP 通道因以下原因失效：
-    - Railway NAT 閒置超時（通常 30–90 分鐘）
-    - TiDB Serverless wait_timeout（預設 1 小時）
+    """每 10 分鐘對 TiDB 發送輕量查詢，防止 TiDB Serverless free tier 進入休眠模式。
 
-    不保活 → 閒置後 pool 連線全部 stale → 下一個請求遭遇「Dead Connection」
-    → query 失敗 → 3 次 retry（含重建 SSL）→ 最長 45 秒才報錯 → 用戶看到 503。
+    注意：database.py 已移除連線池，改為每次請求直連。
+    此 keepalive 的目的不再是「維持 pool TCP」，而是：
+    - 防止 TiDB Serverless 因長時間無請求而休眠（休眠後首次連線需 20-30s 冷啟動）
+    - 排程期間建立新連線 → SELECT 1 → 關閉（不快取連線）
 
-    保活成本：~2ms / 10 分鐘，可忽略 TiDB Serverless 免費額度（RU）。
+    保活成本：每次建立新 TCP+SSL 連線 ~150ms，每 10 分鐘一次，可忽略。
     """
     try:
         from database import get_db
@@ -513,7 +513,7 @@ def _db_keepalive():
             cursor.execute("SELECT 1")
         logger.debug("DB keepalive ✓")
     except Exception as e:
-        logger.warning(f"DB keepalive 失敗（下次請求將重建連線）: {e}")
+        logger.warning(f"DB keepalive 失敗（TiDB 可能暫時無法連線）: {e}")
 
 
 # ──────────────────────────────────────────────

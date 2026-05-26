@@ -19,11 +19,23 @@ _DB_RETRIES = 3
 
 
 # ══════════════════════════════════════════════════════════
-#  MySQL 連線池（重用 TCP+SSL 通道，省去每次 ~200ms 的握手開銷）
+#  MySQL 直連（不使用連線池）
 # ══════════════════════════════════════════════════════════
-
-_mysql_pool = None           # MySQLConnectionPool 單例
-_pool_lock  = threading.Lock()
+#
+#  設計決策：Railway 單 worker + TiDB Serverless + 多層快取
+#  ─────────────────────────────────────────────────────────
+#  ❌ 連線池的問題（已移除）：
+#    - Railway NAT / TiDB wait_timeout 閒置後 TCP 靜默中斷
+#    - pool 內連線全部 stale；ping 在「黑洞 TCP」環境下無限 hang
+#    - 即使加 ping + fallback，下次請求仍從 pool 拿到同一個壞連線
+#    - 複雜度高、debug 困難、可靠性差
+#
+#  ✅ 直連的優勢：
+#    - 無 stale 問題：每次 get_db() 建立全新 TCP + SSL
+#    - 無池耗盡：不存在「等待可用連線」的情況
+#    - 90%+ 請求命中快取，實際需要 DB 的請求量極低
+#    - SSL 握手 ~150ms，快取命中時完全無此開銷
+#    - 程式碼簡單，行為可預測
 
 
 def _mysql_conn_params() -> dict:
@@ -33,7 +45,7 @@ def _mysql_conn_params() -> dict:
         host=DB_HOST, port=DB_PORT,
         user=DB_USER, password=DB_PASSWORD,
         database=DB_NAME,
-        connection_timeout=15,
+        connection_timeout=10,   # 10s：快於舊的 15s，避免 retry 時累積太長
         autocommit=False,
         charset="utf8mb4",
         collation="utf8mb4_unicode_ci",
@@ -48,52 +60,10 @@ def _mysql_conn_params() -> dict:
     return params
 
 
-def _ensure_pool():
-    """初始化連線池（雙重鎖定，只執行一次；失敗時下次請求自動重試）。"""
-    global _mysql_pool
-    if _mysql_pool is not None:
-        return
-    with _pool_lock:
-        if _mysql_pool is not None:
-            return
-        try:
-            import mysql.connector.pooling
-            _mysql_pool = mysql.connector.pooling.MySQLConnectionPool(
-                pool_name="etf_pool",
-                pool_size=5,          # 單 worker Railway，5 條並發連線綽綽有餘
-                pool_reset_session=True,  # 歸還時自動回滾未提交事務
-                **_mysql_conn_params(),
-            )
-            logger.info("✅ MySQL 連線池已初始化（pool_size=5）")
-        except Exception as e:
-            logger.warning(f"連線池初始化失敗（將退回直接連線）: {e}")
-            _mysql_pool = None    # 確保下次呼叫可重試
-
-
 def _get_mysql_conn():
-    """從連線池取得連線（重用通道）；池不可用時退回直接建立（效能降級但功能不中斷）。
-
-    重要：ping 失敗時不得返回死連線給呼叫方。
-    TiDB Serverless 或 Railway NAT 閒置後會關閉 TCP，pool 內連線全部變 stale。
-    舊做法 'except: pass + return conn' 會把死連線交給 query，query 必然失敗。
+    """每次建立全新 MySQL 連線（無池）。
+    連線建立後若 TiDB 有問題，get_db() 的 retry 邏輯負責重試。
     """
-    _ensure_pool()
-    if _mysql_pool is not None:
-        try:
-            conn = _mysql_pool.get_connection()
-            # attempts=2 delay=1：給 TiDB 最多 2 秒重建 TCP；
-            # 若仍失敗 → 關閉此死連線改用新直連，而非繼續用壞掉的連線。
-            try:
-                conn.ping(reconnect=True, attempts=2, delay=1)
-                return conn   # ← ping 成功才返回，確保連線有效
-            except Exception as ping_err:
-                logger.debug(f"池連線 ping 失敗，關閉死連線改用新直連: {ping_err}")
-                try: conn.close()
-                except: pass
-                # 不 return 死連線，直接落穿到下方新直連邏輯
-        except Exception as pool_err:
-            logger.debug(f"連線池異常，退回直接連線: {pool_err}")
-    # 退回：直接建立新連線（不走池，較慢但確保功能不中斷）
     import mysql.connector
     return mysql.connector.connect(**_mysql_conn_params())
 
