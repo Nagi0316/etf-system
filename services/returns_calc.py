@@ -143,10 +143,20 @@ def recalc_all_returns(market: str | None = None) -> dict:
         return {"updated": 0, "skipped": len(tickers)}
 
     # ── Step 3: 批次查 1Y / 3Y / 5Y 前的收盤 ──
-    # 以「今天」為基準，所有熱門 ETF 最新日期幾乎都相同（近幾個交易日）
-    prices_1y = _batch_prices_around_target(tickers, today - relativedelta(years=1))
-    prices_3y = _batch_prices_around_target(tickers, today - relativedelta(years=3))
-    prices_5y = _batch_prices_around_target(tickers, today - relativedelta(years=5))
+    # 以 DB 中最新資料日期為基準（而非 today），避免週末/假日造成期間偏差 0–3 個交易日
+    reference_date = today
+    if latest_map:
+        dates_in_map = []
+        for r in latest_map.values():
+            d = r["date"] if isinstance(r["date"], date) else date.fromisoformat(str(r["date"])[:10])
+            dates_in_map.append(d)
+        reference_date = max(dates_in_map)
+        if reference_date != today:
+            logger.debug(f"recalc_all_returns: reference_date={reference_date}（非 today={today}，差 {(today - reference_date).days} 日）")
+
+    prices_1y = _batch_prices_around_target(tickers, reference_date - relativedelta(years=1))
+    prices_3y = _batch_prices_around_target(tickers, reference_date - relativedelta(years=3))
+    prices_5y = _batch_prices_around_target(tickers, reference_date - relativedelta(years=5))
 
     logger.debug(f"  歷史報酬：1Y={len(prices_1y)}檔 3Y={len(prices_3y)}檔 5Y={len(prices_5y)}檔")
 

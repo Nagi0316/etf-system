@@ -145,6 +145,10 @@ def _price_from_mode(df: pd.DataFrame, mode: str) -> float:
             return float(df["Low"].min())
         elif mode == "high":
             return float(df["High"].max())
+        # "open": 使用真實開盤價（Yahoo Finance 有 Open 欄位）；
+        # DB 來源的 TW ETF 以 Close 代入（DB 無 Open 欄位，已在 backtest_routes 標記）
+        if "Open" in df.columns:
+            return float(df["Open"].iloc[0])
         return float(df["Close"].iloc[0])
     except Exception:
         return 0.0

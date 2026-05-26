@@ -67,8 +67,10 @@ def _download_hist_from_db(ticker: str, start: str, end: str) -> pd.DataFrame:
         if not rows:
             return pd.DataFrame()
         dates = pd.to_datetime([r["date"] for r in rows])
+        closes = [float(r["close_price"]) for r in rows]
         df = pd.DataFrame({
-            "Close": [float(r["close_price"]) for r in rows],
+            "Open":  closes,   # DB 無開盤價欄位，以收盤價代入（誤差通常 < 0.5%）
+            "Close": closes,
             "High":  [float(r["high_price"])  for r in rows],
             "Low":   [float(r["low_price"])   for r in rows],
         }, index=dates)
@@ -170,16 +172,19 @@ def _download_hist_via_cf(symbol: str, start: str, end: str) -> pd.DataFrame:
         closes = quotes.get("close", [])
         highs  = quotes.get("high",  []) or closes
         lows   = quotes.get("low",   []) or closes
+        opens  = quotes.get("open",  []) or closes
         rows = [
             {"date":  datetime.fromtimestamp(t, tz=timezone.utc).date(),
+             "Open":  float(o) if o is not None else float(c),
              "Close": float(c),
              "High":  float(h) if h is not None else float(c),
              "Low":   float(l) if l is not None else float(c)}
-            for t, c, h, l in zip(ts, closes, highs, lows) if c is not None
+            for t, o, c, h, l in zip(ts, opens, closes, highs, lows) if c is not None
         ]
         if not rows:
             return pd.DataFrame()
         df = pd.DataFrame({
+            "Open":  [r["Open"]  for r in rows],
             "Close": [r["Close"] for r in rows],
             "High":  [r["High"]  for r in rows],
             "Low":   [r["Low"]   for r in rows],
@@ -242,9 +247,10 @@ def _yf_download_safe(symbol: str, start: str, end: str) -> pd.DataFrame:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         result = pd.DataFrame({
+            "Open":  df.get("Open",  df["Close"]).astype(float),
             "Close": df["Close"].astype(float),
-            "High":  df.get("High", df["Close"]).astype(float),
-            "Low":   df.get("Low",  df["Close"]).astype(float),
+            "High":  df.get("High",  df["Close"]).astype(float),
+            "Low":   df.get("Low",   df["Close"]).astype(float),
         }, index=df.index)
         if result.index.tz is not None:
             result.index = result.index.tz_localize(None)

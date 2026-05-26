@@ -132,6 +132,22 @@ def score_etf(ticker: str) -> Optional[dict]:
             market = row["market"]
             peer   = _fetch_peer_stats(cursor, market)
 
+            # ── 20 交易日動能（取代單日漲跌幅，降低噪音）──
+            cursor.execute(
+                "SELECT current_price FROM etf_daily_data "
+                "WHERE ticker=%s AND current_price > 0 "
+                "ORDER BY date DESC LIMIT 20",
+                (ticker,)
+            )
+            prices_20d = [float(r["current_price"]) for r in cursor.fetchall()]
+
+        row = dict(row)
+        if len(prices_20d) >= 20:
+            p_now, p_then = prices_20d[0], prices_20d[-1]
+            row["ret_20d"] = ((p_now / p_then - 1) * 100) if p_then > 0 else None
+        else:
+            row["ret_20d"] = None
+
         result = _compute_score(row, peer)
         cache.set(cache_key, result, 600)   # 10 min
         return result
@@ -143,12 +159,12 @@ def score_etf(ticker: str) -> Optional[dict]:
 
 def _compute_score(row: dict, peer: dict) -> dict:
     """給定 etf 資料列和同類別統計，計算評分並組裝回傳結果。"""
-    cp   = float(row.get("current_price") or 0)
-    yld  = float(row.get("dividend_yield") or 0)
-    exp  = float(row.get("expense_ratio") or 0)
-    h52  = float(row.get("fifty_two_week_high") or cp)
-    l52  = float(row.get("fifty_two_week_low")  or cp)
-    chg  = float(row.get("price_change_percent") or 0)
+    cp      = float(row.get("current_price") or 0)
+    yld     = float(row.get("dividend_yield") or 0)
+    exp     = float(row.get("expense_ratio") or 0)
+    h52     = float(row.get("fifty_two_week_high") or cp)
+    l52     = float(row.get("fifty_two_week_low")  or cp)
+    ret_20d = row.get("ret_20d")   # 20 交易日累積報酬（%），None 表示資料不足
 
     raw_r1y = row.get("annual_return_1y")
     r1y_known = raw_r1y is not None
@@ -188,10 +204,12 @@ def _compute_score(row: dict, peer: dict) -> dict:
         stab_score  = 10.0  # 資料不足給中等分
 
     # ── ⑤ 動能（15分）──────────────────────────────────
-    # 今日漲跌 -3% ~ +3% 映射；但超漲超跌都不是優質動能
-    # 正常動能（-0.5%~+1.5% 區間）最高分
-    mom = min(max(chg, -5), 5)
-    mom_score = _score_clamp(mom, -3, 3) * 15
+    # 20 交易日累積報酬 -15%~+15% 對稱映射；0% → 7.5 分（中立）
+    # 資料不足 20 日時給中立分，避免新上市 ETF 被誤判
+    if ret_20d is not None:
+        mom_score = _score_clamp(float(ret_20d), -15, 15) * 15
+    else:
+        mom_score = 7.5
 
     total = r_score + y_score + exp_score + stab_score + mom_score
     total = round(min(100, max(0, total)), 1)
@@ -220,6 +238,7 @@ def _compute_score(row: dict, peer: dict) -> dict:
             "expense_ratio":    round(exp * 100, 4),   # 轉為百分比
             "peer_avg_return":  round(peer["avg_r1y"], 2),
             "peer_avg_yield":   round(peer["avg_yld"], 2),
+            "momentum_20d":     round(float(ret_20d), 2) if ret_20d is not None else None,
         },
     }
 
@@ -250,6 +269,19 @@ def score_batch(tickers: list[str]) -> dict[str, dict]:
             """, tickers)
             rows = cursor.fetchall()
 
+            # 批次取各 ticker 第 20 個交易日收盤價（ROW_NUMBER OVER 在 MySQL 8+/TiDB/SQLite 3.25+ 均支援）
+            p20_map: dict[str, float] = {}
+            if rows:
+                cursor.execute(f"""
+                    SELECT ticker, current_price FROM (
+                        SELECT ticker, current_price,
+                               ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) AS rn
+                        FROM etf_daily_data
+                        WHERE ticker IN ({fmt}) AND current_price > 0
+                    ) t WHERE rn = 20
+                """, tickers)
+                p20_map = {r["ticker"]: float(r["current_price"]) for r in cursor.fetchall()}
+
             # 取各市場同類別統計（最多兩次）
             markets_needed = list({r["market"] for r in rows})
             peers = {m: _fetch_peer_stats(cursor, m) for m in markets_needed}
@@ -257,6 +289,10 @@ def score_batch(tickers: list[str]) -> dict[str, dict]:
         result = {}
         for row in rows:
             try:
+                row = dict(row)
+                p_now   = float(row.get("current_price") or 0)
+                p_then  = p20_map.get(row["ticker"])
+                row["ret_20d"] = ((p_now / p_then - 1) * 100) if (p_then and p_then > 0 and p_now > 0) else None
                 result[row["ticker"]] = _compute_score(row, peers[row["market"]])
             except Exception:
                 pass
