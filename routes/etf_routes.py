@@ -209,6 +209,39 @@ async def get_combined_rankings(market: str = "TW"):
         })
 
 
+@router.get("/api/etf/rankings/all")
+async def get_all_rankings():
+    """一次回傳 TW + US 全部排行，前端只需 1 個 API 請求（而非 2）。
+    快取 TTL 與 combined 相同（CACHE_TTL_RANK）。
+    """
+    cached = cache.get("rank:all")
+    if cached:
+        return safe_json({"status": "success", **cached})
+
+    try:
+        result: dict = {"TW": {}, "US": {}}
+        with get_db() as (conn, cursor):
+            for market in ("TW", "US"):
+                for rank_type, order in _RANK_ORDER.items():
+                    cursor.execute(
+                        _RANK_SELECT.format(join=LATEST_DAILY_JOIN, order=order),
+                        (market,)
+                    )
+                    result[market][rank_type] = cursor.fetchall()
+
+        result["updated_at"] = datetime.now().strftime('%H:%M')
+        cache.set("rank:all", result, CACHE_TTL_RANK)
+        return safe_json({"status": "success", **result})
+    except Exception as e:
+        logger.error(f"all rankings error: {e}", exc_info=True)
+        return safe_json({
+            "status": "success",
+            "TW": {"volume": [], "return": [], "yield": []},
+            "US": {"volume": [], "return": [], "yield": []},
+            "updated_at": datetime.now().strftime('%H:%M'),
+        })
+
+
 @router.get("/api/etf/index")
 async def get_etf_index():
     """輕量 ETF 清單（只含 ticker/name/market），供前端本地搜尋/自動補全用。
@@ -615,16 +648,24 @@ _TWSE_HIST_HEADERS = {
 def _fetch_db_price_history(ticker: str, period: str) -> Optional[dict]:
     """從 etf_daily_data 取歷史收盤價。
     需達到 _MIN_CHART_ROWS 門檻，否則返回 None 讓 TWSE 抓取真實歷史。
+
+    1D / 5D 不在此 fallback 範圍：DB 無分鐘級資料，直接回 None，
+    由上層用 Yahoo Finance 即時來源。
     """
+    p_up = period.upper()
+    # 1D/5D 需要分鐘級資料，DB 只有日線 → 明確不支援，回 None
+    if p_up in ("1D", "5D"):
+        return None
+
     today = date.today()
     PERIOD_DAYS = {
         "1M": 35, "3M": 95, "6M": 185,
         "YTD": (today - date(today.year, 1, 1)).days + 1,
         "1Y": 370, "3Y": 1100, "5Y": 1830, "ALL": 9999, "MAX": 9999,
     }
-    days = PERIOD_DAYS.get(period.upper(), 370)
+    days = PERIOD_DAYS.get(p_up, 370)
     since = today - timedelta(days=days)
-    min_rows = _MIN_CHART_ROWS.get(period.upper(), 60)
+    min_rows = _MIN_CHART_ROWS.get(p_up, 60)
     try:
         with get_db() as (conn, cursor):
             cursor.execute(
@@ -635,12 +676,12 @@ def _fetch_db_price_history(ticker: str, period: str) -> Optional[dict]:
             )
             rows = cursor.fetchall()
         if len(rows) < min_rows:
-            logger.debug(f"DB price history {ticker} period={period}: only {len(rows)} rows (need {min_rows})")
+            logger.debug(f"DB price history {ticker} period={p_up}: only {len(rows)} rows (need {min_rows})")
             return None
         labels = [str(r["date"])[:10] for r in rows]
         prices = [round(float(r["current_price"]), 2) for r in rows]
         # is_partial=True 表示資料未涵蓋完整請求期間（DB 尚在補齊中），前端可顯示提示
-        expected_rows = _MIN_CHART_ROWS.get(period.upper(), 60) * 3
+        expected_rows = _MIN_CHART_ROWS.get(p_up, 60) * 3
         is_partial = len(rows) < expected_rows
         return {"labels": labels, "prices": prices, "is_intraday": False, "is_partial": is_partial}
     except Exception as e:
@@ -772,6 +813,17 @@ def _fetch_twse_price_history(ticker: str, period: str) -> Optional[dict]:
     return result
 
 
+# price-history 各期間快取 TTL（秒）
+# 1D/5D：盤中每 2 分鐘更新；非即時歷史：1M=1h、長期=24h
+_HIST_CACHE_TTL = {
+    "1D": 120, "5D": 300,
+    "1M": 3600, "3M": 3600,
+    "6M": 7200, "YTD": 3600,
+    "1Y": 86400, "3Y": 86400,
+    "5Y": 86400, "ALL": 86400, "MAX": 86400,
+}
+
+
 @router.get("/api/etf/price-history/{ticker}")
 async def get_price_history(ticker: str, period: str = "1y"):
     ticker = ticker.upper()
@@ -796,6 +848,12 @@ async def get_price_history(ticker: str, period: str = "1y"):
     yf_range    = RANGE_MAP.get(p, "1y")
     yf_interval = INTERVAL_MAP.get(p, "1d")
     is_intraday = p in ("1D", "5D")
+
+    # ── 回應快取：第二次起毫秒內回傳 ──
+    _hist_cache_key = f"hist:{ticker}:{p}"
+    _hist_cached = cache.get(_hist_cache_key)
+    if _hist_cached:
+        return _hist_cached
 
     with get_db() as (conn, cursor):
         cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
@@ -880,13 +938,15 @@ async def get_price_history(ticker: str, period: str = "1y"):
             data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
     if not data:
         return safe_json({"status": "error", "message": "無法取得歷史資料"}, 400)
-    return safe_json({
+    response_data = safe_json({
         "status":     "success",
         "labels":     data["labels"],
         "prices":     data["prices"],
         "is_intraday": data.get("is_intraday", False),
         "is_partial":  data.get("is_partial", False),
     })
+    cache.set(_hist_cache_key, response_data, _HIST_CACHE_TTL.get(p, 3600))
+    return response_data
 
 
 @router.get("/api/etf/history")

@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from config import TEMPLATES_DIR, STATIC_DIR, APP_URL
 from database import init_db, get_db
@@ -103,6 +104,9 @@ app = FastAPI(
 )
 
 # ── 中介軟體 ──
+# GZip 壓縮：所有 ≥ 500 bytes 的回應自動壓縮，JSON 通常縮小 60-80%
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[APP_URL, "http://localhost:8000", "http://127.0.0.1:8000"],
@@ -120,13 +124,13 @@ async def add_security_headers(request: Request, call_next: Callable) -> Respons
     response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"]          = "1; mode=block"
     response.headers["Permissions-Policy"]        = "geolocation=(), microphone=(), camera=()"
-    # CSP：允許已知 CDN（Tailwind/Chart.js/FontAwesome）與 Google OAuth；
+    # CSP：允許已知 CDN（Chart.js/FontAwesome）與 Google OAuth；
     # 因模板使用大量 inline script/style，需保留 unsafe-inline，
     # 但仍透過限制 connect-src / img-src / object-src 縮小攻擊面。
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
-            "https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
+            "https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
         "font-src 'self' https://cdnjs.cloudflare.com; "
         "img-src 'self' data: https://lh3.googleusercontent.com; "
@@ -134,6 +138,10 @@ async def add_security_headers(request: Request, call_next: Callable) -> Respons
         "frame-src 'none'; "
         "object-src 'none';"
     )
+    # 靜態資源長期快取（版本號由檔名控制）
+    path = request.url.path
+    if path.startswith("/static/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return response
 
 # ── 靜態檔案 ──
@@ -175,7 +183,7 @@ async def health_check():
 
 @app.get("/health/detail")
 async def health_detail():
-    """詳細健康狀態：顯示活躍 ETF 的資料新鮮度，方便發現「悄悄壞掉」的問題。
+    """詳細健康狀態：顯示活躍 ETF 的資料新鮮度，方便發現「悄悄壞掉」的問題。快取 60 秒。
 
     staleness 分級：
       fresh      — 最後資料日距今 ≤ 1 天（正常）
@@ -190,6 +198,11 @@ async def health_detail():
     """
     from datetime import date as _date
     from utils import safe_json
+    from cache import cache as _cache
+
+    _hd_cached = _cache.get("health:detail")
+    if _hd_cached:
+        return _hd_cached
 
     today = _date.today()
     db_ok = True
@@ -291,7 +304,7 @@ async def health_detail():
         default=None,
     )
 
-    return safe_json({
+    result = safe_json({
         "status":          overall,
         "checked_at":      today.isoformat(),
         "db":              "ok",
@@ -306,11 +319,13 @@ async def health_detail():
         "needs_attention": needs_attention,
         "etfs":            etf_rows,
     })
+    _cache.set("health:detail", result, 60)
+    return result
 
 
 @app.get("/api/health/data")
 async def health_data():
-    """資料完整性健康檢查。
+    """資料完整性健康檢查（快取 60 秒，避免監控頻繁輪詢打爆 DB）。
 
     檢查項目：
     1. 缺漏 ETF   — 在 etf_master 但 etf_daily_data 完全無資料（從未抓到）
@@ -324,6 +339,11 @@ async def health_data():
     from datetime import date as _date
     from utils import safe_json
     from cache import cache
+
+    # ── 60 秒快取：防止監控輪詢重複打 9 個複雜查詢 ──
+    _cached = cache.get("health:data")
+    if _cached:
+        return _cached
 
     today = _date.today()
     issues: list[dict] = []
@@ -571,13 +591,15 @@ async def health_data():
     else:
         overall = "ok"
 
-    return safe_json({
+    result = safe_json({
         "status":      overall,
         "checked_at":  today.isoformat(),
         "summary":     summary,
         "issues":      issues,
         "issue_count": len(issues),
     })
+    cache.set("health:data", result, 60)
+    return result
 
 
 if __name__ == "__main__":

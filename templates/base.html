@@ -6,9 +6,14 @@
   <title>{% block title %}ETF 投資管理系統{% endblock %}</title>
   <!-- 防止深色模式 FOUC：必須在所有 CSS 之前執行 -->
   <script>(function(){var t=localStorage.getItem('theme');var p=window.matchMedia('(prefers-color-scheme:dark)').matches;if(t==='dark'||(t===null&&p))document.documentElement.classList.add('dark');}());</script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config={darkMode:'class'}</script>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  <!-- Tailwind：生產版本 37 KB（替代 3 MB+ Play CDN），消除 render-blocking JS -->
+  <link rel="stylesheet" href="/static/css/tailwind.min.css">
+  <!-- FontAwesome：preload + onload 非阻塞加載，消除 render-blocking -->
+  <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+        as="style" onload="this.rel='stylesheet'">
+  <noscript>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  </noscript>
   <link href="/static/css/main.css" rel="stylesheet">
   {% block extra_head %}{% endblock %}
 </head>

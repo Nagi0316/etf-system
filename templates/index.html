@@ -2,7 +2,7 @@
 {% block title %}ETF 投資管理系統{% endblock %}
 
 {% block extra_head %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 .pulse-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
 .pulse-dot.open  { background:#22c55e; animation:pulse 2s infinite; }
@@ -304,15 +304,12 @@ function _renderMarketBadge() {
   if (usEl)  { usEl.innerHTML = `<span class="pulse-dot ${usOpen?'open':'close'}"></span>美股 ${usOpen?'開盤中':'已收盤'}`; }
 }
 
-// ══ 今日漲幅排行 ════════════════════════════════════════
+// ══ 今日漲幅排行（1 個 API 取 TW+US，原本要 2 個）════════
 async function loadMovers() {
   try {
-    const [tw, us] = await Promise.all([
-      fetch('/api/etf/rankings/combined?market=TW').then(r => r.json()).catch(() => null),
-      fetch('/api/etf/rankings/combined?market=US').then(r => r.json()).catch(() => null),
-    ]);
-    renderMovers('tw-movers', tw?.volume?.slice(0, 6) || [], 'TW');
-    renderMovers('us-movers', us?.volume?.slice(0, 6) || [], 'US');
+    const d = await fetch('/api/etf/rankings/all').then(r => r.json()).catch(() => null);
+    renderMovers('tw-movers', d?.TW?.volume?.slice(0, 6) || [], 'TW');
+    renderMovers('us-movers', d?.US?.volume?.slice(0, 6) || [], 'US');
   } catch(e) {
     console.warn('movers load error', e);
   }
