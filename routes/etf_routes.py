@@ -533,16 +533,11 @@ async def get_etf_detail(ticker: str):
         return safe_json({"status": "error", "message": "資料庫暫時無法連線，請稍後再試"}, 503)
 
     if not row:
-        # 資料庫找不到 → 嘗試即時爬取並寫入
-        logger.info(f"detail cache miss: {ticker}，觸發即時爬取")
-        discovered = await _on_demand_fetch(ticker)
-        if not discovered:
-            return safe_json({"status": "error", "message": f"找不到 ETF {ticker}，請確認代碼是否正確"}, 404)
-        # 爬取後重查 DB（共用相同 SQL 函數）
-        with get_db() as (conn, cursor):
-            row = _fetch_etf_detail_row(cursor, ticker)
-        if not row:
-            return safe_json({"status": "error", "message": f"找不到 ETF {ticker}"}, 404)
+        # 資料庫找不到 → 立即回傳 processing，讓前端 POST /api/etf/update 觸發背景抓取後輪詢
+        # 舊做法：await _on_demand_fetch() 阻塞 30 秒等 Yahoo Finance，佔用 event loop
+        # 新做法：立即回傳，update_one_etf._bg() 在背景執行，前端輪詢即可感知完成
+        logger.info(f"detail: {ticker} 不在 DB，回傳 processing 等前端觸發背景更新")
+        return safe_json({"status": "processing", "message": f"{ticker} 資料尚未就緒，正在後台抓取中"})
 
     if row.get("market") == "US":
         # US ETF 才需要 USD/TWD 匯率；asyncio.to_thread 確保不阻塞 event loop

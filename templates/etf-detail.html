@@ -287,26 +287,29 @@ async function loadETFDetail() {
   document.title = `${currentTicker} — ETF投資系統`;
 
   try {
-    // ── 第一次嘗試：從 DB/快取取得詳情（10s 超時）──
+    // ── 第一次嘗試：從 DB/快取取得詳情（8s 超時）──
     let result;
     try {
-      const res = await _tFetch(`/api/etf/detail/${currentTicker}`, {}, 10000);
+      const res = await _tFetch(`/api/etf/detail/${currentTicker}`, {}, 8000);
       result = await res.json();
     } catch(e) {
-      result = { status: 'error', message: '連線超時，請稍後再試' };
+      // fetch 超時：視為 DB 暫時問題，等同 error
+      result = { status: 'error', message: '連線超時，請稍後重試' };
     }
 
-    // ── 若首次失敗：fire-and-forget 觸發後台更新 + 輪詢等待 ──
-    if (result.status !== 'success') {
+    // ── 狀態分離：只有 'processing' 才輪詢；'error' 立即顯示（不浪費 18 秒）──
+    // 後端語意：
+    //   'success'    → DB/快取有資料，直接渲染
+    //   'processing' → DB 正常但此 ticker 尚無資料，正在後台抓取
+    //   'error'      → DB 故障 / 代碼不存在 → 輪詢也沒用，立即報錯讓用戶重試
+    if (result.status === 'processing') {
       const msgEl = document.getElementById('loading-msg');
       if (msgEl) msgEl.textContent = '正在即時抓取數據，請稍候…';
 
-      // 觸發後台更新（不 await，讓後端 fire-and-forget 執行）
-      // _tFetch 限制 3s：超時視為已接收請求（後台繼續跑），不影響輪詢
+      // 觸發後台更新（fire-and-forget，3s 超時視為後台已收到）
       _tFetch(`/api/etf/update/${currentTicker}`, { method: 'POST' }, 3000).catch(() => {});
 
-      // 輪詢：每 3 秒重試 detail，最多 6 次（共 18 秒）
-      // TiDB Serverless 冷啟動最長約 15 秒，18 秒足夠覆蓋
+      // 輪詢：每 3 秒重試，最多 6 次（18 秒），足以覆蓋 Yahoo Finance 抓取
       const MAX_RETRY = 6;
       for (let i = 0; i < MAX_RETRY; i++) {
         await new Promise(r => setTimeout(r, 3000));
@@ -319,7 +322,9 @@ async function loadETFDetail() {
         try {
           const res2 = await _tFetch(`/api/etf/detail/${currentTicker}`, {}, 8000);
           const r2   = await res2.json();
-          if (r2.status === 'success') { result = r2; break; }
+          if (r2.status === 'success')    { result = r2; break; }
+          if (r2.status === 'error')      { result = r2; break; } // DB 炸了，停止輪詢
+          // r2.status === 'processing'：繼續等
         } catch(e) { /* 單次超時不中斷，繼續輪詢 */ }
       }
     }
