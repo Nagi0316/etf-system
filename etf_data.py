@@ -122,6 +122,11 @@ _yf_crumb: str = ""
 _yf_crumb_cookies: dict = {}
 _crumb_lock = threading.Lock()
 
+# ── 盤中快速報價 dirty-check 快取 ──
+# {ticker: (price, volume)} — 上次寫入 DB 的值，用於跳過未變動的 ETF
+# 只在 save_price_bulk 成功寫入後更新，不影響正確性
+_price_dirty_cache: dict = {}
+
 def _refresh_yahoo_crumb() -> bool:
     """取得 Yahoo Finance crumb 認證。
     網路呼叫在鎖外執行，鎖只用於最後寫入共享狀態（避免鎖定期間所有讀取者阻塞）。
@@ -668,6 +673,90 @@ def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
     return None
 
 
+def _fetch_tw_realtime_bulk(tickers: list) -> dict:
+    """TWSE / TPEX 批量即時報價：一次 HTTP 請求取得所有台股 ETF 現價。
+
+    策略：
+      1. 先以 tse_ 前綴對全部 tickers 批量查詢（多數 ETF 在 TWSE 上市）
+      2. 首次無回應的 tickers 改用 otc_ 前綴再查一次（上櫃 ETF）
+      共 1-2 次 HTTP，取代原本每檔 2 次 × N 檔 = 2N 次的做法。
+
+    回傳: {ticker: quote_dict}，只包含成功取得資料的標的。
+    失敗標的不在回傳 dict 中，呼叫方以 .get(ticker) 安全存取。
+    """
+    if not tickers:
+        return {}
+
+    def _batch_request(prefix: str, batch_tickers: list,
+                       base_url: str, referer: str) -> dict:
+        """向 TWSE/TPEX MIS API 批量查詢，回傳 {ticker: quote_dict}。"""
+        # 每批上限 100 檔，避免 URL 過長或 API 回拒
+        chunk_size = 100
+        batch_result: dict = {}
+        for i in range(0, len(batch_tickers), chunk_size):
+            chunk = batch_tickers[i:i + chunk_size]
+            ex_ch = "|".join(f"{prefix}_{t}.tw" for t in chunk)
+            url   = f"{base_url}?ex_ch={ex_ch}&json=1&delay=0"
+            try:
+                s = _new_session(referer)
+                r = _get_with_retry(s, url, timeout=8, max_attempts=2)
+                if not r:
+                    continue
+                items = r.json().get("msgArray", [])
+                for d in items:
+                    t = d.get("c", "")          # TWSE 回傳的股票代碼（純數字/英文）
+                    if not t:
+                        continue
+                    z_val = d.get("z", "-")
+                    y_val = d.get("y", "0")
+                    is_after_hours = z_val in ("-", "")
+                    price = safe_float(z_val) if not is_after_hours else safe_float(y_val)
+                    if price <= 0:
+                        continue
+                    prev  = safe_float(y_val) if y_val not in ("-", "") else price
+                    high  = safe_float(d.get("h", "0")) or price
+                    low   = safe_float(d.get("l", "0")) or price
+                    vol_k = safe_float(d.get("v", "0"))
+                    chg     = 0.0 if is_after_hours else round(price - prev, 4)
+                    chg_pct = (0.0 if is_after_hours
+                               else (round(chg / prev * 100, 4) if prev > 0 else 0.0))
+                    batch_result[t] = {
+                        "current_price":        price,
+                        "price_change":         chg,
+                        "price_change_percent": chg_pct,
+                        "day_high":             high,
+                        "day_low":              low,
+                        "volume":               int(vol_k * 1000),
+                        "is_after_hours":       is_after_hours,
+                    }
+            except Exception as e:
+                logger.debug(f"TW bulk realtime {prefix}: {e}")
+        return batch_result
+
+    # ─ Pass 1：TSE 前綴（TWSE 上市，含大多數 ETF）─
+    result = _batch_request(
+        "tse", tickers,
+        "https://mis.twse.com.tw/stock/api/getStockInfo.jsp",
+        "https://mis.twse.com.tw/",
+    )
+
+    # ─ Pass 2：OTC 前綴（TPEX 上櫃，首次未命中的才重查）─
+    missing = [t for t in tickers if t not in result]
+    if missing:
+        otc_result = _batch_request(
+            "otc", missing,
+            "https://mis.tpex.org.tw/stock/api/getStockInfo.jsp",
+            "https://mis.tpex.org.tw/",
+        )
+        result.update(otc_result)
+
+    logger.debug(
+        f"TW bulk realtime: 請求 {len(tickers)} 檔，命中 {len(result)} 檔，"
+        f"未命中 {len(tickers) - len(result)} 檔"
+    )
+    return result
+
+
 def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
     """取得台股 ETF 配息資料，回傳 (dividend_yield_pct, payout_freq, confirmed)。
 
@@ -937,6 +1026,65 @@ def _fetch_us_quote(ticker: str) -> Optional[dict]:
     except Exception as e:
         logger.debug(f"US quote {ticker}: {e}")
     return None
+
+
+def _fetch_us_realtime_bulk(tickers: list) -> dict:
+    """Yahoo Finance v7 /quote 批量現價：一次 HTTP 請求取得所有美股 ETF 現價。
+
+    使用 /v7/finance/quote?symbols=SPY,QQQ,VOO 端點（比 v8/chart 更輕量）。
+    CF Proxy 優先 → 直連 fallback（Railway IP 可能被 Yahoo 封鎖）。
+
+    回傳: {ticker: quote_dict}，只包含成功取得資料的標的。
+    """
+    if not tickers:
+        return {}
+
+    result: dict = {}
+    # Yahoo v7 quote 端點支援最多約 1500 個 symbol，實務上分批 200 個避免 URL 過長
+    chunk_size = 200
+    for i in range(0, len(tickers), chunk_size):
+        chunk   = tickers[i:i + chunk_size]
+        symbols = ",".join(chunk)
+        url     = (f"https://query2.finance.yahoo.com/v7/finance/quote"
+                   f"?symbols={symbols}&fields=regularMarketPrice,"
+                   f"regularMarketChange,regularMarketChangePercent,"
+                   f"regularMarketDayHigh,regularMarketDayLow,"
+                   f"regularMarketVolume,regularMarketPreviousClose")
+        referer = "https://finance.yahoo.com/markets/etfs/most-active/"
+        try:
+            s = _new_session(referer)
+            s.headers["Origin"] = "https://finance.yahoo.com"
+            r = (_cf_yahoo_get(url, timeout=15)
+                 or _get_with_retry(s, url, timeout=8, max_attempts=2))
+            if not r or r.status_code != 200:
+                logger.debug(f"US bulk realtime: HTTP {getattr(r,'status_code','None')}")
+                continue
+            items = r.json().get("quoteResponse", {}).get("result", [])
+            for item in items:
+                ticker = item.get("symbol", "")
+                if not ticker:
+                    continue
+                price = safe_float(item.get("regularMarketPrice", 0))
+                if price <= 0:
+                    continue
+                chg     = safe_float(item.get("regularMarketChange", 0))
+                chg_pct = safe_float(item.get("regularMarketChangePercent", 0))
+                result[ticker] = {
+                    "current_price":        price,
+                    "price_change":         round(chg, 4),
+                    "price_change_percent": round(chg_pct, 4),
+                    "day_high":  safe_float(item.get("regularMarketDayHigh",  price)),
+                    "day_low":   safe_float(item.get("regularMarketDayLow",   price)),
+                    "volume":    int(safe_float(item.get("regularMarketVolume", 0))),
+                }
+        except Exception as e:
+            logger.debug(f"US bulk realtime chunk {i}: {e}")
+
+    logger.debug(
+        f"US bulk realtime: 請求 {len(tickers)} 檔，命中 {len(result)} 檔，"
+        f"未命中 {len(tickers) - len(result)} 檔"
+    )
+    return result
 
 
 # ══════════════════════════════════════════════════════════
@@ -1296,6 +1444,89 @@ def save_price_only(data: dict):
             cache.delete(f"rank:{rank_type}:{market}")
     else:
         cache.delete_prefix("rank:")
+
+
+def save_price_bulk(data_list: list) -> int:
+    """批次更新報價欄位，一次 DB 事務 + 一次快取清除。
+
+    相比 save_price_only（每檔一次 execute + commit + 多次 cache.delete），此函式：
+      · 對「有變化」的資料執行 executemany → 所有列合併為一次 DB 往返（~150ms RTT 降至 1 次）
+      · dirty check：price 與 volume 均未變動的 ETF 直接略過，不寫 DB
+      · 整批完成後只呼叫 1 次 cache.delete_prefix("rank:")，取代 N 次個別刪除
+
+    回傳值：實際寫入 DB 的列數（dirty check 過濾後）
+    """
+    if not data_list:
+        return 0
+
+    today = datetime.now().date()
+
+    # SQL 與 save_price_only 相同，支援 executemany
+    _SQL = """
+        INSERT INTO etf_daily_data
+          (ticker, date, current_price, price_change, price_change_percent,
+           day_high, day_low, volume)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+        ON DUPLICATE KEY UPDATE
+          current_price         = IF(VALUES(current_price)>0, VALUES(current_price), current_price),
+          price_change          = IF(VALUES(current_price)>0, VALUES(price_change), price_change),
+          price_change_percent  = IF(VALUES(current_price)>0, VALUES(price_change_percent), price_change_percent),
+          day_high              = IF(VALUES(current_price)>0, VALUES(day_high), day_high),
+          day_low               = IF(VALUES(current_price)>0, VALUES(day_low), day_low),
+          volume                = IF(VALUES(current_price)>0, VALUES(volume), volume)
+    """
+
+    rows_to_write: list  = []   # executemany 的參數列表
+    dirty_updates: list  = []   # 寫入成功後更新 dirty cache 的 (ticker, price, volume)
+    tickers_written: set = set()
+
+    for data in data_list:
+        ticker = data.get("ticker", "")
+        cp     = safe_float(data.get("current_price"))
+        vol    = int(safe_float(data.get("volume", 0)))
+
+        if not ticker or cp <= 0:
+            continue
+
+        # ── dirty check：price 與 volume 均未改變則跳過 DB 寫入 ──
+        # 用 abs 容差 0.001（低於 TW/US ETF 最小 tick），避免浮點誤差誤判
+        last = _price_dirty_cache.get(ticker)
+        if last is not None:
+            last_price, last_vol = last
+            if abs(last_price - cp) < 0.001 and last_vol == vol:
+                continue   # 未變動，略過 DB 寫入與快取更新
+
+        rows_to_write.append((
+            ticker, today, cp,
+            safe_float(data.get("price_change")),
+            safe_float(data.get("price_change_percent")),
+            safe_float(data.get("day_high", cp)),
+            safe_float(data.get("day_low",  cp)),
+            vol,
+        ))
+        dirty_updates.append((ticker, cp, vol))
+        tickers_written.add(ticker)
+
+    if not rows_to_write:
+        return 0   # 全部 dirty，無需任何 DB / cache 操作
+
+    # ── 一次 DB 往返，executemany 批次寫入 ──
+    with get_db() as (conn, cursor):
+        cursor.executemany(_SQL, rows_to_write)
+        conn.commit()
+
+    # ── 更新 dirty cache（只在 DB 成功後才更新，保證一致性）──
+    for ticker, cp, vol in dirty_updates:
+        _price_dirty_cache[ticker] = (cp, vol)
+
+    # ── 清除 detail 快取（各 ticker 獨立 key）──
+    for ticker in tickers_written:
+        cache.delete(f"detail:{ticker}")
+
+    # ── 清除排行榜快取（整批只呼叫一次，取代 N × 4 次個別刪除）──
+    cache.delete_prefix("rank:")
+
+    return len(rows_to_write)
 
 
 # ── 需要 pandas ──

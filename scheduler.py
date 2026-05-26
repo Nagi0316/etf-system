@@ -3,9 +3,12 @@ scheduler.py — APScheduler 排程器
 
 排程架構（Asia/Taipei 時區）：
 
-【盤中快速】每 2 分鐘，內部偵測市場是否開盤
-  ▸ 只抓現價：TW 走 TWSE 官方 API，US 走輕量 Yahoo chart
-  ▸ 更新完立即掃描到價提醒（延遲 ≤ 2 分鐘）
+【盤中快速】每 30 秒，內部偵測市場是否開盤
+  ▸ 批量抓現價：TW 走 TWSE MIS 批量 API（全部 1-2 次 HTTP）
+               US 走 Yahoo /v7/finance/quote?symbols=（全部 1 次 HTTP）
+  ▸ dirty check：price / volume 均未變動的 ETF 跳過 DB 寫入
+  ▸ executemany 批次寫入 → 1 次 DB 往返（TiDB 150ms RTT × 1）
+  ▸ 更新完立即掃描到價提醒（延遲 ≤ 30 秒）
   ▸ 不碰 dividend / history / quoteSummary，Yahoo 請求量降 ~70%
 
 【盤中完整】每 30 分鐘，內部偵測市場是否開盤
@@ -182,59 +185,94 @@ async def _fast_price_tick():
 
 
 async def _fast_price_tick_inner():
+    """盤中高頻批量報價更新。
+
+    優化架構（vs 舊版逐筆 fetch）：
+      · TW：_fetch_tw_realtime_bulk → TWSE MIS 批量 API，所有台股 1-2 次 HTTP
+      · US：_fetch_us_realtime_bulk → Yahoo v7/quote?symbols=，所有美股 1 次 HTTP
+      · save_price_bulk → executemany 一次 DB 往返 + dirty check 跳過未變動標的
+                          + cache.delete_prefix("rank:") 整批只呼叫 1 次
+      預估 60 檔從 60+ 秒降至 2-3 秒（含 TiDB 150ms RTT）。
+    """
     tw_open = _is_tw_market_open()
     us_open = _is_us_market_open()
     if not (tw_open or us_open):
         return
 
-    from etf_data import fetch_price_only, save_price_only
+    from etf_data import _fetch_tw_realtime_bulk, _fetch_us_realtime_bulk, save_price_bulk
 
     pool = _get_active_pool()
     if not pool:
         return
 
-    active_pool = [
-        e for e in pool
-        if (e["market"] == "TW" and tw_open) or (e["market"] == "US" and us_open)
-    ]
-    if not active_pool:
+    tw_pool = [e for e in pool if e["market"] == "TW" and tw_open]
+    us_pool = [e for e in pool if e["market"] == "US" and us_open]
+
+    if not (tw_pool or us_pool):
         return
 
-    logger.debug(f"⚡ 快速報價 tick：{len(active_pool)} 檔（TW={'開' if tw_open else '收'} US={'開' if us_open else '收'}）")
+    logger.debug(
+        f"⚡ 批量快速報價 tick：TW={len(tw_pool)} 檔，US={len(us_pool)} 檔"
+        f"（TW={'開' if tw_open else '收'} US={'開' if us_open else '收'}）"
+    )
 
-    # TW 用 TWSE 官方 API，輕量可加大批次；US 仍走 Yahoo，保守並發
-    tw_pool = [e for e in active_pool if e["market"] == "TW"]
-    us_pool = [e for e in active_pool if e["market"] == "US"]
+    # ── 並行發起 TW / US 批量請求（兩個 to_thread 同時跑，互不阻塞）──
+    tw_tickers = [e["ticker"] for e in tw_pool]
+    us_tickers = [e["ticker"] for e in us_pool]
 
-    updated_any = False
+    tw_raw: dict = {}
+    us_raw: dict = {}
 
-    async def _process_batch(batch, batch_size, sleep_range):
-        nonlocal updated_any
-        for i in range(0, len(batch), batch_size):
-            chunk = batch[i:i + batch_size]
-            results = await asyncio.gather(
-                *[asyncio.to_thread(fetch_price_only, e["ticker"], e["market"]) for e in chunk],
-                return_exceptions=True,
-            )
-            for etf, result in zip(chunk, results):
-                if isinstance(result, Exception) or not result:
-                    continue
-                try:
-                    save_price_only(result)
-                    updated_any = True
-                except Exception as e:
-                    logger.debug(f"  fast save {etf['ticker']}: {e}")
-            if i + batch_size < len(batch):
-                await asyncio.sleep(random.uniform(*sleep_range))
+    fetch_coros = []
+    if tw_tickers:
+        fetch_coros.append(asyncio.to_thread(_fetch_tw_realtime_bulk, tw_tickers))
+    if us_tickers:
+        fetch_coros.append(asyncio.to_thread(_fetch_us_realtime_bulk, us_tickers))
 
-    if tw_pool:
-        await _process_batch(tw_pool, batch_size=6, sleep_range=(1.0, 2.0))
-    if us_pool:
-        await _process_batch(us_pool, batch_size=3, sleep_range=(3.0, 5.0))
+    if fetch_coros:
+        fetch_results = await asyncio.gather(*fetch_coros, return_exceptions=True)
+        idx = 0
+        if tw_tickers:
+            r = fetch_results[idx]; idx += 1
+            tw_raw = r if isinstance(r, dict) else {}
+            if isinstance(r, Exception):
+                logger.warning(f"_fetch_tw_realtime_bulk 失敗: {r}")
+        if us_tickers:
+            r = fetch_results[idx]; idx += 1
+            us_raw = r if isinstance(r, dict) else {}
+            if isinstance(r, Exception):
+                logger.warning(f"_fetch_us_realtime_bulk 失敗: {r}")
 
-    if updated_any:
+    # ── 組合有效結果 ──
+    data_list: list = []
+    for e in tw_pool:
+        q = tw_raw.get(e["ticker"])
+        if q:
+            data_list.append({"ticker": e["ticker"], "market": "TW", **q})
+    for e in us_pool:
+        q = us_raw.get(e["ticker"])
+        if q:
+            data_list.append({"ticker": e["ticker"], "market": "US", **q})
+
+    if not data_list:
+        logger.debug("⚡ 批量快速報價 tick：無有效報價，略過 DB 寫入")
+        return
+
+    # ── 批次寫入（含 dirty check），回傳實際寫入列數 ──
+    try:
+        written = await asyncio.to_thread(save_price_bulk, data_list)
+    except Exception as e:
+        logger.warning(f"save_price_bulk 失敗: {e}", exc_info=True)
+        written = 0
+
+    logger.debug(
+        f"⚡ 批量快速報價 tick 完成：抓到 {len(data_list)} 檔，"
+        f"實際寫入 {written} 檔（{len(data_list)-written} 檔 dirty check 跳過）"
+    )
+
+    # ── 只要有新資料寫入，立即掃描到價提醒 ──
+    if written > 0:
         await _check_price_alerts()
-        logger.debug("⚡ 快速報價 tick 完成，到價提醒已掃描")
 
 
 # ──────────────────────────────────────────────
@@ -513,11 +551,12 @@ def start_scheduler() -> BackgroundScheduler:
     #  盤中排程（interval，內部判斷是否開盤）
     # ════════════════════════════════════════
 
-    # 每 2 分鐘：快速報價更新 + 到價提醒掃描（開盤期間）
-    # 只走 TWSE 官方 API（TW）或輕量 Yahoo chart（US），不碰 dividend/history
+    # 每 30 秒：批量快速報價更新 + 到價提醒掃描（開盤期間）
+    # TW：TWSE MIS 批量 API（1-2 次 HTTP）；US：Yahoo v7/quote?symbols=（1 次 HTTP）
+    # dirty check 跳過未變動標的；executemany 1 次 DB 往返；整批 < 3 秒
     sch.add_job(
         lambda: schedule_fast_price_tick(),
-        "interval", minutes=2,
+        "interval", seconds=30,
         id="fast_price_tick", max_instances=1,
     )
 
@@ -574,7 +613,7 @@ def start_scheduler() -> BackgroundScheduler:
     sch.start()
     logger.info(
         "✅ 排程器已啟動\n"
-        "   【盤中快速】每 2 分鐘更新現價 + 掃描到價提醒（開盤期間）\n"
+        "   【盤中快速】每 30 秒批量更新現價 + 掃描到價提醒（開盤期間）\n"
         "   【盤中完整】每 30 分鐘更新含 dividend/history 補充資料\n"
         "   【台股】09:00–13:30 Asia/Taipei\n"
         "   【美股】09:30–16:00 America/New_York（DST-aware）\n"
