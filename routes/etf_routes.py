@@ -529,8 +529,15 @@ async def get_etf_detail(ticker: str):
         with get_db() as (conn, cursor):
             row = _fetch_etf_detail_row(cursor, ticker)
     except Exception as e:
-        logger.error(f"etf detail DB error ({ticker}): {e}", exc_info=True)
-        return safe_json({"status": "error", "message": "資料庫暫時無法連線，請稍後再試"}, 503)
+        err_cls = type(e).__name__
+        err_msg = str(e)[:300]
+        logger.error(f"etf detail DB error ({ticker}) [{err_cls}]: {err_msg}", exc_info=True)
+        # 暫時在 response 中暴露錯誤類型以利診斷（確認問題後移除）
+        return safe_json({
+            "status":  "error",
+            "message": "資料庫暫時無法連線，請稍後再試",
+            "_debug":  f"[{err_cls}] {err_msg}",
+        }, 503)
 
     if not row:
         # 資料庫找不到 → 立即回傳 processing，讓前端 POST /api/etf/update 觸發背景抓取後輪詢
