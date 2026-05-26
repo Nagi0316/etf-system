@@ -26,9 +26,14 @@
     <i class="fas fa-exclamation-circle text-5xl text-red-400 mb-4 block"></i>
     <h2 class="text-xl font-bold text-slate-700 dark:text-slate-300 mb-2">無法載入資料</h2>
     <p id="error-text" class="text-slate-500 dark:text-slate-400 mb-6">發生錯誤，請稍後再試</p>
-    <button onclick="location.href='/etf-list'" class="btn-primary inline-flex">
-      <i class="fas fa-arrow-left mr-2"></i>返回列表
-    </button>
+    <div class="flex gap-3 justify-center">
+      <button onclick="_retryLoad()" class="btn-primary inline-flex items-center">
+        <i class="fas fa-redo mr-2"></i>重試
+      </button>
+      <button onclick="location.href='/etf-list'" class="inline-flex items-center px-4 py-2 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">
+        <i class="fas fa-arrow-left mr-2"></i>返回列表
+      </button>
+    </div>
   </div>
 
   <!-- 內容 -->
@@ -261,25 +266,71 @@ const STATIC_INFO = {
 let etfData = null, priceChart = null, inWatchlist = false, currentPeriod = '1Y', currentTicker = '';
 let _chartReqId = 0;
 
+/**
+ * 帶 AbortController 超時的 fetch。
+ * 防止 Yahoo Finance / TiDB 冷啟動等情境下請求無限等待，
+ * 讓頁面在最壞情況下也能在 ms 內知道失敗並呈現錯誤提示。
+ */
+async function _tFetch(url, opts = {}, ms = 10000) {
+  const ctrl = new AbortController();
+  const tid  = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
 async function loadETFDetail() {
   const parts = window.location.pathname.split('/');
   currentTicker = parts[parts.length - 1].toUpperCase();
   document.title = `${currentTicker} — ETF投資系統`;
 
   try {
-    let res = await fetch(`/api/etf/detail/${currentTicker}`);
-    let result = await res.json();
-    if (result.status !== 'success') {
-      document.getElementById('loading-msg').textContent = '正在即時抓取數據，請稍候…';
-      await fetch(`/api/etf/update/${currentTicker}`, { method: 'POST' });
-      res = await fetch(`/api/etf/detail/${currentTicker}`);
+    // ── 第一次嘗試：從 DB/快取取得詳情（10s 超時）──
+    let result;
+    try {
+      const res = await _tFetch(`/api/etf/detail/${currentTicker}`, {}, 10000);
       result = await res.json();
+    } catch(e) {
+      result = { status: 'error', message: '連線超時，請稍後再試' };
     }
+
+    // ── 若首次失敗：fire-and-forget 觸發後台更新 + 輪詢等待 ──
+    if (result.status !== 'success') {
+      const msgEl = document.getElementById('loading-msg');
+      if (msgEl) msgEl.textContent = '正在即時抓取數據，請稍候…';
+
+      // 觸發後台更新（不 await，讓後端 fire-and-forget 執行）
+      // _tFetch 限制 3s：超時視為已接收請求（後台繼續跑），不影響輪詢
+      _tFetch(`/api/etf/update/${currentTicker}`, { method: 'POST' }, 3000).catch(() => {});
+
+      // 輪詢：每 3 秒重試 detail，最多 4 次（共 12 秒）
+      // 若後台 fetch_one_etf 成功（5-15s）輪詢即能取得資料
+      const MAX_RETRY = 4;
+      for (let i = 0; i < MAX_RETRY; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const remaining = (MAX_RETRY - 1 - i) * 3;
+        if (msgEl) {
+          msgEl.textContent = remaining > 0
+            ? `正在即時抓取數據，請稍候… (約剩 ${remaining} 秒)`
+            : '即將完成，請稍候…';
+        }
+        try {
+          const res2 = await _tFetch(`/api/etf/detail/${currentTicker}`, {}, 8000);
+          const r2   = await res2.json();
+          if (r2.status === 'success') { result = r2; break; }
+        } catch(e) { /* 單次超時不中斷，繼續輪詢 */ }
+      }
+    }
+
     if (result.status === 'success') {
       etfData = result.data;
       renderData();
       document.getElementById('loading').classList.add('hidden');
       document.getElementById('content').classList.remove('hidden');
+
+      // 非關鍵資料並行載入（不阻塞主內容顯示）
       Promise.all([
         loadPriceHistory(currentTicker, '1Y'),
         checkWatchlistStatus(currentTicker),
@@ -287,20 +338,25 @@ async function loadETFDetail() {
         loadEtfScore(currentTicker),
       ]);
 
+      // 年化報酬缺失：觸發背景更新，8 秒後靜默刷新（不阻塞頁面）
       const d = etfData;
-      const missingReturns = d.annual_return_1y == null && d.annual_return_3y == null && d.annual_return_5y == null;
-      if (missingReturns) {
-        fetch(`/api/etf/update/${currentTicker}`, { method: 'POST' })
-          .then(r => r.json())
-          .then(upd => {
+      if (d.annual_return_1y == null && d.annual_return_3y == null && d.annual_return_5y == null) {
+        _tFetch(`/api/etf/update/${currentTicker}`, { method: 'POST' }, 3000).catch(() => {});
+        setTimeout(async () => {
+          try {
+            const res = await _tFetch(`/api/etf/detail/${currentTicker}`, {}, 8000);
+            const upd = await res.json();
             if (upd.status === 'success' && upd.data) {
               etfData = { ...etfData, ...upd.data };
               renderData();
             }
-          })
-          .catch(() => {});
+          } catch(e) {}
+        }, 8000);
       }
-    } else throw new Error(result.message || '無法載入資料');
+
+    } else {
+      throw new Error(result.message || '無法載入資料，請稍後重試');
+    }
   } catch(err) {
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('error-box').classList.remove('hidden');
@@ -713,6 +769,14 @@ function _startLiveRefresh() {
 
 document.addEventListener('DOMContentLoaded', loadETFDetail);
 // _startLiveRefresh 在 loadETFDetail → renderData 完成後呼叫（見 renderData 底部）
+
+/** 錯誤狀態下的重試：重設 UI 狀態後重新執行載入流程 */
+function _retryLoad() {
+  document.getElementById('error-box').classList.add('hidden');
+  document.getElementById('loading').classList.remove('hidden');
+  document.getElementById('loading-msg').textContent = '載入 ETF 資料中…';
+  loadETFDetail();
+}
 
 // ── ETF 健康評分 ─────────────────────────────────────────────────
 async function loadEtfScore(ticker) {

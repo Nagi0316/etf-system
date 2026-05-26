@@ -1010,37 +1010,60 @@ async def get_dividends(ticker: str):
 # ── 手動強制更新 ──
 
 @router.post("/api/etf/update/{ticker}")
-async def update_one_etf(ticker: str):
+async def update_one_etf(ticker: str, background_tasks: BackgroundTasks):
+    """觸發單一 ETF 資料更新。
+
+    設計原則：**立即回傳 processing**，實際 Yahoo Finance 抓取在背景執行。
+    呼叫方不應 await 此端點的完成（否則 Yahoo 封鎖時會卡 30 秒）。
+    前端應採 fire-and-forget + 輪詢 /api/etf/detail/{ticker} 的方式偵測更新完成。
+
+    去重機制：同一 ticker 60 秒內最多觸發一次，防止重複排隊。
+    """
     ticker = ticker.upper()
 
-    # 先讀取 market，不預先寫入 DB（避免垃圾代碼污染資料庫）
-    with get_db() as (conn, cursor):
-        cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
-        row = cursor.fetchone()
+    # ── 同步快速部分：只做 DB 讀取（~5ms）──
+    try:
+        with get_db() as (conn, cursor):
+            cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
+            row = cursor.fetchone()
+    except Exception:
+        row = None
     market = (row or {}).get("market") or ("TW" if ticker[:4].isdigit() else "US")
 
-    # 先抓取資料，確認 ticker 真實存在後才寫入 DB
-    def _fetch():
-        return fetch_one_etf(ticker, market)
+    # 去重：60 秒內已在更新中，直接回傳
+    rate_key = f"bg_update:{ticker}"
+    if cache.get(rate_key):
+        return safe_json({"status": "processing", "message": f"{ticker} 已在更新中，約 5-15 秒後可重新整理"})
+    cache.set(rate_key, 1, 60)
 
-    data = await asyncio.to_thread(_fetch)
-    if not data or not data.get("current_price"):
-        return safe_json({"status": "error", "message": f"無法取得 {ticker} 資料，請確認代碼是否正確"}, 400)
+    # ── 背景慢速部分：Yahoo Finance 抓取 + DB 寫入 ──
+    def _bg():
+        try:
+            data = fetch_one_etf(ticker, market)
+            if not data or not data.get("current_price"):
+                return  # 抓取失敗，等排程器下次重試
+            data["ticker"] = ticker
+            data["market"] = market
+            # 確認資料有效後才 INSERT（避免垃圾 ticker 寫入 master）
+            if not row:
+                with get_db() as (c2, cur2):
+                    cur2.execute(
+                        "INSERT IGNORE INTO etf_master (ticker, name, market, auto_discovered) "
+                        "VALUES (%s, %s, %s, 1)",
+                        (ticker, data.get("name", ticker), market),
+                    )
+                    c2.commit()
+            save_etf_data(data)
+            cache.delete(f"detail:{ticker}")
+            cache.delete_prefix("search:")
+            logger.info(f"✅ bg_update {ticker} 完成 price={data.get('current_price')}")
+        except Exception as e:
+            logger.warning(f"bg_update {ticker} 失敗: {e}")
+        finally:
+            cache.delete(rate_key)   # 無論成敗都解鎖，讓前端可再次觸發
 
-    data["ticker"] = ticker
-    data["market"] = market
-    # 確認有效資料後才 INSERT（INSERT IGNORE 確保已存在時不覆蓋）
-    if not row:
-        with get_db() as (conn, cursor):
-            cursor.execute(
-                "INSERT IGNORE INTO etf_master (ticker, name, market, auto_discovered) VALUES (%s, %s, %s, 1)",
-                (ticker, data.get("name", ticker), market),
-            )
-            conn.commit()
-
-    cache.delete(f"detail:{ticker}")
-    save_etf_data(data)
-    return safe_json({"status": "success", "message": f"{ticker} 已更新", "data": data})
+    background_tasks.add_task(_bg)
+    return safe_json({"status": "processing", "message": f"{ticker} 資料更新中，約 5-15 秒後請重新整理"})
 
 
 @router.post("/api/etf/force-update")
