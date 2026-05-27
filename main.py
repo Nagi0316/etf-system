@@ -336,7 +336,7 @@ async def health_data():
     6. 快取狀態   — rank:combined:TW / rank:combined:US 是否有效
     7. 配息事件   — etf_dividends 中有真實事件的 ETF 數量（回測品質指標）
     """
-    from datetime import date as _date
+    from datetime import date as _date, timedelta as _td
     from utils import safe_json
     from cache import cache
 
@@ -346,6 +346,7 @@ async def health_data():
         return _cached
 
     today = _date.today()
+    stale_cutoff = (today - _td(days=3)).isoformat()   # 用 Python 算，相容 MySQL + SQLite
     issues: list[dict] = []
     summary: dict = {}
 
@@ -376,10 +377,10 @@ async def health_data():
                 JOIN etf_daily_data d ON m.ticker = d.ticker AND d.current_price > 0
                 WHERE m.is_hot = 1 AND m.is_delisted = 0
                 GROUP BY m.ticker, m.market
-                HAVING MAX(d.date) < DATE_SUB(CURDATE(), INTERVAL 3 DAY)
+                HAVING MAX(d.date) < %s
                 ORDER BY last_date ASC
                 LIMIT 50
-            """)
+            """, (stale_cutoff,))
             stale = cursor.fetchall()
             summary["stale_etfs"] = len(stale)
             for r in stale:

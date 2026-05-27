@@ -2,7 +2,7 @@
 auth.py — JWT 驗證、Google OAuth 2.0、bcrypt 密碼處理
 """
 import uuid, logging, httpx
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status, Request
@@ -39,13 +39,14 @@ def verify_password(plain: str, hashed: str) -> bool:
 def create_access_token(user_id: int, email: str) -> tuple[str, str]:
     """回傳 (token, jti)"""
     jti = uuid.uuid4().hex
-    expire = datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS)
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(hours=JWT_EXPIRE_HOURS)
     payload = {
         "sub": str(user_id),
         "email": email,
         "jti": jti,
         "exp": expire,
-        "iat": datetime.utcnow(),
+        "iat": now,
     }
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
     # 儲存 jti 供撤銷用

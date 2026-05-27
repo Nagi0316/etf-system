@@ -352,7 +352,9 @@ async def _update_missing():
     from database import get_db
 
     try:
-        # TiDB/MySQL 不支援 NULLS FIRST，使用 ISNULL() DESC 讓 NULL 優先
+        from datetime import date as _date, timedelta as _td
+        # 用 Python 算好日期作為參數，同時相容 MySQL 和 SQLite（不使用 DATE_SUB/CURDATE/ISNULL）
+        cutoff = (_date.today() - _td(days=1)).isoformat()
         with get_db() as (conn, cursor):
             cursor.execute("""
                 SELECT m.ticker, m.market
@@ -363,13 +365,15 @@ async def _update_missing():
                     GROUP BY ticker
                 ) d ON m.ticker = d.ticker
                 WHERE m.is_hot = 1
+                  AND COALESCE(m.is_delisted, 0) = 0
                   AND (
                       d.last_date IS NULL
-                      OR d.last_date < DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+                      OR d.last_date < %s
                   )
-                ORDER BY ISNULL(d.last_date) DESC, d.last_date ASC
+                ORDER BY CASE WHEN d.last_date IS NULL THEN 0 ELSE 1 END ASC,
+                         d.last_date ASC
                 LIMIT 30
-            """)
+            """, (cutoff,))
             rows = cursor.fetchall()
     except Exception as e:
         logger.warning(f"_update_missing 查詢失敗: {e}")

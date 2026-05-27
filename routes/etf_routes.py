@@ -363,6 +363,8 @@ async def _on_demand_fetch(ticker: str, client_ip: str = "") -> Optional[dict]:
                 )
                 conn.commit()
             save_etf_data(data)
+            cache.delete("etf:index")          # 讓搜尋/自動補全立即包含新 ETF
+            cache.delete(f"search:{ticker}")   # 清除此 ticker 的搜尋快取（剛才可能緩存了空結果）
             logger.info(f"🔍 隨需探索成功：{ticker} ({market})")
             return {
                 "ticker": ticker,
@@ -639,6 +641,14 @@ _MIN_CHART_ROWS = {
     "1Y": 20, "3Y": 30, "5Y": 30, "ALL": 10, "MAX": 10,
 }
 
+# is_partial 門檻：低於此值（約 50% 的預期交易日）才顯示「資料不完整」警告
+# 原本用 _MIN_CHART_ROWS * 3 的問題：3Y 門檻只有 90 筆，但 3 年應有 ~750 個交易日，
+# 即使只有 3 個月的資料（91 筆）也不會觸發警告，嚴重誤導用戶
+_PARTIAL_THRESHOLD = {
+    "1M": 11, "3M": 32, "6M": 65, "YTD": 65,
+    "1Y": 125, "3Y": 375, "5Y": 625, "ALL": 625, "MAX": 625,
+}
+
 _TWSE_HIST_HEADERS = {
     "Accept": "application/json",
     "User-Agent": "Mozilla/5.0 (compatible; ETF-System/2.0)",
@@ -681,8 +691,8 @@ def _fetch_db_price_history(ticker: str, period: str) -> Optional[dict]:
         labels = [str(r["date"])[:10] for r in rows]
         prices = [round(float(r["current_price"]), 2) for r in rows]
         # is_partial=True 表示資料未涵蓋完整請求期間（DB 尚在補齊中），前端可顯示提示
-        expected_rows = _MIN_CHART_ROWS.get(p_up, 60) * 3
-        is_partial = len(rows) < expected_rows
+        # 使用獨立的 _PARTIAL_THRESHOLD（約 50% 預期交易日），避免 3Y/5Y 圖表資料嚴重不足卻不顯示警告
+        is_partial = len(rows) < _PARTIAL_THRESHOLD.get(p_up, 125)
         return {"labels": labels, "prices": prices, "is_intraday": False, "is_partial": is_partial}
     except Exception as e:
         logger.debug(f"DB price history {ticker}: {e}")
@@ -1056,6 +1066,7 @@ async def update_one_etf(ticker: str):
             conn.commit()
 
     cache.delete(f"detail:{ticker}")
+    cache.delete("etf:index")    # 若為新增標的，讓清單立即包含
     save_etf_data(data)
     return safe_json({"status": "success", "message": f"{ticker} 已更新", "data": data})
 
@@ -1150,4 +1161,14 @@ async def add_etf_to_master(body: EtfAddIn, request: Request):
             (body.ticker, body.name, body.market)
         )
         conn.commit()
-    return safe_json({"status": "success", "message": f"ETF {body.ticker} 已加入"})
+
+    cache.delete("etf:index")   # 讓搜尋/自動補全立即包含新 ETF
+
+    # 觸發背景資料抓取，讓用戶無需等到下次排程就能看到價格
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_on_demand_fetch(body.ticker))
+    except Exception:
+        pass
+
+    return safe_json({"status": "success", "message": f"ETF {body.ticker} 已加入，正在背景抓取初始資料"})

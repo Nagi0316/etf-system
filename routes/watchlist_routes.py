@@ -54,18 +54,25 @@ async def add_watchlist(body: WatchlistAddIn, current_user: dict = Depends(get_c
     market = body.market or ("TW" if ticker[:4].isdigit() else "US")
     name   = body.name or ticker
 
-    with get_db() as (conn, cursor):
-        cursor.execute("SELECT ticker FROM etf_master WHERE ticker=%s", (ticker,))
-        if not cursor.fetchone():
+    try:
+        with get_db() as (conn, cursor):
+            cursor.execute("SELECT ticker FROM etf_master WHERE ticker=%s", (ticker,))
+            if not cursor.fetchone():
+                cursor.execute(
+                    "INSERT IGNORE INTO etf_master (ticker,name,market) VALUES (%s,%s,%s)",
+                    (ticker, name, market)
+                )
+            # 直接 INSERT IGNORE：比 SELECT-then-INSERT 省一次 RTT，且無 TOCTOU race condition
             cursor.execute(
-                "INSERT OR IGNORE INTO etf_master (ticker,name,market) VALUES (%s,%s,%s)",
-                (ticker, name, market)
+                "INSERT IGNORE INTO user_watchlist (user_id,ticker) VALUES (%s,%s)",
+                (uid, ticker)
             )
-        cursor.execute("SELECT id FROM user_watchlist WHERE user_id=%s AND ticker=%s", (uid, ticker))
-        if cursor.fetchone():
-            return safe_json({"status": "error", "message": "已在自選清單中"}, 400)
-        cursor.execute("INSERT INTO user_watchlist (user_id,ticker) VALUES (%s,%s)", (uid, ticker))
-        conn.commit()
+            if cursor.rowcount == 0:
+                return safe_json({"status": "error", "message": "已在自選清單中"}, 400)
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"add_watchlist {ticker}: {e}")
+        return safe_json({"status": "error", "message": "操作失敗，請稍後再試"}, 500)
     return safe_json({"status": "success", "message": f"已加入自選：{ticker}"})
 
 

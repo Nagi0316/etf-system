@@ -160,9 +160,11 @@ def recalc_all_returns(market: str | None = None) -> dict:
 
     logger.debug(f"  歷史報酬：1Y={len(prices_1y)}檔 3Y={len(prices_3y)}檔 5Y={len(prices_5y)}檔")
 
-    # ── Step 4: 計算 + 批次 UPDATE ──
+    # ── Step 4: 計算所有報酬率，再以單一 DB 連線批次 UPDATE ──
+    # 原本每個 ticker 各開一條連線（N RTT），現在改為收集所有 UPDATE 後一次提交（1 RTT）
     updated = 0
     skipped = 0
+    pending: list[tuple] = []   # (sql, params)
 
     for ticker in tickers:
         info = latest_map.get(ticker)
@@ -182,7 +184,6 @@ def recalc_all_returns(market: str | None = None) -> dict:
             skipped += 1
             continue
 
-        # 只寫非 NULL 欄位，不把已有值蓋成 NULL
         cols, vals = [], []
         if r1y is not None:
             cols.append("annual_return_1y=%s"); vals.append(r1y)
@@ -192,20 +193,23 @@ def recalc_all_returns(market: str | None = None) -> dict:
             cols.append("annual_return_5y=%s"); vals.append(r5y)
 
         vals += [ticker, latest_date.isoformat()]
+        pending.append((
+            f"UPDATE etf_daily_data SET {', '.join(cols)} WHERE ticker=%s AND date=%s",
+            vals,
+        ))
+        logger.debug(f"  {ticker}: 1y={r1y}% 3y={r3y}% 5y={r5y}%")
 
+    # 單一連線執行所有 UPDATE，只做 1 次 DB round-trip
+    if pending:
         try:
             with get_db() as (conn, cursor):
-                cursor.execute(
-                    f"UPDATE etf_daily_data SET {', '.join(cols)} "
-                    f"WHERE ticker=%s AND date=%s",
-                    vals,
-                )
+                for sql, params in pending:
+                    cursor.execute(sql, params)
                 conn.commit()
-            logger.debug(f"  {ticker}: 1y={r1y}% 3y={r3y}% 5y={r5y}%")
-            updated += 1
+            updated = len(pending)
         except Exception as e:
-            logger.warning(f"  recalc {ticker}: {e}")
-            skipped += 1
+            logger.warning(f"recalc batch UPDATE 失敗: {e}")
+            skipped += len(pending)
 
     logger.info(f"✅ 年化報酬率重算完成：更新 {updated} 檔，略過 {skipped} 檔")
     return {"updated": updated, "skipped": skipped}
