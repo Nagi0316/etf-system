@@ -609,4 +609,10 @@ def _repair_non_trading_daily_rows():
         conn.commit()
 
     if repaired:
+        try:
+            from cache import cache
+            cache.delete_prefix("detail:")
+            cache.delete_prefix("rank:")
+        except Exception as e:
+            logger.debug(f"休市日修復後清除快取失敗（將依 TTL 自動更新）: {e}")
         logger.info(f"✅ 修復 {repaired} 筆休市日／未來日期行情")
