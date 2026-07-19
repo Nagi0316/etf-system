@@ -507,6 +507,7 @@ def _repair_non_trading_daily_rows():
     將這些列合併回前一個工作日，保留較完整的報價與補充欄位後刪除錯誤列。
     """
     today = date.today()
+    recent_cutoff = today - timedelta(days=14)
     weekday_filter = (
         "DAYOFWEEK(date) IN (1,7)"
         if USE_MYSQL else
@@ -516,8 +517,9 @@ def _repair_non_trading_daily_rows():
         with get_db() as (conn, cursor):
             cursor.execute(
                 f"SELECT * FROM etf_daily_data "
-                f"WHERE {weekday_filter} OR date > %s ORDER BY date, ticker",
-                (today,),
+                f"WHERE date >= %s AND ({weekday_filter} OR date > %s) "
+                f"ORDER BY date DESC, ticker",
+                (recent_cutoff, today),
             )
             invalid_rows = cursor.fetchall()
     except Exception as e:
