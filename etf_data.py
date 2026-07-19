@@ -665,13 +665,20 @@ def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
             # 盤後時段 z 為空，盤中價 == 昨收，強制設 0 而非算出假的 0 差
             chg     = 0.0 if is_after_hours else round(price - prev, 4)
             chg_pct = 0.0 if is_after_hours else (round(chg / prev * 100, 4) if prev > 0 else 0.0)
-            return {
+            parsed = {
                 "current_price": price, "price_change": chg,
                 "price_change_percent": chg_pct,
                 "day_high": high, "day_low": low,
                 "volume": int(vol_k * 1000),
                 "is_after_hours": is_after_hours,
             }
+            # 部分雲端出口取得的 MIS 盤後回應只有現價／昨收，日高低與成交量為空。
+            # 以 Yahoo 補齊缺失欄位，避免新日期列把完整詳情變成 0。
+            if parsed["volume"] <= 0 or high <= 0 or low <= 0:
+                fallback = _fetch_tw_yahoo_quote(ticker)
+                if fallback:
+                    return fallback
+            return parsed
         except Exception as e:
             logger.debug(f"TW realtime {prefix} {ticker}: {e}")
     quote = _fetch_tw_yahoo_quote(ticker)
@@ -830,15 +837,23 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
     # ─ Pass 3：Yahoo chart 備援 ─
     # Railway 的出口 IP 可能無法連線 MIS。只針對前兩輪未命中的代碼，
     # 以有限並發透過 Cloudflare Worker 抓取，避免單一來源故障讓全台股停更。
-    missing = [t for t in tickers if t not in result]
-    if missing:
+    fallback_targets = [
+        t for t in tickers
+        if (
+            t not in result
+            or result[t].get("volume", 0) <= 0
+            or result[t].get("day_high", 0) <= 0
+            or result[t].get("day_low", 0) <= 0
+        )
+    ]
+    if fallback_targets:
         import concurrent.futures
 
-        max_workers = min(6, len(missing))
+        max_workers = min(6, len(fallback_targets))
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
             future_to_ticker = {
                 pool.submit(_fetch_tw_yahoo_quote, ticker): ticker
-                for ticker in missing
+                for ticker in fallback_targets
             }
             for future in concurrent.futures.as_completed(future_to_ticker):
                 ticker = future_to_ticker[future]
@@ -903,9 +918,13 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
                         # 取 Yahoo 事件數 與 靜態備援 兩者中頻率等級較高者（防止漏抓或升頻）
                         freq = _best_freq(len(recent), ticker)
                         return dy, freq, True  # confirmed=True：Yahoo 明確確認有配息
-                    # Yahoo 成功回應但 recent=0 → 已確認近 12 個月無配息事件
+                    # Yahoo 成功但沒有事件，不代表已知配息 ETF 真的停止配息；
+                    # Railway／代理偶爾會收到缺少 events 的部分回應，應繼續嘗試
+                    # 替代代碼、TWSE 與靜態備援，避免把既有殖利率錯誤清成 0。
                     freq = KNOWN_PAYOUT_FREQ.get(ticker, "不配息")
-                    return 0.0, freq, True  # confirmed=True：可信賴的 0（非 API 失敗）
+                    if freq == "不配息":
+                        return 0.0, freq, True
+                    continue
         except Exception as e:
             logger.debug(f"TW dividend Yahoo {yt}: {e}")
         _jitter(0.5, 1.5)
@@ -1400,6 +1419,56 @@ def save_etf_data(data: dict):
     dy_to_store   = raw_yield if (div_confirmed or (raw_yield and float(raw_yield) > 0)) else None
 
     with get_db() as (conn, cursor):
+        # 新交易日首次 INSERT 時，抓取上一筆補充欄位作為 carry-forward。
+        # 快速報價／部分 API 可能只帶現價；若直接新增稀疏列，詳情頁讀最新日期後
+        # 會把年化報酬、殖利率、費用率等顯示成空白。
+        cursor.execute("""
+            SELECT asset_size, nav, discount_premium,
+                   dividend_yield, payout_freq,
+                   annual_return_1y, annual_return_3y, annual_return_5y,
+                   pe_ratio, expense_ratio,
+                   fifty_two_week_high, fifty_two_week_low
+            FROM etf_daily_data
+            WHERE ticker=%s AND date < %s
+            ORDER BY date DESC
+            LIMIT 1
+        """, (ticker, today))
+        previous = cursor.fetchone() or {}
+
+        if nav is None:
+            prev_nav = safe_float(previous.get("nav"))
+            nav = prev_nav if prev_nav > 0 else None
+            dp = safe_float(previous.get("discount_premium"))
+        if dy_to_store is None:
+            prev_yield = previous.get("dividend_yield")
+            dy_to_store = prev_yield if prev_yield is not None else None
+
+        payout_freq = data.get("payout_freq", "不配息")
+        if payout_freq == "不配息" and previous.get("payout_freq"):
+            payout_freq = previous["payout_freq"]
+
+        def _positive_or_previous(key: str) -> float:
+            value = safe_float(data.get(key))
+            return value if value > 0 else safe_float(previous.get(key))
+
+        annual_return_1y = (
+            data.get("annual_return_1y")
+            if data.get("annual_return_1y") is not None
+            else previous.get("annual_return_1y")
+        )
+        annual_return_3y = (
+            data.get("annual_return_3y")
+            if data.get("annual_return_3y") is not None
+            else previous.get("annual_return_3y")
+        )
+        annual_return_5y = (
+            data.get("annual_return_5y")
+            if data.get("annual_return_5y") is not None
+            else previous.get("annual_return_5y")
+        )
+        day_high = safe_float(data.get("day_high")) or cp
+        day_low = safe_float(data.get("day_low")) or cp
+
         cursor.execute("""
             INSERT INTO etf_daily_data
             (ticker, date, current_price, price_change, price_change_percent,
@@ -1446,18 +1515,18 @@ def save_etf_data(data: dict):
             ticker, today, cp,
             safe_float(data.get("price_change")),
             safe_float(data.get("price_change_percent")),
-            safe_float(data.get("volume")), safe_float(data.get("asset_size")),
+            safe_float(data.get("volume")), _positive_or_previous("asset_size"),
             nav, dp,
-            dy_to_store, data.get("payout_freq", "不配息"),
-            data.get("annual_return_1y"),  # None → NULL（IS NOT NULL 邏輯區分「資料不足」與「計算值」）
-            data.get("annual_return_3y"),
-            data.get("annual_return_5y"),
-            safe_float(data.get("pe_ratio")),
-            safe_float(data.get("expense_ratio")),
-            safe_float(data.get("day_high")),
-            safe_float(data.get("day_low")),
-            safe_float(data.get("fifty_two_week_high")),
-            safe_float(data.get("fifty_two_week_low")),
+            dy_to_store, payout_freq,
+            annual_return_1y,
+            annual_return_3y,
+            annual_return_5y,
+            _positive_or_previous("pe_ratio"),
+            _positive_or_previous("expense_ratio"),
+            day_high,
+            day_low,
+            _positive_or_previous("fifty_two_week_high"),
+            _positive_or_previous("fifty_two_week_low"),
         ))
         conn.commit()
     cache.delete(f"detail:{ticker}")
@@ -1563,12 +1632,18 @@ def save_price_bulk(data_list: list) -> int:
 
     today = datetime.now().date()
 
-    # SQL 與 save_price_only 相同，支援 executemany
+    # INSERT 時攜帶上一交易日的補充欄位；同日 UPDATE 仍只更新報價欄位。
+    # 這可避免快速行情先建立稀疏新列，導致詳情頁的報酬／殖利率／費用率消失。
     _SQL = """
         INSERT INTO etf_daily_data
           (ticker, date, current_price, price_change, price_change_percent,
-           day_high, day_low, volume)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+           day_high, day_low, volume,
+           asset_size, nav, discount_premium,
+           dividend_yield, payout_freq,
+           annual_return_1y, annual_return_3y, annual_return_5y,
+           pe_ratio, expense_ratio, fifty_two_week_high, fifty_two_week_low)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON DUPLICATE KEY UPDATE
           current_price         = IF(VALUES(current_price)>0, VALUES(current_price), current_price),
           price_change          = IF(VALUES(current_price)>0, VALUES(price_change), price_change),
@@ -1612,9 +1687,49 @@ def save_price_bulk(data_list: list) -> int:
     if not rows_to_write:
         return 0   # 全部 dirty，無需任何 DB / cache 操作
 
-    # ── 一次 DB 往返，executemany 批次寫入 ──
+    # ── 一次讀取各 ticker 上一交易日補充欄位，再批次寫入 ──
     with get_db() as (conn, cursor):
-        cursor.executemany(_SQL, rows_to_write)
+        tickers = [row[0] for row in rows_to_write]
+        fmt = ",".join(["%s"] * len(tickers))
+        cursor.execute(
+            f"""
+            SELECT d.asset_size, d.nav, d.discount_premium,
+                   d.dividend_yield, d.payout_freq,
+                   d.annual_return_1y, d.annual_return_3y, d.annual_return_5y,
+                   d.pe_ratio, d.expense_ratio,
+                   d.fifty_two_week_high, d.fifty_two_week_low,
+                   d.ticker
+            FROM etf_daily_data d
+            INNER JOIN (
+                SELECT ticker, MAX(date) AS max_date
+                FROM etf_daily_data
+                WHERE ticker IN ({fmt}) AND date < %s
+                GROUP BY ticker
+            ) p ON d.ticker=p.ticker AND d.date=p.max_date
+            """,
+            tickers + [today],
+        )
+        previous_map = {row["ticker"]: row for row in cursor.fetchall()}
+
+        enriched_rows = []
+        for row in rows_to_write:
+            previous = previous_map.get(row[0], {})
+            enriched_rows.append(row + (
+                previous.get("asset_size"),
+                previous.get("nav"),
+                previous.get("discount_premium"),
+                previous.get("dividend_yield"),
+                previous.get("payout_freq") or "不配息",
+                previous.get("annual_return_1y"),
+                previous.get("annual_return_3y"),
+                previous.get("annual_return_5y"),
+                previous.get("pe_ratio"),
+                previous.get("expense_ratio"),
+                previous.get("fifty_two_week_high"),
+                previous.get("fifty_two_week_low"),
+            ))
+
+        cursor.executemany(_SQL, enriched_rows)
         conn.commit()
 
     # ── 更新 dirty cache（只在 DB 成功後才更新，保證一致性）──

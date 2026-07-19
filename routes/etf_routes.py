@@ -930,12 +930,17 @@ async def get_price_history(ticker: str, period: str = "1y"):
         return None
 
     if not is_intraday and market == "TW":
-        # TW ETF 非即時：DB → CF Proxy Yahoo（快，1 次 API）→ 並行 TWSE（慢，備援）
-        data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
-        if not data:
+        # TW ETF 非即時：完整 DB 可直接使用；部分 DB 必須繼續嘗試網路補齊。
+        # 舊邏輯只要 DB 達最低點數就提前回傳，造成 1Y 圖永遠停在殘缺的 20 筆。
+        db_data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
+        if db_data and not db_data.get("is_partial", False):
+            data = db_data
+        else:
             data = await asyncio.to_thread(_fetch)        # _fetch 內部已走 CF proxy
-        if not data:
-            data = await asyncio.to_thread(_fetch_twse_price_history, ticker, p)
+            if not data:
+                data = await asyncio.to_thread(_fetch_twse_price_history, ticker, p)
+            if not data:
+                data = db_data                            # 網路失敗才退回部分 DB
     elif is_intraday and market == "TW":
         # TW ETF 即時（1D/5D）：嘗試 Yahoo；失敗則用 DB 最近資料回傳「最近交易日」走勢
         data = await asyncio.to_thread(_fetch)
