@@ -633,7 +633,11 @@ def seed_etf_master():
 # ══════════════════════════════════════════════════════════
 
 def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
-    """TWSE / TPEX 即時報價，非交易時段回傳昨收"""
+    """台股即時報價。
+
+    優先使用 TWSE／TPEX MIS；若 Railway 出口 IP 無法連線官方 MIS，
+    改走 Yahoo chart（Cloudflare Worker 優先、直連次之）。
+    """
     for prefix, base_url, referer in [
         ("tse", "https://mis.twse.com.tw/stock/api/getStockInfo.jsp",  "https://mis.twse.com.tw/"),
         ("otc", "https://mis.tpex.org.tw/stock/api/getStockInfo.jsp",  "https://mis.tpex.org.tw/"),
@@ -670,6 +674,79 @@ def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
             }
         except Exception as e:
             logger.debug(f"TW realtime {prefix} {ticker}: {e}")
+    quote = _fetch_tw_yahoo_quote(ticker)
+    if quote:
+        logger.info(f"TW realtime {ticker}: MIS unavailable, using Yahoo fallback")
+    return quote
+
+
+def _fetch_tw_yahoo_quote(ticker: str) -> Optional[dict]:
+    """從 Yahoo chart 取得單一台股 ETF 報價，作為 MIS 的免費備援。
+
+    使用日線而非分鐘線，回應較小且能取得現價、前收、日高低與成交量。
+    結果短暫快取，避免 MIS 故障時每 30 秒對同一代碼重複請求。
+    """
+    cache_key = f"tw_yahoo_quote:{ticker}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    primary = _yahoo_ticker(ticker, "TW")
+    symbols = [primary]
+    alt = f"{ticker}.TWO" if primary.endswith(".TW") else f"{ticker}.TW"
+    if alt not in symbols:
+        symbols.append(alt)
+
+    for symbol in symbols:
+        url = (
+            f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
+            "?range=10d&interval=1d"
+        )
+        try:
+            session = _new_session(f"https://finance.yahoo.com/quote/{symbol}")
+            session.headers["Origin"] = "https://finance.yahoo.com"
+            response = (
+                _cf_yahoo_get(url, timeout=15)
+                or _get_with_retry(session, url, timeout=8, max_attempts=1)
+            )
+            if not response or response.status_code != 200:
+                continue
+
+            results = response.json().get("chart", {}).get("result")
+            if not results:
+                continue
+
+            result = results[0]
+            meta = result.get("meta", {})
+            quote = result.get("indicators", {}).get("quote", [{}])[0]
+            closes = [safe_float(v) for v in (quote.get("close") or []) if v is not None]
+            highs = [safe_float(v) for v in (quote.get("high") or []) if v is not None]
+            lows = [safe_float(v) for v in (quote.get("low") or []) if v is not None]
+            volumes = [safe_float(v) for v in (quote.get("volume") or []) if v is not None]
+
+            price = closes[-1] if closes else safe_float(meta.get("regularMarketPrice"))
+            if price <= 0:
+                continue
+            previous = (
+                closes[-2] if len(closes) >= 2
+                else safe_float(meta.get("chartPreviousClose"), price)
+            )
+            change = round(price - previous, 4) if previous > 0 else 0.0
+            parsed = {
+                "current_price": price,
+                "price_change": change,
+                "price_change_percent": (
+                    round(change / previous * 100, 4) if previous > 0 else 0.0
+                ),
+                "day_high": highs[-1] if highs and highs[-1] > 0 else price,
+                "day_low": lows[-1] if lows and lows[-1] > 0 else price,
+                "volume": int(volumes[-1]) if volumes else 0,
+                "is_after_hours": False,
+            }
+            cache.set(cache_key, parsed, ttl=45)
+            return parsed
+        except Exception as e:
+            logger.debug(f"TW Yahoo fallback {symbol}: {e}")
     return None
 
 
@@ -749,6 +826,28 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
             "https://mis.tpex.org.tw/",
         )
         result.update(otc_result)
+
+    # ─ Pass 3：Yahoo chart 備援 ─
+    # Railway 的出口 IP 可能無法連線 MIS。只針對前兩輪未命中的代碼，
+    # 以有限並發透過 Cloudflare Worker 抓取，避免單一來源故障讓全台股停更。
+    missing = [t for t in tickers if t not in result]
+    if missing:
+        import concurrent.futures
+
+        max_workers = min(6, len(missing))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_to_ticker = {
+                pool.submit(_fetch_tw_yahoo_quote, ticker): ticker
+                for ticker in missing
+            }
+            for future in concurrent.futures.as_completed(future_to_ticker):
+                ticker = future_to_ticker[future]
+                try:
+                    quote = future.result()
+                    if quote:
+                        result[ticker] = quote
+                except Exception as e:
+                    logger.debug(f"TW bulk Yahoo fallback {ticker}: {e}")
 
     logger.debug(
         f"TW bulk realtime: 請求 {len(tickers)} 檔，命中 {len(result)} 檔，"

@@ -135,6 +135,42 @@ class DbCursor:
         self._c.execute(sql, params if params else ())
         self.lastrowid = self._c.lastrowid
 
+    def executemany(self, sql: str, seq_params):
+        """批次執行 SQL，並維持 execute() 的 MySQL／SQLite 相容轉換。
+
+        scheduler 的盤中快速報價會透過 save_price_bulk() 呼叫此方法；
+        若包裝器未代理 executemany，整批報價即使成功抓取也無法寫入資料庫。
+        """
+        rows = list(seq_params)
+        if not rows:
+            return
+
+        if self._is_mysql:
+            if "INSERT OR REPLACE INTO" in sql.upper():
+                sql = sql.replace("INSERT OR REPLACE INTO", "REPLACE INTO", 1)
+            elif "INSERT OR IGNORE INTO" in sql.upper():
+                sql = sql.replace("INSERT OR IGNORE INTO", "INSERT IGNORE INTO", 1)
+        else:
+            sql = sql.replace("%s", "?")
+            up = sql.upper().lstrip()
+            if "ON DUPLICATE KEY UPDATE" in up:
+                idx = up.index("ON DUPLICATE KEY UPDATE")
+                sql = sql[:idx].strip().rstrip(",")
+                sql = sql.replace("INSERT INTO", "INSERT OR REPLACE INTO", 1)
+                n_placeholders = sql.count("?")
+                rows = [
+                    tuple(params[:n_placeholders])
+                    if len(params) > n_placeholders else tuple(params)
+                    for params in rows
+                ]
+            elif up.startswith("INSERT IGNORE INTO"):
+                sql = sql.replace("INSERT IGNORE INTO", "INSERT OR IGNORE INTO", 1)
+            elif up.startswith("REPLACE INTO"):
+                sql = sql.replace("REPLACE INTO", "INSERT OR REPLACE INTO", 1)
+
+        self._c.executemany(sql, rows)
+        self.lastrowid = self._c.lastrowid
+
     def fetchone(self):
         row = self._c.fetchone()
         if row is None:
