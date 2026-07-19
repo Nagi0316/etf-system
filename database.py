@@ -7,6 +7,7 @@ database.py — 資料庫連線管理、初始化、Schema Migration
   SQLite     — 每次建立新連線（WAL 模式支援並發讀取）
 """
 import time, logging, threading
+from datetime import date, datetime, timedelta
 from contextlib import contextmanager
 from typing import Optional
 from config import (
@@ -473,6 +474,8 @@ def init_db():
             except Exception:
                 pass  # 欄位已存在為預期情況，忽略
 
+    _repair_non_trading_daily_rows()
+
     # 效能索引（已存在則忽略）
     indexes = [
         ("idx_user_txs",        "user_transactions", "user_id, ticker, transaction_date"),
@@ -497,3 +500,113 @@ def init_db():
                 pass  # 索引已存在為預期情況，忽略
 
     logger.info(f"✅ 資料庫初始化完成 ({'TiDB/MySQL' if USE_MYSQL else 'SQLite'})")
+
+
+def _repair_non_trading_daily_rows():
+    """修復舊版把休市日當成行情日期寫入的資料。
+
+    行情來源在週末會回傳最近交易日收盤，但舊程式曾以伺服器當天日期落盤。
+    將這些列合併回前一個工作日，保留較完整的報價與補充欄位後刪除錯誤列。
+    """
+    today = date.today()
+    weekday_filter = (
+        "DAYOFWEEK(date) IN (1,7)"
+        if USE_MYSQL else
+        "CAST(strftime('%w', date) AS INTEGER) IN (0,6)"
+    )
+    try:
+        with get_db() as (conn, cursor):
+            cursor.execute(
+                f"SELECT * FROM etf_daily_data "
+                f"WHERE {weekday_filter} OR date > %s ORDER BY date, ticker",
+                (today,),
+            )
+            invalid_rows = cursor.fetchall()
+    except Exception as e:
+        logger.warning(f"休市日行情掃描失敗（略過）: {e}")
+        return
+
+    if not invalid_rows:
+        return
+
+    quote_fields = (
+        "current_price", "price_change", "price_change_percent",
+        "volume", "day_high", "day_low",
+    )
+    positive_fields = (
+        "asset_size", "nav", "pe_ratio", "expense_ratio",
+        "fifty_two_week_high", "fifty_two_week_low",
+    )
+    nullable_fields = (
+        "dividend_yield", "annual_return_1y",
+        "annual_return_3y", "annual_return_5y",
+    )
+    repaired = 0
+
+    with get_db() as (conn, cursor):
+        for bad in invalid_rows:
+            raw_date = bad.get("date")
+            if isinstance(raw_date, str):
+                try:
+                    raw_date = datetime.strptime(raw_date[:10], "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+            if not isinstance(raw_date, date):
+                continue
+
+            target_date = min(raw_date, today)
+            while target_date.weekday() >= 5:
+                target_date -= timedelta(days=1)
+
+            cursor.execute(
+                "SELECT * FROM etf_daily_data WHERE ticker=%s AND date=%s LIMIT 1",
+                (bad["ticker"], target_date),
+            )
+            target = cursor.fetchone()
+
+            if not target:
+                cursor.execute(
+                    "UPDATE etf_daily_data SET date=%s WHERE id=%s",
+                    (target_date, bad["id"]),
+                )
+                repaired += 1
+                continue
+
+            merged = {}
+            bad_has_price = float(bad.get("current_price") or 0) > 0
+            for field in quote_fields:
+                value = bad.get(field)
+                if field in {"current_price", "volume", "day_high", "day_low"}:
+                    merged[field] = value if float(value or 0) > 0 else target.get(field)
+                else:
+                    merged[field] = value if bad_has_price else target.get(field)
+            for field in positive_fields:
+                value = bad.get(field)
+                merged[field] = value if float(value or 0) > 0 else target.get(field)
+            for field in nullable_fields:
+                value = bad.get(field)
+                merged[field] = value if value is not None else target.get(field)
+
+            bad_freq = bad.get("payout_freq")
+            merged["payout_freq"] = (
+                bad_freq
+                if bad_freq and bad_freq != "不配息"
+                else (target.get("payout_freq") or bad_freq or "不配息")
+            )
+            bad_dp = bad.get("discount_premium")
+            merged["discount_premium"] = (
+                bad_dp if bad.get("nav") not in (None, 0) else target.get("discount_premium")
+            )
+
+            set_sql = ", ".join(f"{field}=%s" for field in merged)
+            cursor.execute(
+                f"UPDATE etf_daily_data SET {set_sql} WHERE id=%s",
+                list(merged.values()) + [target["id"]],
+            )
+            cursor.execute("DELETE FROM etf_daily_data WHERE id=%s", (bad["id"],))
+            repaired += 1
+
+        conn.commit()
+
+    if repaired:
+        logger.info(f"✅ 修復 {repaired} 筆休市日／未來日期行情")
