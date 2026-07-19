@@ -723,7 +723,7 @@ def _fetch_twse_month(ticker: str, year: int, month: int) -> list[dict]:
     date_str = f"{year}{month:02d}01"
     # TSE 上市
     for url in [
-        f"https://www.twse.com.tw/rwd/zh/stock/STOCK_DAY?stockNo={ticker}&date={date_str}&response=json",
+        f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?stockNo={ticker}&date={date_str}&response=json",
         f"https://www.tpex.org.tw/web/stock/aftertrading/otc_quotes_no1430/stk_wn1430_result.php"
         f"?l=zh-tw&d={year - 1911}/{month:02d}&stkno={ticker}&output=json",
     ]:

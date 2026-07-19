@@ -27,7 +27,7 @@ from database import get_db
 
 logger = logging.getLogger(__name__)
 
-TWSE_DAY_URL = "https://www.twse.com.tw/rwd/zh/stock/STOCK_DAY"
+TWSE_DAY_URL = "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY"
 _HEADERS = {
     "Accept": "application/json",
     "User-Agent": "Mozilla/5.0 (compatible; ETF-System/2.0)",
