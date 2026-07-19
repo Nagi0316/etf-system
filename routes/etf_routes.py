@@ -732,7 +732,9 @@ async def get_price_history(ticker: str, period: str = "1y"):
     _hist_cache_key = f"hist:{ticker}:{p}"
     _hist_cached = cache.get(_hist_cache_key)
     if _hist_cached:
-        return _hist_cached
+        # 快取只存可序列化資料，不重用已送出過的 Response 物件。
+        # Response 經 GZip/ASGI middleware 處理後再被重用，可能產生空 body 或 502。
+        return safe_json(_hist_cached)
 
     with get_db() as (conn, cursor):
         cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
@@ -822,15 +824,15 @@ async def get_price_history(ticker: str, period: str = "1y"):
             data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
     if not data:
         return safe_json({"status": "error", "message": "無法取得歷史資料"}, 400)
-    response_data = safe_json({
+    response_data = {
         "status":     "success",
         "labels":     data["labels"],
         "prices":     data["prices"],
         "is_intraday": data.get("is_intraday", False),
         "is_partial":  data.get("is_partial", False),
-    })
+    }
     cache.set(_hist_cache_key, response_data, _HIST_CACHE_TTL.get(p, 3600))
-    return response_data
+    return safe_json(response_data)
 
 
 @router.get("/api/etf/history")
