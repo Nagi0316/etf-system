@@ -474,8 +474,6 @@ def init_db():
             except Exception:
                 pass  # 欄位已存在為預期情況，忽略
 
-    _repair_non_trading_daily_rows()
-
     # 效能索引（已存在則忽略）
     indexes = [
         ("idx_user_txs",        "user_transactions", "user_id, ticker, transaction_date"),

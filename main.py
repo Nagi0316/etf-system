@@ -60,6 +60,11 @@ async def _startup_sequence():
     """
     await asyncio.sleep(3)
 
+    # 先在背景修復舊版誤寫的週末／未來日期；不可放在 init_db，
+    # 避免 TiDB 遠端合併阻塞 Railway 啟動健康檢查。
+    from database import _repair_non_trading_daily_rows
+    await asyncio.to_thread(_repair_non_trading_daily_rows)
+
     # Step 1: 批量同步全部 ETF。市場休市時仍會取得最近交易日資料，
     # 且 etf_data 會使用來源交易日，不會把週五收盤價誤標成週末日期。
     from scheduler import _fast_price_tick
