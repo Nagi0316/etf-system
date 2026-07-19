@@ -4,8 +4,8 @@ scheduler.py — APScheduler 排程器
 排程架構（Asia/Taipei 時區）：
 
 【盤中快速】每 30 秒，內部偵測市場是否開盤
-  ▸ 批量抓現價：TW 走 TWSE MIS 批量 API（全部 1-2 次 HTTP）
-               US 走 Yahoo /v7/finance/quote?symbols=（全部 1 次 HTTP）
+  ▸ 批量抓全資料庫現價：TW 走 TWSE MIS 批量 API（全部 1-2 次 HTTP）
+                     US 走 Yahoo /v7/finance/quote?symbols=（全部 1 次 HTTP）
   ▸ dirty check：price / volume 均未變動的 ETF 跳過 DB 寫入
   ▸ executemany 批次寫入 → 1 次 DB 往返（TiDB 150ms RTT × 1）
   ▸ 更新完立即掃描到價提醒（延遲 ≤ 30 秒）
@@ -32,6 +32,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 logger = logging.getLogger(__name__)
 MAIN_LOOP = None
+_FAST_TICK_RUNNING = False
 
 _TZ_TAIPEI = ZoneInfo("Asia/Taipei")
 _TZ_NY     = ZoneInfo("America/New_York")  # DST-aware（夏令 UTC-4 / 冬令 UTC-5）
@@ -84,11 +85,17 @@ def schedule_twse_sync():
 
 
 def schedule_fast_price_tick():
-    """盤中快速報價 tick：只更新現價 + 立即掃描到價提醒。僅開盤時執行。"""
+    """盤中快速報價 tick：同步開盤市場的全部 ETF，並掃描到價提醒。"""
     if not _is_any_market_open():
         return
     if MAIN_LOOP and MAIN_LOOP.is_running():
         asyncio.run_coroutine_threadsafe(_fast_price_tick(), MAIN_LOOP)
+
+
+def schedule_all_price_sync():
+    """收盤／啟動保底：不受市場時段限制，同步所有 ETF 的最新可用報價。"""
+    if MAIN_LOOP and MAIN_LOOP.is_running():
+        asyncio.run_coroutine_threadsafe(_fast_price_tick(force_all_markets=True), MAIN_LOOP)
 
 
 # ──────────────────────────────────────────────
@@ -117,6 +124,24 @@ def _get_active_pool() -> list[dict]:
         logger.warning(f"_get_active_pool 失敗: {e}，回退到靜態清單")
         from etf_data import HOT_ETFS
         return HOT_ETFS
+
+
+def _get_all_etf_pool() -> list[dict]:
+    """取得系統內全部仍有效的 ETF；高頻行情使用批量來源，無須縮限為熱門池。"""
+    from database import get_db
+    try:
+        with get_db() as (conn, cursor):
+            cursor.execute("""
+                SELECT ticker, market
+                FROM etf_master
+                WHERE COALESCE(is_delisted, 0) = 0
+                ORDER BY market, ticker
+            """)
+            rows = cursor.fetchall()
+        return [{"ticker": r["ticker"], "market": r["market"]} for r in rows]
+    except Exception as e:
+        logger.warning(f"_get_all_etf_pool 失敗: {e}，回退到活躍池")
+        return _get_active_pool()
 
 
 # ──────────────────────────────────────────────
@@ -173,18 +198,25 @@ async def _update_active():
 #  只抓現價，不碰 Yahoo 補充資料，降低 Yahoo 429 風險
 # ──────────────────────────────────────────────
 
-async def _fast_price_tick():
+async def _fast_price_tick(force_all_markets: bool = False):
     """盤中高頻：只更新現價（TW 走 TWSE 官方 API，US 走輕量 Yahoo chart）。
     60 檔預估耗時 30-50 秒，遠低於原本的 140-280 秒。
     更新完成後立即掃描到價提醒，實現 2 分鐘以內的 alert 延遲。
     """
+    global _FAST_TICK_RUNNING
+    if _FAST_TICK_RUNNING:
+        logger.debug("⚡ 前一輪批量報價仍在執行，本輪略過")
+        return
+    _FAST_TICK_RUNNING = True
     try:
-      await _fast_price_tick_inner()
+      await _fast_price_tick_inner(force_all_markets=force_all_markets)
     except Exception as e:
         logger.error(f"_fast_price_tick 未預期例外（排程器仍繼續運行）: {e}", exc_info=True)
+    finally:
+        _FAST_TICK_RUNNING = False
 
 
-async def _fast_price_tick_inner():
+async def _fast_price_tick_inner(force_all_markets: bool = False):
     """盤中高頻批量報價更新。
 
     優化架構（vs 舊版逐筆 fetch）：
@@ -196,24 +228,31 @@ async def _fast_price_tick_inner():
     """
     tw_open = _is_tw_market_open()
     us_open = _is_us_market_open()
-    if not (tw_open or us_open):
+    if not force_all_markets and not (tw_open or us_open):
         return
 
     from etf_data import _fetch_tw_realtime_bulk, _fetch_us_realtime_bulk, save_price_bulk
 
-    pool = _get_active_pool()
+    pool = _get_all_etf_pool()
     if not pool:
         return
 
-    tw_pool = [e for e in pool if e["market"] == "TW" and tw_open]
-    us_pool = [e for e in pool if e["market"] == "US" and us_open]
+    tw_pool = [
+        e for e in pool
+        if e["market"] == "TW" and (force_all_markets or tw_open)
+    ]
+    us_pool = [
+        e for e in pool
+        if e["market"] == "US" and (force_all_markets or us_open)
+    ]
 
     if not (tw_pool or us_pool):
         return
 
     logger.debug(
         f"⚡ 批量快速報價 tick：TW={len(tw_pool)} 檔，US={len(us_pool)} 檔"
-        f"（TW={'開' if tw_open else '收'} US={'開' if us_open else '收'}）"
+        f"（TW={'同步' if force_all_markets else ('開' if tw_open else '收')} "
+        f"US={'同步' if force_all_markets else ('開' if us_open else '收')}）"
     )
 
     # ── 並行發起 TW / US 批量請求（兩個 to_thread 同時跑，互不阻塞）──
@@ -585,12 +624,14 @@ def start_scheduler() -> BackgroundScheduler:
     # 每日 08:00 同步 TWSE/TPEX 全市場代碼
     sch.add_job(lambda: schedule_twse_sync(), CronTrigger(hour=8,  minute=0),  max_instances=1)
 
-    # 14:35 台股收盤後完整更新收盤資料
+    # 14:35 台股收盤後：先批量同步全市場價格，再補活躍標的完整資料
+    sch.add_job(lambda: schedule_all_price_sync(), CronTrigger(hour=14, minute=34), max_instances=1)
     sch.add_job(lambda: schedule_update(),    CronTrigger(hour=14, minute=35), max_instances=1)
 
-    # 05:15 美股收盤後完整更新收盤資料
+    # 05:15 美股收盤後：先批量同步全市場價格，再補活躍標的完整資料
     # 美東 16:00 收盤：EDT(UTC-4)=台灣 04:00；EST(UTC-5)=台灣 05:00
     # 取 05:15 確保冬令（EST）也在收盤後執行，夏令延遲 75 分鐘仍可接受
+    sch.add_job(lambda: schedule_all_price_sync(), CronTrigger(hour=5, minute=14), max_instances=1)
     sch.add_job(lambda: schedule_update(),    CronTrigger(hour=5,  minute=15), max_instances=1)
 
     # 每日 03:00 增量補齊 TW ETF 歷史收盤價（只補缺月，冪等）
@@ -617,7 +658,7 @@ def start_scheduler() -> BackgroundScheduler:
     sch.start()
     logger.info(
         "✅ 排程器已啟動\n"
-        "   【盤中快速】每 30 秒批量更新現價 + 掃描到價提醒（開盤期間）\n"
+        "   【盤中快速】每 30 秒批量更新全部 ETF 現價 + 掃描到價提醒（開盤期間）\n"
         "   【盤中完整】每 30 分鐘更新含 dividend/history 補充資料\n"
         "   【台股】09:00–13:30 Asia/Taipei\n"
         "   【美股】09:30–16:00 America/New_York（DST-aware）\n"

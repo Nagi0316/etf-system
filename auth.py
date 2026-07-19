@@ -1,14 +1,15 @@
 """
 auth.py — JWT 驗證、Google OAuth 2.0、bcrypt 密碼處理
 """
-import uuid, logging, httpx
+import hashlib, hmac, uuid, logging, httpx
+import bcrypt
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import urlencode
 
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from config import (
     JWT_SECRET, JWT_ALGORITHM, JWT_EXPIRE_HOURS,
@@ -19,17 +20,36 @@ from database import get_db
 logger = logging.getLogger(__name__)
 
 # ── bcrypt ──
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# passlib 1.7.4 與 bcrypt 5.x 不相容，會讓正常密碼也拋出 72-byte 錯誤。
+# 新密碼先做 SHA-256 再 bcrypt，可支援模型允許的 128 字元，並以標記區分；
+# 舊版標準 bcrypt 與更早期 SHA-256 雜湊仍可驗證。
+_BCRYPT_SHA256_PREFIX = "bcrypt_sha256$"
 
 def hash_password(plain: str) -> str:
-    return pwd_ctx.hash(plain)
+    digest = hashlib.sha256(plain.encode("utf-8")).digest()
+    hashed = bcrypt.hashpw(digest, bcrypt.gensalt(rounds=12)).decode("ascii")
+    return _BCRYPT_SHA256_PREFIX + hashed
 
 def verify_password(plain: str, hashed: str) -> bool:
+    if not hashed:
+        return False
+    if hashed.startswith(_BCRYPT_SHA256_PREFIX):
+        digest = hashlib.sha256(plain.encode("utf-8")).digest()
+        try:
+            return bcrypt.checkpw(
+                digest,
+                hashed[len(_BCRYPT_SHA256_PREFIX):].encode("ascii"),
+            )
+        except ValueError:
+            return False
     # 向下相容舊 SHA-256（如果 hash 是 64-char hex，改用 sha256 比對）
     if len(hashed) == 64 and all(c in "0123456789abcdef" for c in hashed):
-        import hashlib
-        return hashlib.sha256(plain.encode()).hexdigest() == hashed
-    return pwd_ctx.verify(plain, hashed)
+        candidate = hashlib.sha256(plain.encode()).hexdigest()
+        return hmac.compare_digest(candidate, hashed)
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("ascii"))
+    except (ValueError, UnicodeError):
+        return False
 
 
 # ══════════════════════════════════════════════════════════
@@ -167,25 +187,36 @@ def _consume_oauth_state(state: str) -> Optional[str]:
     return val
 
 
+def safe_redirect_path(value: str = "/") -> str:
+    """OAuth 完成後只允許站內絕對路徑，避免 //host 類型的開放重新導向。"""
+    value = (value or "/").strip()
+    if not value.startswith("/") or value.startswith("//"):
+        return "/"
+    if value.split("?", 1)[0] in {"/auth", "/login", "/api/auth/google/login",
+                                  "/api/auth/google/callback"}:
+        return "/"
+    return value
+
+
 def build_google_login_url(redirect_after: str = "/") -> str:
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=503, detail="Google OAuth 未設定")
     state = uuid.uuid4().hex
-    _store_oauth_state(state, redirect_after)
-    params = (
-        f"?client_id={GOOGLE_CLIENT_ID}"
-        f"&redirect_uri={GOOGLE_REDIRECT_URI}"
-        f"&response_type=code"
-        f"&scope=openid%20email%20profile"
-        f"&state={state}"
-        f"&access_type=offline"
-        f"&prompt=select_account"
-    )
-    return GOOGLE_AUTH_URL + params
+    _store_oauth_state(state, safe_redirect_path(redirect_after))
+    params = urlencode({
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "access_type": "offline",
+        "prompt": "select_account",
+    })
+    return f"{GOOGLE_AUTH_URL}?{params}"
 
 
-async def exchange_google_code(code: str, state: str) -> dict:
-    """用 code 換取 Google user info"""
+async def exchange_google_code(code: str, state: str) -> tuple[dict, str]:
+    """用 code 換取 Google user info，並回傳 state 綁定的站內目的頁。"""
     expected_redirect = _consume_oauth_state(state)
     if not expected_redirect:
         raise HTTPException(status_code=400, detail="無效或過期的 OAuth State，請重新登入")
@@ -206,4 +237,4 @@ async def exchange_google_code(code: str, state: str) -> dict:
         })
         if info_resp.status_code != 200:
             raise HTTPException(status_code=400, detail="無法取得 Google 使用者資訊")
-        return info_resp.json()
+        return info_resp.json(), safe_redirect_path(expected_redirect)

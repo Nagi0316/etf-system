@@ -204,7 +204,7 @@ function _renderAllocChart(rows) {
 }
 
 async function checkLogin() {
-  if (!Auth.isLoggedIn()) { window.location.href = '/auth'; return false; }
+  if (!Auth.isLoggedIn()) { Auth.redirectToLogin('/portfolio'); return false; }
   return true;
 }
 

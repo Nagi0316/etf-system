@@ -307,7 +307,7 @@ function switchTab(type) {
 async function addWatchlist(ticker, name, market) {
   if (!Auth.isLoggedIn()) {
     showToast('請先登入', false);
-    setTimeout(() => location.href = '/auth', 1000);
+    setTimeout(() => Auth.redirectToLogin('/etf-list'), 1000);
     return;
   }
   const data = await Auth.fetchJson('/api/watchlist/add', {

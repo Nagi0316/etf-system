@@ -38,16 +38,21 @@ async def lifespan(app: FastAPI):
     sched.set_loop(loop)
     init_db()
     seed_etf_master()
-    sched.start_scheduler()
-    asyncio.create_task(_startup_sequence())
-    yield
-    logger.info("系統關閉")
+    scheduler_instance = sched.start_scheduler()
+    startup_task = asyncio.create_task(_startup_sequence())
+    try:
+        yield
+    finally:
+        startup_task.cancel()
+        await asyncio.gather(startup_task, return_exceptions=True)
+        scheduler_instance.shutdown(wait=False)
+        logger.info("系統關閉")
 
 
 async def _startup_sequence():
     """啟動後：
-    1. 更新活躍標的行情（庫存 + 自選 + 熱門，3 分鐘內完成）
-    2. 歷史補齊在背景運行（不阻塞排行榜顯示）
+    1. 批量同步系統內全部 ETF 的最新可用行情
+    2. 歷史補齊與報酬率重算在背景運行（不阻塞排行榜顯示）
 
     NOTE: sync_tw_etfs 已移至每日 08:00 排程執行（不在啟動時跑）
     ‣ seed_etf_master() 已於啟動時植入 38 檔熱門 ETF，排行榜不依賴 TWSE 同步
@@ -55,14 +60,17 @@ async def _startup_sequence():
     """
     await asyncio.sleep(3)
 
-    # Step 1: 更新活躍 ETF 即時行情（有資料即顯示，不必等全部完成）
-    from scheduler import _update_active
-    logger.info("▶ 開始更新活躍 ETF 行情...")
-    await _update_active()
+    # Step 1: 批量同步全部 ETF。市場休市時仍會取得最近交易日資料，
+    # 且 etf_data 會使用來源交易日，不會把週五收盤價誤標成週末日期。
+    from scheduler import _fast_price_tick
+    logger.info("▶ 開始同步全部 ETF 最新行情...")
+    await _fast_price_tick(force_all_markets=True)
 
-    # Step 3: 背景補齊 TW ETF 歷史收盤價，補齊後立即重算年化報酬率
+    # Step 2: 背景補齊歷史收盤價，補齊後立即重算年化報酬率。
+    # 殖利率、費用率等低頻欄位由 30 分鐘／每日排程與詳情頁靜默補抓負責，
+    # 避免每次部署逐檔呼叫 90 檔外部 API，拖延歷史補齊數分鐘。
     async def _bg_backfill():
-        await asyncio.sleep(30)  # 等 _update_active 完成後再開始，避免同時競爭 DB
+        await asyncio.sleep(5)
         try:
             from services.twse_history import backfill_tw_history
             result = await asyncio.to_thread(backfill_tw_history)

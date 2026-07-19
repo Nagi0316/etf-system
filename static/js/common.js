@@ -63,6 +63,14 @@ const Auth = {
     localStorage.removeItem('access_token');
   },
 
+  loginUrl(path = window.location.pathname + window.location.search) {
+    return '/auth?next=' + encodeURIComponent(path || '/');
+  },
+
+  redirectToLogin(path) {
+    window.location.href = this.loginUrl(path);
+  },
+
   headers(extra = {}) {
     // 不在 JS 中傳送 Bearer token（token 已在 HttpOnly cookie 中自動附帶）
     return { 'Content-Type': 'application/json', ...extra };
@@ -78,7 +86,7 @@ const Auth = {
       const resp = await fetch(url, opts);
       if (resp.status === 401) {
         this.clearToken();
-        window.location.href = '/auth';
+        this.redirectToLogin();
         return null;
       }
       return resp;
@@ -117,7 +125,7 @@ async function loadUserInfo(containerId = 'user-info') {
   if (!container) return;
 
   if (!Auth.isLoggedIn()) {
-    container.innerHTML = `<a href="/auth" class="btn-primary text-sm px-3 py-1.5 rounded-lg">
+    container.innerHTML = `<a href="${Auth.loginUrl()}" class="btn-primary text-sm px-3 py-1.5 rounded-lg">
       <i class="fab fa-google mr-1"></i>登入</a>`;
     return;
   }
@@ -133,7 +141,7 @@ async function loadUserInfo(containerId = 'user-info') {
       // 注意：401 已由 Auth.fetch() 處理（自動 clearToken + 跳轉），
       // 抵達這裡表示是 timeout / 5xx 等暫時性錯誤，不清除 token，
       // 避免 TiDB 冷啟動瞬間把所有使用者踢出去。
-      container.innerHTML = `<a href="/auth" class="btn-primary text-sm px-3 py-1.5 rounded-lg">登入</a>`;
+      container.innerHTML = `<a href="${Auth.loginUrl()}" class="btn-primary text-sm px-3 py-1.5 rounded-lg">登入</a>`;
       return;
     }
 

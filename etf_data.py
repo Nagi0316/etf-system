@@ -19,6 +19,25 @@ from utils import safe_float
 
 logger = logging.getLogger(__name__)
 
+
+def _quote_date(value=None) -> date:
+    """將資料源的交易時間轉成交易日；無有效來源時間才退回今天。"""
+    if isinstance(value, date):
+        return value
+    if isinstance(value, (int, float)) and value > 0:
+        try:
+            return datetime.fromtimestamp(value).date()
+        except (OSError, OverflowError, ValueError):
+            pass
+    if isinstance(value, str):
+        raw = value.strip().replace("/", "-")
+        for fmt in ("%Y-%m-%d", "%Y%m%d"):
+            try:
+                return datetime.strptime(raw, fmt).date()
+            except ValueError:
+                continue
+    return date.today()
+
 # ── UA 池：模擬多種真實瀏覽器，避免固定特徵被封鎖 ──
 _UA_POOL = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -671,6 +690,7 @@ def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
                 "day_high": high, "day_low": low,
                 "volume": int(vol_k * 1000),
                 "is_after_hours": is_after_hours,
+                "quote_date": _quote_date(d.get("d")),
             }
             # 部分雲端出口取得的 MIS 盤後回應只有現價／昨收，日高低與成交量為空。
             # 以 Yahoo 補齊缺失欄位，避免新日期列把完整詳情變成 0。
@@ -726,6 +746,7 @@ def _fetch_tw_yahoo_quote(ticker: str) -> Optional[dict]:
             result = results[0]
             meta = result.get("meta", {})
             quote = result.get("indicators", {}).get("quote", [{}])[0]
+            timestamps = result.get("timestamp") or []
             closes = [safe_float(v) for v in (quote.get("close") or []) if v is not None]
             highs = [safe_float(v) for v in (quote.get("high") or []) if v is not None]
             lows = [safe_float(v) for v in (quote.get("low") or []) if v is not None]
@@ -749,6 +770,9 @@ def _fetch_tw_yahoo_quote(ticker: str) -> Optional[dict]:
                 "day_low": lows[-1] if lows and lows[-1] > 0 else price,
                 "volume": int(volumes[-1]) if volumes else 0,
                 "is_after_hours": False,
+                "quote_date": _quote_date(
+                    timestamps[-1] if timestamps else meta.get("regularMarketTime")
+                ),
             }
             cache.set(cache_key, parsed, ttl=45)
             return parsed
@@ -812,6 +836,7 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
                         "day_low":              low,
                         "volume":               int(vol_k * 1000),
                         "is_after_hours":       is_after_hours,
+                        "quote_date":            _quote_date(d.get("d")),
                     }
             except Exception as e:
                 logger.debug(f"TW bulk realtime {prefix}: {e}")
@@ -846,10 +871,76 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
             or result[t].get("day_low", 0) <= 0
         )
     ]
+
+    # 先用 Yahoo v7 批量補齊（每檔同時帶 .TW / .TWO，由回應決定有效市場）。
+    # 這條路徑在 Railway 可走選配代理，也可直連；成功時僅需 1-2 次請求，
+    # 避免 MIS 暫時不可用時退化成數十檔逐筆請求。
+    if fallback_targets:
+        symbol_to_ticker = {}
+        yahoo_symbols = []
+        for ticker in fallback_targets:
+            for symbol in (f"{ticker}.TW", f"{ticker}.TWO"):
+                yahoo_symbols.append(symbol)
+                symbol_to_ticker[symbol] = ticker
+
+        for i in range(0, len(yahoo_symbols), 120):
+            chunk = yahoo_symbols[i:i + 120]
+            url = (
+                "https://query2.finance.yahoo.com/v7/finance/quote"
+                f"?symbols={','.join(chunk)}"
+                "&fields=regularMarketPrice,regularMarketChange,"
+                "regularMarketChangePercent,regularMarketDayHigh,"
+                "regularMarketDayLow,regularMarketVolume,regularMarketTime"
+            )
+            try:
+                response = (
+                    _cf_yahoo_get(url, timeout=15)
+                    or _get_with_retry(
+                        _new_session("https://finance.yahoo.com/markets/etfs/"),
+                        url, timeout=8, max_attempts=1,
+                    )
+                )
+                if not response or response.status_code != 200:
+                    continue
+                for item in response.json().get("quoteResponse", {}).get("result", []):
+                    ticker = symbol_to_ticker.get(item.get("symbol", ""))
+                    price = safe_float(item.get("regularMarketPrice", 0))
+                    if not ticker or price <= 0:
+                        continue
+                    candidate = {
+                        "current_price": price,
+                        "price_change": round(safe_float(item.get("regularMarketChange")), 4),
+                        "price_change_percent": round(
+                            safe_float(item.get("regularMarketChangePercent")), 4
+                        ),
+                        "day_high": safe_float(item.get("regularMarketDayHigh")) or price,
+                        "day_low": safe_float(item.get("regularMarketDayLow")) or price,
+                        "volume": int(safe_float(item.get("regularMarketVolume"))),
+                        "is_after_hours": False,
+                        "quote_date": _quote_date(item.get("regularMarketTime")),
+                    }
+                    # 第一個有效市場即足夠；避免無效替代代碼覆蓋正式市場。
+                    result.setdefault(ticker, candidate)
+                    if (result[ticker].get("volume", 0) <= 0 or
+                            result[ticker].get("day_high", 0) <= 0):
+                        result[ticker] = candidate
+            except Exception as e:
+                logger.debug(f"TW Yahoo bulk fallback chunk {i}: {e}")
+
+        fallback_targets = [
+            t for t in fallback_targets
+            if (
+                t not in result
+                or result[t].get("volume", 0) <= 0
+                or result[t].get("day_high", 0) <= 0
+                or result[t].get("day_low", 0) <= 0
+            )
+        ]
+
     if fallback_targets:
         import concurrent.futures
 
-        max_workers = min(6, len(fallback_targets))
+        max_workers = min(12, len(fallback_targets))
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
             future_to_ticker = {
                 pool.submit(_fetch_tw_yahoo_quote, ticker): ticker
@@ -1125,6 +1216,7 @@ def _fetch_us_quote(ticker: str) -> Optional[dict]:
             return None
         meta    = result[0].get("meta", {})
         q       = result[0].get("indicators", {}).get("quote", [{}])[0]
+        timestamps = result[0].get("timestamp") or []
         closes  = [c for c in (q.get("close")  or []) if c is not None]
         highs   = [h for h in (q.get("high")   or []) if h is not None]
         lows    = [l for l in (q.get("low")    or []) if l is not None]
@@ -1140,6 +1232,9 @@ def _fetch_us_quote(ticker: str) -> Optional[dict]:
             "day_high": safe_float(highs[-1]) if highs else price,
             "day_low":  safe_float(lows[-1])  if lows  else price,
             "volume": int(volumes[-1]) if volumes else int(safe_float(meta.get("regularMarketVolume", 0))),
+            "quote_date": _quote_date(
+                timestamps[-1] if timestamps else meta.get("regularMarketTime")
+            ),
         }
     except Exception as e:
         logger.debug(f"US quote {ticker}: {e}")
@@ -1167,7 +1262,8 @@ def _fetch_us_realtime_bulk(tickers: list) -> dict:
                    f"?symbols={symbols}&fields=regularMarketPrice,"
                    f"regularMarketChange,regularMarketChangePercent,"
                    f"regularMarketDayHigh,regularMarketDayLow,"
-                   f"regularMarketVolume,regularMarketPreviousClose")
+                   f"regularMarketVolume,regularMarketPreviousClose,"
+                   f"regularMarketTime")
         referer = "https://finance.yahoo.com/markets/etfs/most-active/"
         try:
             s = _new_session(referer)
@@ -1194,6 +1290,7 @@ def _fetch_us_realtime_bulk(tickers: list) -> dict:
                     "day_high":  safe_float(item.get("regularMarketDayHigh",  price)),
                     "day_low":   safe_float(item.get("regularMarketDayLow",   price)),
                     "volume":    int(safe_float(item.get("regularMarketVolume", 0))),
+                    "quote_date": _quote_date(item.get("regularMarketTime")),
                 }
         except Exception as e:
             logger.debug(f"US bulk realtime chunk {i}: {e}")
@@ -1282,6 +1379,7 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
         'annual_return_1y': ann_1y,
         'annual_return_3y': ann_3y,
         'annual_return_5y': ann_5y,
+        'quote_date': quote.get("quote_date"),
     }
 
 
@@ -1300,7 +1398,8 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
                          "price_change_percent": round(chg/prev*100, 4) if prev > 0 else 0,
                          "day_high": float(df['High'].iloc[-1]),
                          "day_low":  float(df['Low'].iloc[-1]),
-                         "volume":   int(df['Volume'].iloc[-1])}
+                         "volume":   int(df['Volume'].iloc[-1]),
+                         "quote_date": _quote_date(df.index[-1].date())}
         except Exception as e:
             logger.debug(f"US yf fallback {ticker}: {e}")
     if not quote:
@@ -1393,6 +1492,7 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         'annual_return_1y': ann_1y,  # None = 資料不足（存 DB NULL，前端顯示「—」）
         'annual_return_3y': ann_3y,
         'annual_return_5y': ann_5y,
+        'quote_date': quote.get("quote_date"),
     }
 
 
@@ -1401,7 +1501,7 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
 # ══════════════════════════════════════════════════════════
 
 def save_etf_data(data: dict):
-    today  = datetime.now().date()
+    today  = _quote_date(data.get("quote_date"))
     ticker  = data.get("ticker", "")
     cp      = safe_float(data.get("current_price"))
     nav_raw = data.get("nav")
@@ -1563,6 +1663,7 @@ def fetch_price_only(ticker: str, market: str) -> Optional[dict]:
             "day_high": quote["day_high"],
             "day_low": quote["day_low"],
             "volume": quote["volume"],
+            "quote_date": quote.get("quote_date"),
         }
     else:
         quote = _fetch_us_quote(ticker)
@@ -1578,7 +1679,7 @@ def save_price_only(data: dict):
     """只更新報價欄位（price/change/high/low/volume），保留 DB 中已有的補充資料。
     與 save_etf_data 的差異：不碰 dividend_yield、expense_ratio、annual_return 等欄位。
     """
-    today  = datetime.now().date()
+    today  = _quote_date(data.get("quote_date"))
     ticker = data.get("ticker", "")
     cp     = safe_float(data.get("current_price"))
 
@@ -1630,8 +1731,6 @@ def save_price_bulk(data_list: list) -> int:
     if not data_list:
         return 0
 
-    today = datetime.now().date()
-
     # INSERT 時攜帶上一交易日的補充欄位；同日 UPDATE 仍只更新報價欄位。
     # 這可避免快速行情先建立稀疏新列，導致詳情頁的報酬／殖利率／費用率消失。
     _SQL = """
@@ -1654,13 +1753,14 @@ def save_price_bulk(data_list: list) -> int:
     """
 
     rows_to_write: list  = []   # executemany 的參數列表
-    dirty_updates: list  = []   # 寫入成功後更新 dirty cache 的 (ticker, price, volume)
+    dirty_updates: list  = []   # 寫入成功後更新 dirty cache 的 (ticker, price, volume, date)
     tickers_written: set = set()
 
     for data in data_list:
         ticker = data.get("ticker", "")
         cp     = safe_float(data.get("current_price"))
         vol    = int(safe_float(data.get("volume", 0)))
+        quote_day = _quote_date(data.get("quote_date"))
 
         if not ticker or cp <= 0:
             continue
@@ -1669,19 +1769,21 @@ def save_price_bulk(data_list: list) -> int:
         # 用 abs 容差 0.001（低於 TW/US ETF 最小 tick），避免浮點誤差誤判
         last = _price_dirty_cache.get(ticker)
         if last is not None:
-            last_price, last_vol = last
-            if abs(last_price - cp) < 0.001 and last_vol == vol:
+            last_price, last_vol = last[:2]
+            last_day = last[2] if len(last) >= 3 else None
+            if (last_day == quote_day and
+                    abs(last_price - cp) < 0.001 and last_vol == vol):
                 continue   # 未變動，略過 DB 寫入與快取更新
 
         rows_to_write.append((
-            ticker, today, cp,
+            ticker, quote_day, cp,
             safe_float(data.get("price_change")),
             safe_float(data.get("price_change_percent")),
             safe_float(data.get("day_high", cp)),
             safe_float(data.get("day_low",  cp)),
             vol,
         ))
-        dirty_updates.append((ticker, cp, vol))
+        dirty_updates.append((ticker, cp, vol, quote_day))
         tickers_written.add(ticker)
 
     if not rows_to_write:
@@ -1703,11 +1805,11 @@ def save_price_bulk(data_list: list) -> int:
             INNER JOIN (
                 SELECT ticker, MAX(date) AS max_date
                 FROM etf_daily_data
-                WHERE ticker IN ({fmt}) AND date < %s
+                WHERE ticker IN ({fmt})
                 GROUP BY ticker
             ) p ON d.ticker=p.ticker AND d.date=p.max_date
             """,
-            tickers + [today],
+            tickers,
         )
         previous_map = {row["ticker"]: row for row in cursor.fetchall()}
 
@@ -1733,8 +1835,8 @@ def save_price_bulk(data_list: list) -> int:
         conn.commit()
 
     # ── 更新 dirty cache（只在 DB 成功後才更新，保證一致性）──
-    for ticker, cp, vol in dirty_updates:
-        _price_dirty_cache[ticker] = (cp, vol)
+    for ticker, cp, vol, quote_day in dirty_updates:
+        _price_dirty_cache[ticker] = (cp, vol, quote_day)
 
     # ── 清除 detail 快取（各 ticker 獨立 key）──
     for ticker in tickers_written:

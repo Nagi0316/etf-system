@@ -58,10 +58,6 @@
             class="px-3 py-2 rounded-lg text-sm font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">
             <i class="fas fa-star mr-1.5"></i>自選
           </button>
-          <button onclick="forceRefresh()" id="refresh-btn" title="強制重新計算年化報酬率"
-            class="px-3 py-2 rounded-lg text-sm font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 hover:text-indigo-600 transition-all">
-            <i class="fas fa-sync-alt"></i>
-          </button>
           <button onclick="openTradeModal()" class="btn-primary text-sm py-2 px-3">
             <i class="fas fa-exchange-alt mr-1.5"></i>交易
           </button>
@@ -286,11 +282,8 @@ async function loadETFDetail() {
       result = { status: 'error', message: '連線逾時，請稍後重試' };
     }
     if (result.status !== 'success') {
-      document.getElementById('loading-msg').textContent = '正在即時抓取數據，請稍候…';
-      // fire-and-forget：觸發背景更新，不等待結果
-      _tFetch(`/api/etf/update/${currentTicker}`, { method: 'POST' }, 5000).catch(() => {});
-      // 等 3 秒後重查（給 update 時間完成）
-      await new Promise(r => setTimeout(r, 3000));
+      document.getElementById('loading-msg').textContent = '資料同步中，正在自動重試…';
+      await new Promise(r => setTimeout(r, 2000));
       try {
         const res2 = await _tFetch(`/api/etf/detail/${currentTicker}`, {}, 12000);
         result = await res2.json();
@@ -310,19 +303,6 @@ async function loadETFDetail() {
         loadEtfScore(currentTicker),
       ]);
 
-      const d = etfData;
-      const missingReturns = d.annual_return_1y == null && d.annual_return_3y == null && d.annual_return_5y == null;
-      if (missingReturns) {
-        fetch(`/api/etf/update/${currentTicker}`, { method: 'POST' })
-          .then(r => r.json())
-          .then(upd => {
-            if (upd.status === 'success' && upd.data) {
-              etfData = { ...etfData, ...upd.data };
-              renderData();
-            }
-          })
-          .catch(() => {});
-      }
     } else throw new Error(result.message || '無法載入資料');
   } catch(err) {
     document.getElementById('loading').classList.add('hidden');
@@ -410,20 +390,25 @@ function renderData() {
   const yld = parseFloat(d.dividend_yield) || 0;
   document.getElementById('dividend-yield').textContent = yld > 0 ? yld.toFixed(2)+'%' : '-';
 
-  // 第一次渲染完成 → 顯示「資料日期」（非本地渲染時間）+ 過期警告 + 啟動盤中更新
+  // 顯示資料來源的實際交易日，並啟動頁面自動同步。
   const updEl = document.getElementById('last-updated');
   if (updEl) {
     const dataDate = d.data_date ? String(d.data_date).slice(0, 10) : null;
     if (dataDate) {
-      const msAgo  = Date.now() - new Date(dataDate).getTime();
-      const daysAgo = Math.floor(msAgo / 86400000);
-      if (daysAgo <= 1) {
-        // 1 天以內：正常顯示日期
-        updEl.textContent = `資料日期 ${dataDate}`;
+      const sourceDay = new Date(`${dataDate}T00:00:00`);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      let tradingDaysAgo = 0;
+      for (let d = new Date(sourceDay); d < today; d.setDate(d.getDate() + 1)) {
+        const next = new Date(d); next.setDate(next.getDate() + 1);
+        if (next >= today) break;
+        if (next.getDay() !== 0 && next.getDay() !== 6) tradingDaysAgo++;
+      }
+      if (tradingDaysAgo <= 1) {
+        updEl.textContent = `資料交易日 ${dataDate}`;
         updEl.className = 'text-[10px] text-slate-400 dark:text-slate-500 mt-1';
       } else {
-        // 超過 1 天：以橘色警告標記，提示使用者點「刷新」
-        updEl.textContent = `⚠ 資料日期 ${dataDate}（${daysAgo} 天前）`;
+        updEl.textContent = `⚠ 資料交易日 ${dataDate}（同步服務正在補齊）`;
         updEl.className = 'text-[10px] text-amber-500 dark:text-amber-400 mt-1 font-medium';
       }
       updEl.classList.remove('hidden');
@@ -513,7 +498,7 @@ function showNoChart(period) {
        <span class="text-xs mt-1 block">盤中資料需 Yahoo Finance 連線，有時會受到網路延遲影響</span>`
     : `<i class="fas fa-database text-slate-300 block mb-2 text-2xl"></i>
        <span class="block">此期間暫無歷史價格資料</span>
-       <span class="text-xs mt-1 block">可點右上角 <i class="fas fa-sync-alt"></i> 刷新後重試</span>`;
+       <span class="text-xs mt-1 block">系統會在背景自動補齊，無需手動更新</span>`;
   msgEl.classList.remove('hidden');
 }
 
@@ -583,35 +568,8 @@ function updateWatchlistBtn() {
   }
 }
 
-async function forceRefresh() {
-  if (!Auth.isLoggedIn()) { showToast('請先登入', false); return; }
-  const btn = document.getElementById('refresh-btn');
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i>';
-  const ticker = etfData?.ticker;
-  if (!ticker) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt"></i>'; return; }
-
-  const data = await Auth.fetchJson(`/api/etf/force-refresh/${ticker}`, { method: 'POST' });
-  if (data?.status === 'success' || data?.status === 'processing') {
-    const reloadDelay = data.status === 'processing' ? 10000 : 1500;
-    const msg = data.status === 'processing'
-      ? `⏳ ${ticker} 計算中，${reloadDelay/1000} 秒後自動重新整理…`
-      : `✅ ${ticker} 重算完成`;
-    showToast(msg);
-    setTimeout(() => location.reload(), reloadDelay);
-  } else {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fas fa-sync-alt"></i>';
-    // 僅在「60 秒冷卻」時提示使用者，其餘失敗靜默處理（沒刷到就算了）
-    if (data?.message && data.message.includes('60 秒')) {
-      showToast(data.message, false);
-    }
-    // 其他錯誤（網路、伺服器）靜默還原按鈕即可，不顯示恐怖紅色提示
-  }
-}
-
 async function toggleWatchlist() {
-  if (!Auth.isLoggedIn()) { showToast('請先登入', false); setTimeout(()=>location.href='/auth',1000); return; }
+  if (!Auth.isLoggedIn()) { showToast('請先登入', false); setTimeout(()=>Auth.redirectToLogin(),1000); return; }
   const data = inWatchlist
     ? await Auth.fetchJson(`/api/watchlist/remove/${etfData.ticker}`, { method: 'DELETE' })
     : await Auth.fetchJson('/api/watchlist/add', { method: 'POST', body: JSON.stringify({ ticker: etfData.ticker }) });
@@ -622,7 +580,7 @@ async function toggleWatchlist() {
 let _tradeIdemKey = null;  // modal 開啟時生成，確保每筆交易唯一
 
 function openTradeModal() {
-  if (!Auth.isLoggedIn()) { showToast('請先登入', false); setTimeout(()=>location.href='/auth',1000); return; }
+  if (!Auth.isLoggedIn()) { showToast('請先登入', false); setTimeout(()=>Auth.redirectToLogin(),1000); return; }
   // 每次開 modal 生成新的冪等鍵（UUID v4 簡易實作）
   _tradeIdemKey = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
     const r = Math.random() * 16 | 0;
@@ -672,24 +630,8 @@ async function saveTrade(btn) {
 document.getElementById('tradeModal').addEventListener('click', e => { if (e.target === e.currentTarget) closeTradeModal(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTradeModal(); });
 
-// ── 即時自動更新（盤中每 60 秒更新現價）──────────────────────
+// ── 頁面自動同步（每 60 秒讀取伺服器最新資料）────────────────
 let _liveTimer = null;
-
-function _isTradingHours(market) {
-  const now = new Date();
-  const day = now.getDay(); // 0=Sun, 6=Sat
-  if (day === 0 || day === 6) return false;
-
-  // 台灣時間 (UTC+8)
-  const utc8Hour   = ((now.getUTCHours() + 8) % 24) + now.getUTCMinutes() / 60;
-  if (market === 'TW') {
-    // 台股 09:00–13:30 UTC+8
-    return utc8Hour >= 9 && utc8Hour < 13.5;
-  } else {
-    // 美股 21:30–次日04:00 UTC+8 (夏令) — 寬鬆判斷：20:00–05:00
-    return utc8Hour >= 20 || utc8Hour < 5;
-  }
-}
 
 async function _liveRefreshPrice() {
   if (!currentTicker || !etfData) return;
@@ -726,19 +668,21 @@ async function _liveRefreshPrice() {
         document.getElementById('volume').textContent = vol >= 1e6 ? (vol/1e6).toFixed(2)+'M' : vol.toLocaleString();
       }
     }
-    // 盤中更新時間顯示在 live-badge 旁，不覆蓋 #last-updated（那裡是 DB 資料日期指示器）
+    // 顯示頁面最近同步時間；交易日仍以伺服器資料來源日期為準。
     const nowStr = new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
     const liveBadge = document.getElementById('live-badge');
-    if (liveBadge) liveBadge.textContent = `● LIVE · ${nowStr}`;
+    if (liveBadge) liveBadge.textContent = `● 已同步 ${nowStr}`;
   } catch(e) { /* silent fail — 不因網路問題中斷頁面 */ }
 }
 
 function _startLiveRefresh() {
   if (!etfData) return;
-  if (_isTradingHours(etfData.market)) {
-    document.getElementById('live-badge')?.classList.remove('hidden');
-    _liveTimer = setInterval(_liveRefreshPrice, 60000);
+  const badge = document.getElementById('live-badge');
+  if (badge) {
+    badge.textContent = '● 自動同步';
+    badge.classList.remove('hidden');
   }
+  _liveTimer = setInterval(_liveRefreshPrice, 60000);
 }
 
 document.addEventListener('DOMContentLoaded', loadETFDetail);

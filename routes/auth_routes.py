@@ -10,7 +10,8 @@ from fastapi.templating import Jinja2Templates
 from auth import (
     hash_password, verify_password, create_access_token,
     get_current_user, revoke_token,
-    build_google_login_url, exchange_google_code, GOOGLE_CLIENT_ID
+    build_google_login_url, exchange_google_code, safe_redirect_path,
+    GOOGLE_CLIENT_ID
 )
 from models import LoginIn, RegisterIn, ChangePasswordIn
 from database import get_db
@@ -73,9 +74,12 @@ def _clear_auth_cookies(response):
 @router.get("/auth", response_class=HTMLResponse)
 @router.get("/login", response_class=HTMLResponse)
 async def auth_page(request: Request):
+    next_path = safe_redirect_path(request.query_params.get("next", "/"))
     return templates.TemplateResponse("auth.html", {
         "request": request,
         "google_enabled": bool(GOOGLE_CLIENT_ID),
+        "dev_auth_enabled": os.getenv("ENV", "production") == "development",
+        "next_path": next_path,
     })
 
 
@@ -94,7 +98,7 @@ async def google_callback(code: str = "", state: str = "", error: str = ""):
     if error or not code:
         return RedirectResponse(f"/auth?error={error or 'cancelled'}")
     try:
-        user_info = await exchange_google_code(code, state)
+        user_info, redirect_after = await exchange_google_code(code, state)
         google_id  = user_info.get("sub", "")
         email      = user_info.get("email", "").lower()
         name       = user_info.get("name", email)
@@ -124,7 +128,7 @@ async def google_callback(code: str = "", state: str = "", error: str = ""):
                 conn.commit()
 
         token, _ = create_access_token(uid, email)
-        resp = RedirectResponse("/", status_code=302)
+        resp = RedirectResponse(redirect_after, status_code=302)
         _set_auth_cookies(resp, token)
         return resp
 

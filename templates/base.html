@@ -7,14 +7,14 @@
   <!-- 防止深色模式 FOUC：必須在所有 CSS 之前執行 -->
   <script>(function(){var t=localStorage.getItem('theme');var p=window.matchMedia('(prefers-color-scheme:dark)').matches;if(t==='dark'||(t===null&&p))document.documentElement.classList.add('dark');}());</script>
   <!-- Tailwind：生產版本 37 KB（替代 3 MB+ Play CDN），消除 render-blocking JS -->
-  <link rel="stylesheet" href="/static/css/tailwind.min.css">
+  <link rel="stylesheet" href="/static/css/tailwind.min.css?v=20260719">
   <!-- FontAwesome：preload + onload 非阻塞加載，消除 render-blocking -->
   <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
         as="style" onload="this.rel='stylesheet'">
   <noscript>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
   </noscript>
-  <link href="/static/css/main.css" rel="stylesheet">
+  <link href="/static/css/main.css?v=20260719" rel="stylesheet">
   {% block extra_head %}{% endblock %}
 </head>
 <body class="bg-slate-50 dark:bg-slate-900 pb-mobile">
@@ -78,7 +78,7 @@
   <a href="/portfolio" data-path="/portfolio"><i class="fas fa-briefcase"></i>庫存</a>
 </nav>
 
-<script src="/static/js/common.js"></script>
+<script src="/static/js/common.js?v=20260719-2"></script>
 <script>
 // ── 初始化 ──
 document.addEventListener('DOMContentLoaded', () => {

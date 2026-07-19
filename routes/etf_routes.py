@@ -4,7 +4,8 @@ routes/etf_routes.py — ETF 清單、詳情、搜尋、排行榜、歷史
 import asyncio, logging, time
 from datetime import datetime, timedelta, timezone, date
 from typing import Optional
-from fastapi import APIRouter, Request, Query, BackgroundTasks
+from zoneinfo import ZoneInfo
+from fastapi import APIRouter, Request, Query
 from fastapi.templating import Jinja2Templates
 
 import yfinance as yf
@@ -388,151 +389,6 @@ async def dynamic_search(request: Request, q: str = Query(..., min_length=1)):
     return await search_etf(request, q)
 
 
-# ── 強制重算單檔（登入即可用，用於驗證修正 / 手動刷新）──
-
-@router.post("/api/etf/force-refresh/{ticker}")
-async def force_refresh_etf(ticker: str, request: Request, background_tasks: BackgroundTasks):
-    """強制重新計算單一 ETF 年化報酬 + 52 週高低，立即返回、背景執行（不再超時）。
-    TW ETF：並行抓 TWSE 歷史收盤 → 計算報酬率 → 更新 DB
-    US ETF：Yahoo Finance → 完整更新
-    """
-    from auth import get_current_user
-    from fastapi import HTTPException
-    try:
-        # credentials=None → 略過 Bearer header，直接走 Cookie 驗證
-        # 若傳入 Depends(_bearer) 物件（預設值）會因無 .scheme 屬性而 AttributeError
-        get_current_user(request, credentials=None)
-    except HTTPException:
-        return safe_json({"status": "error", "message": "請先登入"}, 401)
-
-    ticker = ticker.upper().strip()
-    rate_key = f"force_refresh:{ticker}"
-    if cache.get(rate_key):
-        return safe_json({"status": "error", "message": f"{ticker} 60 秒內已刷新過，請稍候"}, 429)
-
-    market = "TW" if ticker[:4].isdigit() else "US"
-    current_price = 0.0
-    try:
-        # etf_master 只有 market 欄，current_price 在 etf_daily_data
-        with get_db() as (conn, cursor):
-            cursor.execute("SELECT market FROM etf_master WHERE ticker=%s LIMIT 1", (ticker,))
-            row = cursor.fetchone()
-            if row:
-                market = row["market"]
-            # 從 etf_daily_data 取最新現價（etf_master 沒有此欄）
-            cursor.execute(
-                "SELECT current_price FROM etf_daily_data "
-                "WHERE ticker=%s AND current_price>0 ORDER BY date DESC LIMIT 1",
-                (ticker,),
-            )
-            prow = cursor.fetchone()
-            if prow:
-                current_price = float(prow["current_price"] or 0)
-    except Exception:
-        pass
-
-    cache.set(rate_key, 1, 60)   # 立即上鎖，防止重複觸發
-
-    if market == "TW":
-        def _bg_tw():
-            """背景任務：並行抓 TWSE 歷史收盤 → 計算年化報酬 + 52W H/L → 更新 etf_daily_data"""
-            import concurrent.futures
-            from dateutil.relativedelta import relativedelta as _rd
-            from etf_data import _fetch_tw_realtime_perfect, _fetch_52week_hl_db
-
-            try:
-                # 1. 取最新現價（TWSE mis，~1s）
-                realtime = _fetch_tw_realtime_perfect(ticker)
-                price = realtime.get("current_price", 0) if realtime else current_price
-                if not price or price <= 0:
-                    price = current_price
-                if not price or price <= 0:
-                    logger.warning(f"force_refresh {ticker}: 無法取得現價，放棄")
-                    return
-
-                # 2. 並行抓 1Y / 3Y / 5Y 歷史收盤（各抓目標月份最後一筆）
-                def _close_n_months_ago(n: int) -> Optional[float]:
-                    target = date.today() - _rd(months=n)
-                    rows = _fetch_twse_month(ticker, target.year, target.month)
-                    return rows[-1]["close"] if rows else None
-
-                with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-                    f1y = pool.submit(_close_n_months_ago, 12)
-                    f3y = pool.submit(_close_n_months_ago, 36)
-                    f5y = pool.submit(_close_n_months_ago, 60)
-                    p1y = f1y.result(timeout=25)
-                    p3y = f3y.result(timeout=25)
-                    p5y = f5y.result(timeout=25)
-
-                # 3. 計算年化報酬
-                ann_1y = round((price / p1y - 1) * 100, 2)              if p1y and p1y > 0 else None
-                ann_3y = round(((price / p3y) ** (1 / 3) - 1) * 100, 2) if p3y and p3y > 0 else None
-                ann_5y = round(((price / p5y) ** (1 / 5) - 1) * 100, 2) if p5y and p5y > 0 else None
-
-                # 4. 52 週高低（從 DB 歷史 current_price 計算）
-                wk52_h, wk52_l = _fetch_52week_hl_db(ticker, price)
-
-                # 5. 寫入 etf_daily_data（正確的表）
-                today_str = date.today().isoformat()
-                with get_db() as (conn, cursor):
-                    # 先確保今天有一筆基礎記錄
-                    cursor.execute(
-                        "INSERT INTO etf_daily_data (ticker, date, current_price, "
-                        "price_change, price_change_percent) "
-                        "VALUES (%s, %s, %s, %s, %s) "
-                        "ON DUPLICATE KEY UPDATE "
-                        "current_price=IF(VALUES(current_price)>0,VALUES(current_price),current_price)",
-                        (ticker, today_str, price,
-                         realtime.get("price_change", 0) if realtime else 0,
-                         realtime.get("price_change_percent", 0) if realtime else 0),
-                    )
-                    # 更新年化報酬與 52W H/L
-                    set_parts, vals = [], []
-                    if ann_1y is not None:
-                        set_parts.append("annual_return_1y=%s"); vals.append(ann_1y)
-                    if ann_3y is not None:
-                        set_parts.append("annual_return_3y=%s"); vals.append(ann_3y)
-                    if ann_5y is not None:
-                        set_parts.append("annual_return_5y=%s"); vals.append(ann_5y)
-                    if wk52_h > 0:
-                        set_parts.append("fifty_two_week_high=%s"); vals.append(wk52_h)
-                    if wk52_l > 0:
-                        set_parts.append("fifty_two_week_low=%s");  vals.append(wk52_l)
-                    if set_parts:
-                        cursor.execute(
-                            f"UPDATE etf_daily_data SET {', '.join(set_parts)} "
-                            f"WHERE ticker=%s AND date=%s",
-                            vals + [ticker, today_str],
-                        )
-                    conn.commit()
-
-                cache.delete(f"detail:{ticker}")
-                cache.delete_prefix("search:")
-                cache.delete_prefix("rank:")
-                logger.info(f"✅ force_refresh {ticker} 完成: 1y={ann_1y}% 3y={ann_3y}% 52W={wk52_h}/{wk52_l}")
-
-            except Exception as e:
-                logger.error(f"force_refresh {ticker} 背景任務失敗: {e}")
-
-        background_tasks.add_task(_bg_tw)
-
-    else:
-        def _bg_us():
-            data = fetch_one_etf(ticker, market)
-            if data:
-                save_etf_data(data)
-                cache.delete(f"detail:{ticker}")
-                cache.delete_prefix("search:")
-
-        background_tasks.add_task(_bg_us)
-
-    return safe_json({
-        "status":  "processing",
-        "ticker":  ticker,
-        "message": f"{ticker} 正在背景重新計算，約 10 秒後重新整理頁面即可看到最新數字",
-    })
-
-
 # ── ETF 詳情 ──
 
 @router.get("/api/etf/detail/{ticker}")
@@ -581,6 +437,19 @@ async def get_etf_detail(ticker: str):
 
 _REFRESH_COOLDOWN = 300          # 同一 ticker 5 分鐘內最多觸發一次
 
+
+def _latest_expected_quote_day(market: str) -> date:
+    """估算目前應存在的最近交易日（週末與開盤前退回前一工作日）。"""
+    tz = ZoneInfo("Asia/Taipei" if market == "TW" else "America/New_York")
+    now = datetime.now(tz)
+    candidate = now.date()
+    market_open = (now.hour, now.minute) >= ((9, 0) if market == "TW" else (9, 30))
+    if candidate.weekday() >= 5 or not market_open:
+        candidate -= timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate -= timedelta(days=1)
+    return candidate
+
 def _maybe_background_refresh(ticker: str, row: dict):
     """若資料超過 1 天或關鍵欄位缺失，在背景靜默重抓一次。
 
@@ -588,7 +457,6 @@ def _maybe_background_refresh(ticker: str, row: dict):
     鎖在 create_task 前設定，防止同一 ticker 在事件循環中建立多個重複任務。
     """
     import asyncio
-    from datetime import date as _date
 
     lock_key = f"bg_refresh:{ticker}"
     if cache.get(lock_key):
@@ -598,7 +466,8 @@ def _maybe_background_refresh(ticker: str, row: dict):
     try:
         if isinstance(data_date, str):
             data_date = datetime.strptime(data_date, "%Y-%m-%d").date()
-        is_stale = (not data_date) or ((_date.today() - data_date).days >= 1)
+        expected_day = _latest_expected_quote_day(row.get("market", "TW"))
+        is_stale = (not data_date) or data_date < expected_day
     except Exception:
         is_stale = True
     missing_returns = (row.get("annual_return_1y") is None and
@@ -1037,56 +906,6 @@ async def get_dividends(ticker: str):
 
     data = await asyncio.to_thread(_get_divs)
     return safe_json({"status": "success", "data": data})
-
-
-# ── 手動強制更新 ──
-
-@router.post("/api/etf/update/{ticker}")
-async def update_one_etf(ticker: str):
-    ticker = ticker.upper()
-
-    # 先讀取 market，不預先寫入 DB（避免垃圾代碼污染資料庫）
-    with get_db() as (conn, cursor):
-        cursor.execute("SELECT market FROM etf_master WHERE ticker=%s", (ticker,))
-        row = cursor.fetchone()
-    market = (row or {}).get("market") or ("TW" if ticker[:4].isdigit() else "US")
-
-    # 先抓取資料，確認 ticker 真實存在後才寫入 DB
-    def _fetch():
-        return fetch_one_etf(ticker, market)
-
-    data = await asyncio.to_thread(_fetch)
-    if not data or not data.get("current_price"):
-        return safe_json({"status": "error", "message": f"無法取得 {ticker} 資料，請確認代碼是否正確"}, 400)
-
-    data["ticker"] = ticker
-    data["market"] = market
-    # 確認有效資料後才 INSERT（INSERT IGNORE 確保已存在時不覆蓋）
-    if not row:
-        with get_db() as (conn, cursor):
-            cursor.execute(
-                "INSERT IGNORE INTO etf_master (ticker, name, market, auto_discovered) VALUES (%s, %s, %s, 1)",
-                (ticker, data.get("name", ticker), market),
-            )
-            conn.commit()
-
-    cache.delete(f"detail:{ticker}")
-    cache.delete("etf:index")    # 若為新增標的，讓清單立即包含
-    save_etf_data(data)
-    return safe_json({"status": "success", "message": f"{ticker} 已更新", "data": data})
-
-
-@router.post("/api/etf/force-update")
-async def force_update(request: Request):
-    from auth import get_current_user
-    from fastapi import HTTPException
-    try:
-        get_current_user(request, credentials=None)
-    except HTTPException:
-        return safe_json({"status": "error", "message": "請先登入"}, 401)
-    from scheduler import schedule_update
-    schedule_update()
-    return safe_json({"status": "success", "message": "已觸發全量更新"})
 
 
 @router.get("/api/fx/usdtwd")

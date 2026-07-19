@@ -24,7 +24,7 @@
   <div id="login-prompt" class="hidden card py-16 text-center">
     <i class="fas fa-lock text-3xl text-slate-300 dark:text-slate-600 mb-3 block"></i>
     <p class="text-slate-500 dark:text-slate-400 mb-4">請先登入以查看自選股</p>
-    <a href="/auth" class="btn-primary inline-flex">前往登入</a>
+    <a href="/auth?next=/watchlist" class="btn-primary inline-flex">前往登入</a>
   </div>
 
   <!-- 空狀態 -->
@@ -168,7 +168,7 @@ function renderWatchlist() {
 }
 
 function openAddModal() {
-  if (!Auth.isLoggedIn()) { showToast('請先登入', false); setTimeout(()=>location.href='/auth',1000); return; }
+  if (!Auth.isLoggedIn()) { showToast('請先登入', false); setTimeout(()=>Auth.redirectToLogin('/watchlist'),1000); return; }
   document.getElementById('add-ticker').value = '';
   document.getElementById('addModal').style.display = 'flex';
 }
