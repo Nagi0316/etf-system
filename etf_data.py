@@ -1630,16 +1630,8 @@ def save_etf_data(data: dict):
         ))
         conn.commit()
     cache.delete(f"detail:{ticker}")
-    market = data.get("market", "")
-    if market:
-        # combined 是前端主排行榜的快取 key，必須一起清除
-        cache.delete(f"rank:combined:{market}")
-        for rank_type in ("volume", "return", "yield"):
-            cache.delete(f"rank:{rank_type}:{market}")
-        # rank:all 彙總 TW + US 兩市場，任一 ETF 更新都必須清除，否則會殘留舊資料
-        cache.delete("rank:all")
-    else:
-        cache.delete_prefix("rank:")
+    # 行情、規模、殖利率與報酬任一欄位都可能改變五種排行榜。
+    cache.delete_prefix("rank:")
 
 
 # ══════════════════════════════════════════════════════════
@@ -1708,14 +1700,7 @@ def save_price_only(data: dict):
         conn.commit()
 
     cache.delete(f"detail:{ticker}")
-    market = data.get("market", "")
-    if market:
-        cache.delete(f"rank:combined:{market}")
-        for rank_type in ("volume", "return", "yield"):
-            cache.delete(f"rank:{rank_type}:{market}")
-        cache.delete("rank:all")
-    else:
-        cache.delete_prefix("rank:")
+    cache.delete_prefix("rank:")
 
 
 def save_price_bulk(data_list: list) -> int:

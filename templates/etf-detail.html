@@ -167,17 +167,26 @@
     <div class="card p-5">
       <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
         <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide">價格走勢</h3>
-        <div class="flex gap-1 flex-wrap">
-          <button onclick="changePeriod('1D')"  class="period-btn">1D</button>
-          <button onclick="changePeriod('5D')"  class="period-btn">5D</button>
-          <button onclick="changePeriod('1M')"  class="period-btn">1M</button>
-          <button onclick="changePeriod('6M')"  class="period-btn">6M</button>
-          <button onclick="changePeriod('YTD')" class="period-btn">YTD</button>
-          <button onclick="changePeriod('1Y')"  class="period-btn active">1Y</button>
-          <button onclick="changePeriod('5Y')"  class="period-btn">5Y</button>
-          <button onclick="changePeriod('ALL')" class="period-btn">All</button>
+        <div class="flex items-center gap-2 flex-wrap">
+          <button id="adjust-price-btn" type="button" aria-pressed="false"
+            onclick="toggleAdjustedPrice()"
+            title="以還原收盤價修正分割、合併及配息等公司行動造成的價格斷點"
+            class="px-2.5 py-1.5 rounded-md text-xs font-semibold border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 hover:border-indigo-300 hover:text-indigo-600 transition-colors">
+            <i class="fas fa-wand-magic-sparkles mr-1"></i>還原股價
+          </button>
+          <div class="flex gap-1 flex-wrap">
+            <button onclick="changePeriod('1D')"  class="period-btn">1D</button>
+            <button onclick="changePeriod('5D')"  class="period-btn">5D</button>
+            <button onclick="changePeriod('1M')"  class="period-btn">1M</button>
+            <button onclick="changePeriod('6M')"  class="period-btn">6M</button>
+            <button onclick="changePeriod('YTD')" class="period-btn">YTD</button>
+            <button onclick="changePeriod('1Y')"  class="period-btn active">1Y</button>
+            <button onclick="changePeriod('5Y')"  class="period-btn">5Y</button>
+            <button onclick="changePeriod('ALL')" class="period-btn">All</button>
+          </div>
         </div>
       </div>
+      <p id="adjustment-note" class="hidden text-xs text-indigo-500 dark:text-indigo-300 text-right mb-1"></p>
       <p id="chart-note" class="hidden text-xs text-amber-500 text-right mb-1">⚠️ 歷史資料暫時無法取得，以下為 52 週區間估算</p>
       <div style="position:relative;height:260px;max-height:260px;">
         <canvas id="price-chart"></canvas>
@@ -255,6 +264,7 @@ const STATIC_INFO = {
 };
 
 let etfData = null, priceChart = null, inWatchlist = false, currentPeriod = '1Y', currentTicker = '';
+let adjustedPrice = false;
 let _chartReqId = 0;
 
 /** fetch 包裝：超過 ms 毫秒自動中止，避免頁面無限等待 */
@@ -452,12 +462,20 @@ async function loadDipAlert(ticker) {
 
 async function loadPriceHistory(ticker, period = '1Y') {
   const reqId = ++_chartReqId;
+  const supportsAdjustment = !['1D', '5D'].includes(period.toUpperCase());
+  const requestAdjusted = adjustedPrice && supportsAdjustment;
   const canvas = document.getElementById('price-chart');
   canvas.style.display = 'none';
   document.getElementById('no-chart-msg').classList.add('hidden');
   document.getElementById('chart-loading').classList.remove('hidden');
+  const adjustmentNote = document.getElementById('adjustment-note');
+  adjustmentNote.className = 'hidden text-xs text-indigo-500 dark:text-indigo-300 text-right mb-1';
   try {
-    const response = await fetch(`/api/etf/price-history/${encodeURIComponent(ticker)}?period=${encodeURIComponent(period)}`);
+    const params = new URLSearchParams({
+      period,
+      adjusted: requestAdjusted ? 'true' : 'false',
+    });
+    const response = await fetch(`/api/etf/price-history/${encodeURIComponent(ticker)}?${params}`);
     if (!response.ok) throw new Error(`歷史資料 API 回應 ${response.status}`);
     const data = await response.json();
     if (reqId !== _chartReqId) return;
@@ -481,6 +499,20 @@ async function loadPriceHistory(ticker, period = '1Y') {
           noteEl.classList.remove('hidden');
         } else {
           noteEl.classList.add('hidden');
+        }
+        if (adjustedPrice && !supportsAdjustment) {
+          adjustmentNote.textContent = '日內走勢不適用還原收盤價；切換至 1M 以上期間即可使用';
+          adjustmentNote.classList.remove('hidden');
+        } else if (requestAdjusted && data.adjusted) {
+          const eventCount = Array.isArray(data.adjustment_events)
+            ? data.adjustment_events.length : 0;
+          adjustmentNote.textContent = data.adjustment_source === 'provider'
+            ? `已開啟還原股價${eventCount ? `，辨識 ${eventCount} 次分割／合併事件` : ''}；走勢已納入行情商公司行動調整`
+            : `已開啟還原股價；行情商調整資料暫時不可用，目前僅修正 ${eventCount} 個明顯分割／合併斷點`;
+          adjustmentNote.classList.remove('hidden');
+        } else if (requestAdjusted) {
+          adjustmentNote.textContent = '⚠️ 還原資料暫時不可用，目前顯示原始收盤價';
+          adjustmentNote.className = 'text-xs text-amber-500 text-right mb-1';
         }
         return;
       }
@@ -561,12 +593,35 @@ function drawChart(labels, prices, isFallback = false, isIntraday = false) {
   });
 }
 
+function updateAdjustedPriceButton() {
+  const button = document.getElementById('adjust-price-btn');
+  const isIntraday = ['1D', '5D'].includes(currentPeriod.toUpperCase());
+  button.setAttribute('aria-pressed', adjustedPrice ? 'true' : 'false');
+  button.disabled = isIntraday;
+  button.className = adjustedPrice
+    ? `px-2.5 py-1.5 rounded-md text-xs font-semibold border transition-colors
+       ${isIntraday
+         ? 'border-indigo-200 bg-indigo-50/50 text-indigo-300 cursor-not-allowed dark:border-indigo-800 dark:bg-indigo-900/10'
+         : 'border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300'}`
+    : `px-2.5 py-1.5 rounded-md text-xs font-semibold border transition-colors
+       ${isIntraday
+         ? 'border-slate-100 text-slate-300 cursor-not-allowed dark:border-slate-700 dark:text-slate-600'
+         : 'border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 hover:border-indigo-300 hover:text-indigo-600'}`;
+}
+
+function toggleAdjustedPrice() {
+  adjustedPrice = !adjustedPrice;
+  updateAdjustedPriceButton();
+  if (currentTicker) loadPriceHistory(currentTicker, currentPeriod);
+}
+
 function changePeriod(p) {
   currentPeriod = p;
   const pUp = p.toUpperCase();
   document.querySelectorAll('.period-btn').forEach(b =>
     b.classList.toggle('active', b.textContent.toUpperCase() === pUp));
   document.getElementById('chart-note').classList.add('hidden');
+  updateAdjustedPriceButton();
   if (currentTicker) loadPriceHistory(currentTicker, pUp);
 }
 

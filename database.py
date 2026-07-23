@@ -291,6 +291,9 @@ def init_db():
             category     VARCHAR(100),
             issuer       VARCHAR(100),
             listing_date DATE,
+            fund_asset_size DECIMAL(20,2) DEFAULT 0,
+            holder_count BIGINT DEFAULT 0,
+            metrics_date DATE,
             created_at   {ts_now},
             PRIMARY KEY (ticker)
         ){engine}""",
@@ -463,6 +466,9 @@ def init_db():
         ("etf_master",     "auto_discovered",   "TINYINT(1) DEFAULT 0"),
         ("etf_master",     "is_delisted",       "TINYINT(1) DEFAULT 0"),
         ("etf_master",     "outstanding_units", "BIGINT DEFAULT 0"),
+        ("etf_master",     "fund_asset_size",   "DECIMAL(20,2) DEFAULT 0"),
+        ("etf_master",     "holder_count",      "BIGINT DEFAULT 0"),
+        ("etf_master",     "metrics_date",      "DATE"),
         ("etf_master",     "category",          "VARCHAR(50) DEFAULT NULL"),
     ]
     with get_db() as (conn, cursor):

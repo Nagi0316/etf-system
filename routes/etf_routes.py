@@ -21,6 +21,7 @@ import certifi as _certifi
 from etf_data import fetch_one_etf, save_etf_data, _yahoo_ticker, _new_session, _cf_yahoo_get
 from services.alerts import check_dip_alert
 from services.exchange_rate import get_usd_twd
+from services.price_adjustment import adjust_detected_splits
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -133,39 +134,77 @@ _RANK_SELECT = """
         COALESCE(d.dividend_yield,0)         AS dividend_yield,
         COALESCE(d.payout_freq,'不配息')      AS payout_freq,
         d.annual_return_1y,
-        COALESCE(d.expense_ratio,0)          AS expense_ratio
+        COALESCE(d.expense_ratio,0)          AS expense_ratio,
+        COALESCE(m.holder_count,0)           AS holder_count,
+        m.metrics_date,
+        (COALESCE(d.current_price,0) * COALESCE(d.volume,0)) AS turnover,
+        CASE
+          WHEN COALESCE(m.fund_asset_size,0) > 0 THEN m.fund_asset_size
+          WHEN COALESCE(d.asset_size,0) > 0 THEN d.asset_size
+          WHEN COALESCE(m.outstanding_units,0) > 0
+            THEN m.outstanding_units * COALESCE(d.current_price,0)
+          ELSE 0
+        END AS asset_size,
+        CASE
+          WHEN COALESCE(m.fund_asset_size,0) > 0 OR COALESCE(d.asset_size,0) > 0 THEN 0
+          WHEN COALESCE(m.outstanding_units,0) > 0 AND COALESCE(d.current_price,0) > 0 THEN 1
+          ELSE 0
+        END AS asset_size_estimated
     FROM etf_master m
     {join}
     WHERE d.current_price IS NOT NULL AND d.current_price > 0
       AND COALESCE(m.is_delisted, 0) = 0
-      AND m.is_hot = 1
       AND m.market = %s
+      AND ({condition})
     ORDER BY {order}
     LIMIT 10
 """
 
-_RANK_ORDER = {
-    "volume": "d.volume DESC",
+_ASSET_SIZE_EXPR = """
+CASE
+  WHEN COALESCE(m.fund_asset_size,0) > 0 THEN m.fund_asset_size
+  WHEN COALESCE(d.asset_size,0) > 0 THEN d.asset_size
+  WHEN COALESCE(m.outstanding_units,0) > 0
+    THEN m.outstanding_units * COALESCE(d.current_price,0)
+  ELSE 0
+END
+"""
+
+_RANK_SPECS = {
+    # 「今日熱門」採成交額排序，避免只看股數而偏向低價 ETF。
+    "hot":     ("COALESCE(d.current_price,0) * COALESCE(d.volume,0) DESC",
+                "COALESCE(d.volume,0) > 0"),
+    "asset":   (f"{_ASSET_SIZE_EXPR} DESC", f"{_ASSET_SIZE_EXPR} > 0"),
+    "holders": ("COALESCE(m.holder_count,0) DESC", "COALESCE(m.holder_count,0) > 0"),
     # NULL 排最後（資料不足）→ 有值的從高到低排
-    "return": "d.annual_return_1y IS NULL ASC, COALESCE(d.annual_return_1y,0) DESC",
-    "yield":  "d.dividend_yield   IS NULL ASC, COALESCE(d.dividend_yield,0)   DESC",
+    "return":  ("d.annual_return_1y IS NULL ASC, COALESCE(d.annual_return_1y,0) DESC",
+                "d.annual_return_1y IS NOT NULL"),
+    "yield":   ("d.dividend_yield IS NULL ASC, COALESCE(d.dividend_yield,0) DESC",
+                "COALESCE(d.dividend_yield,0) > 0"),
 }
+
+_RANK_ALIASES = {"volume": "hot", "size": "asset", "holder": "holders"}
 
 
 @router.get("/api/etf-rankings/{rank_type}")
 async def get_etf_rankings(rank_type: str, market: str = ""):
     """舊端點：向下相容（前端新版改用 /api/etf/rankings/combined）"""
     market = market.upper().strip() if market.upper().strip() in ("TW", "US") else "TW"
-    cache_key = f"rank:{rank_type}:{market}"
+    normalized_type = _RANK_ALIASES.get(rank_type, rank_type)
+    if normalized_type not in _RANK_SPECS:
+        normalized_type = "hot"
+    cache_key = f"rank:{normalized_type}:{market}"
     cached = cache.get(cache_key)
     if cached:
         return safe_json({"status": "success", **cached})
 
     try:
-        order = _RANK_ORDER.get(rank_type, _RANK_ORDER["volume"])
+        order, condition = _RANK_SPECS[normalized_type]
         with get_db() as (conn, cursor):
             cursor.execute(
-                _RANK_SELECT.format(join=LATEST_DAILY_JOIN, order=order),
+                _RANK_SELECT.format(
+                    join=LATEST_DAILY_JOIN, order=order, condition=condition
+                ),
                 (market,)
             )
             rows = cursor.fetchall()
@@ -180,7 +219,7 @@ async def get_etf_rankings(rank_type: str, market: str = ""):
 
 @router.get("/api/etf/rankings/combined")
 async def get_combined_rankings(market: str = "TW"):
-    """一次回傳全部 3 種排行（成交量/年化報酬/殖利率），前端切 Tab 不需重打 API。"""
+    """一次回傳熱門、規模、持有人、殖利率與年化報酬排行。"""
     market = market.upper() if market.upper() in ("TW", "US") else "TW"
     cache_key = f"rank:combined:{market}"
     cached = cache.get(cache_key)
@@ -190,13 +229,17 @@ async def get_combined_rankings(market: str = "TW"):
     try:
         result: dict = {}
         with get_db() as (conn, cursor):
-            for rank_type, order in _RANK_ORDER.items():
+            for rank_type, (order, condition) in _RANK_SPECS.items():
                 cursor.execute(
-                    _RANK_SELECT.format(join=LATEST_DAILY_JOIN, order=order),
+                    _RANK_SELECT.format(
+                        join=LATEST_DAILY_JOIN, order=order, condition=condition
+                    ),
                     (market,)
                 )
                 result[rank_type] = cursor.fetchall()
 
+        # 舊版首頁仍以 volume 讀取候選清單；內容與今日熱門相同。
+        result["volume"] = result["hot"]
         result["updated_at"] = datetime.now().strftime('%H:%M')
         cache.set(cache_key, result, CACHE_TTL_RANK)
         return safe_json({"status": "success", **result})
@@ -205,7 +248,7 @@ async def get_combined_rankings(market: str = "TW"):
         # 回傳空成功，讓前端顯示「暫無資料」而非無限轉圈
         return safe_json({
             "status": "success",
-            "volume": [], "return": [], "yield": [],
+            "hot": [], "asset": [], "holders": [], "return": [], "yield": [], "volume": [],
             "updated_at": datetime.now().strftime('%H:%M'),
         })
 
@@ -223,12 +266,15 @@ async def get_all_rankings():
         result: dict = {"TW": {}, "US": {}}
         with get_db() as (conn, cursor):
             for market in ("TW", "US"):
-                for rank_type, order in _RANK_ORDER.items():
+                for rank_type, (order, condition) in _RANK_SPECS.items():
                     cursor.execute(
-                        _RANK_SELECT.format(join=LATEST_DAILY_JOIN, order=order),
+                        _RANK_SELECT.format(
+                            join=LATEST_DAILY_JOIN, order=order, condition=condition
+                        ),
                         (market,)
                     )
                     result[market][rank_type] = cursor.fetchall()
+                result[market]["volume"] = result[market]["hot"]
 
         result["updated_at"] = datetime.now().strftime('%H:%M')
         cache.set("rank:all", result, CACHE_TTL_RANK)
@@ -237,8 +283,8 @@ async def get_all_rankings():
         logger.error(f"all rankings error: {e}", exc_info=True)
         return safe_json({
             "status": "success",
-            "TW": {"volume": [], "return": [], "yield": []},
-            "US": {"volume": [], "return": [], "yield": []},
+            "TW": {"hot": [], "asset": [], "holders": [], "return": [], "yield": [], "volume": []},
+            "US": {"hot": [], "asset": [], "holders": [], "return": [], "yield": [], "volume": []},
             "updated_at": datetime.now().strftime('%H:%M'),
         })
 
@@ -568,6 +614,38 @@ def _fetch_db_price_history(ticker: str, period: str) -> Optional[dict]:
     return None
 
 
+def _merge_price_histories(period: str, *histories: Optional[dict]) -> Optional[dict]:
+    """合併多個非即時日線來源，並以後傳入的來源覆蓋同日期價格。
+
+    證交所月資料可補足長期區間，DB 則通常包含較新的交易日；兩者合併可避免
+    外部來源暫時落後時，圖表在完整歷史與最新價格之間二選一。
+    """
+    points: dict[str, float] = {}
+    for history in histories:
+        if not history:
+            continue
+        for label, price in zip(history.get("labels", []), history.get("prices", [])):
+            try:
+                numeric_price = float(price)
+            except (TypeError, ValueError):
+                continue
+            label_text = str(label)[:10]
+            if label_text and numeric_price > 0:
+                points[label_text] = numeric_price
+
+    if len(points) < 2:
+        return None
+
+    labels = sorted(points)
+    p_up = period.upper()
+    return {
+        "labels": labels,
+        "prices": [round(points[label], 2) for label in labels],
+        "is_intraday": False,
+        "is_partial": len(labels) < _PARTIAL_THRESHOLD.get(p_up, 125),
+    }
+
+
 def _save_history_to_db(ticker: str, days: list[dict]):
     """把 TWSE 抓回的歷史日收盤價寫入 DB，只補空缺不覆蓋現有資料。"""
     if not days:
@@ -704,7 +782,7 @@ _HIST_CACHE_TTL = {
 
 
 @router.get("/api/etf/price-history/{ticker}")
-async def get_price_history(ticker: str, period: str = "1y"):
+async def get_price_history(ticker: str, period: str = "1y", adjusted: bool = False):
     ticker = ticker.upper()
     # 對齊 Yahoo Finance 標準期間（1D 5D 1M 6M YTD 1Y 5Y All）
     RANGE_MAP = {
@@ -729,7 +807,7 @@ async def get_price_history(ticker: str, period: str = "1y"):
     is_intraday = p in ("1D", "5D")
 
     # ── 回應快取：第二次起毫秒內回傳 ──
-    _hist_cache_key = f"hist:{ticker}:{p}"
+    _hist_cache_key = f"hist:{ticker}:{p}:{'adjusted' if adjusted else 'raw'}"
     _hist_cached = cache.get(_hist_cache_key)
     if _hist_cached:
         # 快取只存可序列化資料，不重用已送出過的 Response 物件。
@@ -760,7 +838,7 @@ async def get_price_history(ticker: str, period: str = "1y"):
     # timeout 策略：1D/5D (intraday) 用 5s 快速失敗；非即時歷史資料用 12s（US ETF 1Y 回傳 ~252 筆）
     yahoo_timeout = 5 if is_intraday else 12
 
-    def _fetch():
+    def _fetch(use_adjusted: bool = False):
         symbols = [yt]
         if market == "TW" and yt.endswith(".TW"):
             symbols.append(f"{ticker}.TWO")
@@ -768,7 +846,8 @@ async def get_price_history(ticker: str, period: str = "1y"):
         for symbol in symbols:
             try:
                 url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
-                       f"?range={yf_range}&interval={yf_interval}")
+                       f"?range={yf_range}&interval={yf_interval}"
+                       f"&events=div%2Csplits%2CcapitalGains")
                 # CF Proxy 優先（繞過 Railway IP 封鎖），fallback 直連 Yahoo
                 r = (_cf_yahoo_get(url, timeout=yahoo_timeout)
                      or _new_session(f"https://finance.yahoo.com/quote/{symbol}").get(url, timeout=yahoo_timeout))
@@ -778,8 +857,16 @@ async def get_price_history(ticker: str, period: str = "1y"):
                 if not result:
                     continue
                 ts     = result[0].get("timestamp", [])
-                closes = result[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
-                pairs  = [(t, c) for t, c in zip(ts, closes) if c is not None]
+                indicators = result[0].get("indicators", {})
+                closes = indicators.get("quote", [{}])[0].get("close", [])
+                if use_adjusted and not is_intraday:
+                    adjusted_values = indicators.get("adjclose", [{}])[0].get("adjclose", [])
+                    if not adjusted_values or len(adjusted_values) != len(ts):
+                        continue
+                    selected_prices = adjusted_values
+                else:
+                    selected_prices = closes
+                pairs = [(t, c) for t, c in zip(ts, selected_prices) if c is not None]
                 if len(pairs) < 2:
                     continue
 
@@ -795,12 +882,59 @@ async def get_price_history(ticker: str, period: str = "1y"):
                               for t, _ in pairs]
 
                 prices = [round(float(c), 2) for _, c in pairs]
-                return {"labels": labels, "prices": prices, "is_intraday": is_intraday}
+                split_events = []
+                if use_adjusted:
+                    for event in result[0].get("events", {}).get("splits", {}).values():
+                        event_date = event.get("date")
+                        numerator = safe_float(event.get("numerator"))
+                        denominator = safe_float(event.get("denominator"))
+                        if event_date and numerator > 0 and denominator > 0:
+                            split_events.append({
+                                "date": datetime.fromtimestamp(
+                                    event_date, tz=timezone.utc
+                                ).strftime("%Y-%m-%d"),
+                                "ratio": round(numerator / denominator, 8),
+                            })
+                return {
+                    "labels": labels,
+                    "prices": prices,
+                    "is_intraday": is_intraday,
+                    "adjusted": bool(use_adjusted and not is_intraday),
+                    "adjustment_source": "provider" if use_adjusted else "raw",
+                    "adjustment_events": split_events,
+                }
             except Exception as e:
                 logger.debug(f"price history {symbol}: {e}")
         return None
 
-    if not is_intraday and market == "TW":
+    if adjusted and not is_intraday:
+        # 還原價優先使用供應商 adjusted close（涵蓋分割、股利等公司行動）。
+        data = await asyncio.to_thread(_fetch, True)
+        if not data:
+            # 供應商不可用時保守退回原始日線，只修正常見分割比例的巨大斷點。
+            if market == "TW":
+                db_data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
+                official_data = None
+                if not db_data or db_data.get("is_partial", False):
+                    official_data = await asyncio.to_thread(
+                        _fetch_twse_price_history, ticker, p
+                    )
+                data = _merge_price_histories(p, official_data, db_data)
+                if not data:
+                    data = official_data or db_data
+            else:
+                data = await asyncio.to_thread(_fetch, False)
+                if not data:
+                    data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
+            if data:
+                adjusted_prices, events = adjust_detected_splits(
+                    data["labels"], data["prices"]
+                )
+                data["prices"] = adjusted_prices
+                data["adjusted"] = bool(events)
+                data["adjustment_source"] = "split_detection" if events else "unavailable"
+                data["adjustment_events"] = events
+    elif not is_intraday and market == "TW":
         # TW ETF 非即時：完整 DB 可直接使用；部分 DB 必須繼續嘗試網路補齊。
         # 舊邏輯只要 DB 達最低點數就提前回傳，造成 1Y 圖永遠停在殘缺的 20 筆。
         db_data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
@@ -809,9 +943,12 @@ async def get_price_history(ticker: str, period: str = "1y"):
         else:
             data = await asyncio.to_thread(_fetch)        # _fetch 內部已走 CF proxy
             if not data:
-                data = await asyncio.to_thread(_fetch_twse_price_history, ticker, p)
-            if not data:
-                data = db_data                            # 網路失敗才退回部分 DB
+                official_data = await asyncio.to_thread(
+                    _fetch_twse_price_history, ticker, p
+                )
+                data = _merge_price_histories(p, official_data, db_data)
+                if not data:
+                    data = official_data or db_data       # 網路失敗才退回部分 DB
     elif is_intraday and market == "TW":
         # TW ETF 即時（1D/5D）：嘗試 Yahoo；失敗則用 DB 最近資料回傳「最近交易日」走勢
         data = await asyncio.to_thread(_fetch)
@@ -830,6 +967,9 @@ async def get_price_history(ticker: str, period: str = "1y"):
         "prices":     data["prices"],
         "is_intraday": data.get("is_intraday", False),
         "is_partial":  data.get("is_partial", False),
+        "adjusted": data.get("adjusted", False),
+        "adjustment_source": data.get("adjustment_source", "raw"),
+        "adjustment_events": data.get("adjustment_events", []),
     }
     cache.set(_hist_cache_key, response_data, _HIST_CACHE_TTL.get(p, 3600))
     return safe_json(response_data)

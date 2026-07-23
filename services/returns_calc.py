@@ -3,6 +3,7 @@ services/returns_calc.py — 從 DB 歷史收盤價計算年化報酬率
 
 設計原則：
   - 完全不依賴 Yahoo Finance，直接讀取 etf_daily_data 已有的收盤價
+  - 計算前保守修正常見分割／反分割造成的價格斷點
   - 對 TW ETF 尤其重要：Railway 上 Yahoo Finance 常被封鎖
   - 批次查詢（3 次 DB round-trip），不是每檔各打一次
   - 冪等：重複執行只會覆蓋最新一筆，不會新增或修改歷史行
@@ -19,6 +20,7 @@ from datetime import date
 from dateutil.relativedelta import relativedelta
 
 from database import get_db
+from services.price_adjustment import adjust_detected_splits
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +85,51 @@ def _batch_prices_around_target(tickers: list[str], target_date: date,
             result[ticker] = float(best["current_price"])
 
     return result
+
+
+def _batch_split_adjusted_prices(
+    tickers: list[str], targets: dict[str, date], window_days: int = 60
+) -> tuple[dict[str, dict[str, float]], int]:
+    """一次取回完整區間，先還原明顯分割斷點，再找各目標日價格。"""
+    result = {key: {} for key in targets}
+    if not tickers or not targets:
+        return result, 0
+
+    lo = (min(targets.values()) - relativedelta(days=window_days)).isoformat()
+    # 必須讀到最新日，才能偵測「目標日之後」發生的分割（例如 0050 於
+    # 2025-06 分割，但一年報酬的起點可能早於分割日）。
+    hi = date.today().isoformat()
+    fmt = ",".join(["%s"] * len(tickers))
+    with get_db() as (conn, cursor):
+        cursor.execute(
+            f"SELECT ticker, date, current_price FROM etf_daily_data "
+            f"WHERE ticker IN ({fmt}) AND current_price > 0 "
+            f"AND date BETWEEN %s AND %s ORDER BY ticker, date",
+            tickers + [lo, hi],
+        )
+        rows = cursor.fetchall()
+
+    grouped: dict[str, list] = defaultdict(list)
+    for row in rows:
+        grouped[row["ticker"]].append(row)
+
+    event_count = 0
+    for ticker, ticker_rows in grouped.items():
+        labels = [str(row["date"])[:10] for row in ticker_rows]
+        prices = [float(row["current_price"]) for row in ticker_rows]
+        adjusted_prices, events = adjust_detected_splits(labels, prices)
+        event_count += len(events)
+
+        adjusted_rows = list(zip(labels, adjusted_prices))
+        for key, target in targets.items():
+            best_date, best_price = min(
+                adjusted_rows,
+                key=lambda item: abs((date.fromisoformat(item[0]) - target).days),
+            )
+            if abs((date.fromisoformat(best_date) - target).days) <= window_days:
+                result[key][ticker] = best_price
+
+    return result, event_count
 
 
 def recalc_all_returns(market: str | None = None) -> dict:
@@ -154,11 +201,22 @@ def recalc_all_returns(market: str | None = None) -> dict:
         if reference_date != today:
             logger.debug(f"recalc_all_returns: reference_date={reference_date}（非 today={today}，差 {(today - reference_date).days} 日）")
 
-    prices_1y = _batch_prices_around_target(tickers, reference_date - relativedelta(years=1))
-    prices_3y = _batch_prices_around_target(tickers, reference_date - relativedelta(years=3))
-    prices_5y = _batch_prices_around_target(tickers, reference_date - relativedelta(years=5))
+    adjusted_prices, split_events = _batch_split_adjusted_prices(
+        tickers,
+        {
+            "1y": reference_date - relativedelta(years=1),
+            "3y": reference_date - relativedelta(years=3),
+            "5y": reference_date - relativedelta(years=5),
+        },
+    )
+    prices_1y = adjusted_prices["1y"]
+    prices_3y = adjusted_prices["3y"]
+    prices_5y = adjusted_prices["5y"]
 
-    logger.debug(f"  歷史報酬：1Y={len(prices_1y)}檔 3Y={len(prices_3y)}檔 5Y={len(prices_5y)}檔")
+    logger.debug(
+        f"  歷史報酬：1Y={len(prices_1y)}檔 3Y={len(prices_3y)}檔 "
+        f"5Y={len(prices_5y)}檔，修正分割斷點={split_events}"
+    )
 
     # ── Step 4: 計算所有報酬率，再以單一 DB 連線批次 UPDATE ──
     # 原本每個 ticker 各開一條連線（N RTT），現在改為收集所有 UPDATE 後一次提交（1 RTT）

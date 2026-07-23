@@ -43,12 +43,20 @@
   <div class="card overflow-hidden">
     <!-- Tabs -->
     <div class="flex border-b border-slate-200 dark:border-slate-700 overflow-x-auto">
-      <button id="tab-volume" onclick="switchTab('volume')"
-        class="rank-tab tab-on px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">成交量</button>
-      <button id="tab-return" onclick="switchTab('return')"
-        class="rank-tab tab-off px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">年化報酬</button>
+      <button id="tab-hot" onclick="switchTab('hot')"
+        class="rank-tab tab-on px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">今日熱門</button>
+      <button id="tab-asset" onclick="switchTab('asset')"
+        class="rank-tab tab-off px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">資產規模</button>
+      <button id="tab-holders" onclick="switchTab('holders')"
+        class="rank-tab tab-off px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">持股人數</button>
       <button id="tab-yield" onclick="switchTab('yield')"
         class="rank-tab tab-off px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">殖利率</button>
+      <button id="tab-return" onclick="switchTab('return')"
+        class="rank-tab tab-off px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">年化報酬</button>
+    </div>
+    <div id="rank-source-note"
+      class="px-4 py-2 text-[11px] text-slate-400 bg-slate-50/70 dark:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700">
+      今日熱門依當日成交額排序（現價 × 成交量）
     </div>
     <!-- 表格 -->
     <div class="overflow-x-auto">
@@ -59,7 +67,7 @@
             <th class="px-4 py-3 text-left">ETF</th>
             <th class="px-4 py-3 text-right">現價</th>
             <th class="px-4 py-3 text-right">今日漲跌</th>
-            <th class="px-4 py-3 text-right" id="rank-col-header">今日成交量</th>
+            <th class="px-4 py-3 text-right" id="rank-col-header">今日成交額</th>
             <th class="px-4 py-3 text-right hide-mobile">殖利率</th>
             <th class="px-4 py-3 w-10 hide-mobile"></th>
           </tr>
@@ -84,10 +92,16 @@
 // ══════════════════════════════════════════════════════
 let rankData      = { TW: null, US: null };  // combined ranking payload
 let currentMarket = 'TW';
-let currentTab    = 'volume';
+let currentTab    = 'hot';
 let rankLoaded    = false;   // 是否已完成至少一次載入嘗試（成功或失敗）
 
-const TAB_HEADERS = { volume:'今日成交量', return:'年化報酬', yield:'殖利率' };
+const TAB_HEADERS = {
+  hot:'今日成交額',
+  asset:'資產規模',
+  holders:'持股人數',
+  yield:'殖利率',
+  return:'一年年化報酬',
+};
 const FREQ_BADGE  = {
   '月配':  'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
   '雙月配':'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
@@ -187,16 +201,48 @@ function renderRanking() {
   document.getElementById('rank-col-header').textContent = TAB_HEADERS[currentTab] || '';
 
   const rows = (d[currentTab] || []).slice(0, 10);
+  const sourceNote = document.getElementById('rank-source-note');
+  if (currentTab === 'hot') {
+    sourceNote.textContent = '今日熱門依當日成交額排序（現價 × 成交量），台股與美股分市場比較';
+  } else if (currentTab === 'asset') {
+    sourceNote.textContent = currentMarket === 'TW'
+      ? '台股資產規模來自臺灣證券交易所 ETF 投資篩選器；缺值時才以發行單位數 × 現價估算'
+      : '美股資產規模來自基金行情資料；僅列出具有有效規模資料的 ETF';
+  } else if (currentTab === 'holders') {
+    sourceNote.textContent = currentMarket === 'TW'
+      ? '持股人數採證交所公布的受益人次（資料來源：集保結算所）'
+      : '美股目前沒有與臺灣集保受益人次可直接比較的官方公開欄位';
+  } else if (currentTab === 'yield') {
+    sourceNote.textContent = '殖利率依最近一年已確認配息與最新價格計算；資料不足者不參與排名';
+  } else {
+    sourceNote.textContent = '一年年化報酬以有效歷史價格計算；資料不足者不參與排名';
+  }
 
   if (!rows.length) {
     body.innerHTML = `<tr><td colspan="7" class="px-4 py-12 text-center text-slate-400 text-sm">
-      <i class="fas fa-database mr-2 text-slate-300"></i>排行榜資料更新中，請稍後重試
-      <button onclick="retryLoad()" class="ml-2 text-indigo-500 hover:underline">重試</button>
+      <i class="fas fa-database mr-2 text-slate-300"></i>${
+        currentTab === 'holders' && currentMarket === 'US'
+          ? '美股沒有可與臺灣受益人次直接比較的官方資料'
+          : '目前沒有符合此排名條件的有效資料'
+      }
     </td></tr>`;
     return;
   }
 
   body.innerHTML = rows.map((item, i) => renderRow(item, i + 1)).join('');
+}
+
+function formatMarketMoney(value, market) {
+  const amount = Number(value) || 0;
+  if (amount <= 0) return '—';
+  if (market === 'TW') {
+    if (amount >= 1e8) return `NT$ ${(amount / 1e8).toLocaleString(undefined, {maximumFractionDigits:1})} 億`;
+    if (amount >= 1e4) return `NT$ ${(amount / 1e4).toFixed(1)} 萬`;
+    return `NT$ ${Math.round(amount).toLocaleString()}`;
+  }
+  if (amount >= 1e9) return `US$ ${(amount / 1e9).toFixed(2)}B`;
+  if (amount >= 1e6) return `US$ ${(amount / 1e6).toFixed(1)}M`;
+  return `US$ ${Math.round(amount).toLocaleString()}`;
 }
 
 function renderRow(item, rank) {
@@ -210,18 +256,20 @@ function renderRow(item, rank) {
 
   // ── 排名欄位值 ──────────────────────────
   let rankVal = '-';
-  if (currentTab === 'volume') {
-    const v = parseInt(item.volume) || 0;
-    if (item.market === 'TW') {
-      const lots = Math.round(v / 1000);
-      rankVal = lots >= 100000
-        ? (lots / 10000).toFixed(1) + ' 萬張'
-        : lots.toLocaleString() + ' 張';
-    } else {
-      rankVal = v >= 1e9 ? (v / 1e9).toFixed(2) + 'B'
-              : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M'
-              : v.toLocaleString();
-    }
+  if (currentTab === 'hot') {
+    rankVal = formatMarketMoney(item.turnover, item.market);
+  } else if (currentTab === 'asset') {
+    const estimated = Number(item.asset_size_estimated) === 1;
+    rankVal = `<span class="font-medium">${formatMarketMoney(item.asset_size, item.market)}</span>${
+      estimated
+        ? '<span class="ml-1 text-[10px] text-amber-500" title="依發行單位數與現價估算">估</span>'
+        : ''
+    }`;
+  } else if (currentTab === 'holders') {
+    const holders = Number(item.holder_count) || 0;
+    rankVal = holders > 0
+      ? `<span class="font-medium">${Math.round(holders).toLocaleString()} 人</span>`
+      : '<span class="text-slate-300 dark:text-slate-600">—</span>';
   } else if (currentTab === 'return') {
     const r = parseFloat(item.annual_return_1y);
     rankVal = (isNaN(r) || item.annual_return_1y == null)

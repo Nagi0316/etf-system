@@ -54,9 +54,8 @@ async def _startup_sequence():
     1. 批量同步系統內全部 ETF 的最新可用行情
     2. 歷史補齊與報酬率重算在背景運行（不阻塞排行榜顯示）
 
-    NOTE: sync_tw_etfs 已移至每日 08:00 排程執行（不在啟動時跑）
-    ‣ seed_etf_master() 已於啟動時植入 38 檔熱門 ETF，排行榜不依賴 TWSE 同步
-    ‣ 每次啟動呼叫 sync_tw_etfs 會多花 30-60 秒等待 TWSE HTTP API，屬不必要成本
+    ETF 商品清單與資產規模在健康檢查完成後的背景序列同步，不阻塞服務啟動。
+    每日 08:00 排程仍會再次同步，補上新上市、下市及受益人數變化。
     """
     await asyncio.sleep(3)
 
@@ -64,6 +63,14 @@ async def _startup_sequence():
     # 避免 TiDB 遠端合併阻塞 Railway 啟動健康檢查。
     from database import _repair_non_trading_daily_rows
     await asyncio.to_thread(_repair_non_trading_daily_rows)
+
+    # Step 0: 先同步官方 ETF 商品範圍與低頻指標，讓新上市商品立即進入報價池。
+    try:
+        from services.twse_sync import sync_tw_etfs
+        synced = await asyncio.to_thread(sync_tw_etfs)
+        logger.info(f"▶ 啟動 ETF 商品同步完成：新增 {synced} 檔")
+    except Exception as e:
+        logger.warning(f"啟動 ETF 商品同步失敗（沿用既有清單）: {e}")
 
     # Step 1: 批量同步全部 ETF。市場休市時仍會取得最近交易日資料，
     # 且 etf_data 會使用來源交易日，不會把週五收盤價誤標成週末日期。

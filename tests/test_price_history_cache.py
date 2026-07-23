@@ -46,7 +46,7 @@ class PriceHistoryCacheTest(unittest.TestCase):
         self.assertGreater(len(first.body), 0)
         self.assertEqual(first.body, second.body)
         self.assertEqual(json.loads(second.body)["prices"], history["prices"])
-        self.assertIsInstance(cache.get("hist:0050:1Y"), dict)
+        self.assertIsInstance(cache.get("hist:0050:1Y:raw"), dict)
 
 
 if __name__ == "__main__":
