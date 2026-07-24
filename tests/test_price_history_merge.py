@@ -35,6 +35,19 @@ class PriceHistoryMergeTest(unittest.TestCase):
         self.assertEqual(merged["labels"], ["2026-07-01", "2026-07-04"])
         self.assertEqual(merged["prices"], [10.0, 11.0])
 
+    def test_preserves_fallback_reason_from_latest_source(self):
+        merged = _merge_price_histories(
+            "5D",
+            {"labels": ["2026-07-01", "2026-07-02"], "prices": [10, 10.5]},
+            {
+                "labels": ["2026-07-03", "2026-07-04"],
+                "prices": [11, 11.5],
+                "fallback_reason": "recent_closes",
+            },
+        )
+
+        self.assertEqual(merged["fallback_reason"], "recent_closes")
+
 
 if __name__ == "__main__":
     unittest.main()

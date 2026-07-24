@@ -179,7 +179,6 @@
             <button onclick="changePeriod('5D')"  class="period-btn">5D</button>
             <button onclick="changePeriod('1M')"  class="period-btn">1M</button>
             <button onclick="changePeriod('6M')"  class="period-btn">6M</button>
-            <button onclick="changePeriod('YTD')" class="period-btn">YTD</button>
             <button onclick="changePeriod('1Y')"  class="period-btn active">1Y</button>
             <button onclick="changePeriod('5Y')"  class="period-btn">5Y</button>
             <button onclick="changePeriod('ALL')" class="period-btn">All</button>
@@ -475,7 +474,11 @@ async function loadPriceHistory(ticker, period = '1Y') {
       period,
       adjusted: requestAdjusted ? 'true' : 'false',
     });
-    const response = await fetch(`/api/etf/price-history/${encodeURIComponent(ticker)}?${params}`);
+    const response = await _tFetch(
+      `/api/etf/price-history/${encodeURIComponent(ticker)}?${params}`,
+      {},
+      18000
+    );
     if (!response.ok) throw new Error(`歷史資料 API 回應 ${response.status}`);
     const data = await response.json();
     if (reqId !== _chartReqId) return;
@@ -489,12 +492,15 @@ async function loadPriceHistory(ticker, period = '1Y') {
         label: labels[index],
         price: Number(price),
       })).filter(point => point.label && Number.isFinite(point.price) && point.price > 0);
-      if (cleanPoints.length >= 2) {
+      if (cleanPoints.length >= 1) {
         const cleanLabels = cleanPoints.map(point => point.label);
         const cleanPrices = cleanPoints.map(point => point.price);
         drawChart(cleanLabels, cleanPrices, false, intraday);
         const noteEl = document.getElementById('chart-note');
-        if (data.is_partial) {
+        if (data.fallback_reason === 'recent_closes') {
+          noteEl.textContent = `⚠️ 即時行情暫時無法取得，目前顯示最近 ${cleanPoints.length} 個交易日收盤價`;
+          noteEl.classList.remove('hidden');
+        } else if (data.is_partial) {
           noteEl.textContent = `⚠️ 歷史資料補充中，目前顯示 ${cleanLabels[0]} 至今的資料`;
           noteEl.classList.remove('hidden');
         } else {
@@ -569,7 +575,8 @@ function drawChart(labels, prices, isFallback = false, isIntraday = false) {
   priceChart = new window.Chart(ctx, {
     type: 'line',
     data: { labels, datasets: [{ data: prices, borderColor: trendColor, borderWidth: 2,
-      backgroundColor: gradient, fill: true, tension: 0.3, pointRadius: 0, pointHitRadius: 10 }] },
+      backgroundColor: gradient, fill: true, tension: 0.3,
+      pointRadius: prices.length === 1 ? 3 : 0, pointHitRadius: 10 }] },
     options: { responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: { legend: { display: false },
