@@ -572,16 +572,11 @@ _TWSE_HIST_HEADERS = {
 
 def _fetch_db_price_history(ticker: str, period: str) -> Optional[dict]:
     """從 etf_daily_data 取歷史收盤價。
-    需達到 _MIN_CHART_ROWS 門檻，否則返回 None 讓 TWSE 抓取真實歷史。
-
-    1D / 5D 不在此 fallback 範圍：DB 無分鐘級資料，直接回 None，
-    由上層用 Yahoo Finance 即時來源。
+    外部行情不可用時，即使資料尚未完整，也回傳有效收盤點供圖表顯示。
+    1D / 5D 的 DB 資料是最近日收盤價，不冒充分鐘線，並以 fallback_reason
+    明確告知前端顯示降級提示。
     """
     p_up = period.upper()
-    # 1D/5D 需要分鐘級資料，DB 只有日線 → 明確不支援，回 None
-    if p_up in ("1D", "5D"):
-        return None
-
     today = date.today()
     PERIOD_DAYS = {
         "1M": 35, "3M": 95, "6M": 185,
@@ -590,21 +585,38 @@ def _fetch_db_price_history(ticker: str, period: str) -> Optional[dict]:
     }
     days = PERIOD_DAYS.get(p_up, 370)
     since = today - timedelta(days=days)
-    min_rows = _MIN_CHART_ROWS.get(p_up, 60)
     try:
         with get_db() as (conn, cursor):
-            cursor.execute(
-                "SELECT date, current_price FROM etf_daily_data "
-                "WHERE ticker=%s AND date >= %s AND current_price > 0 "
-                "ORDER BY date ASC",
-                (ticker, since.strftime("%Y-%m-%d")),
-            )
+            if p_up in ("1D", "5D"):
+                cursor.execute(
+                    "SELECT date, current_price FROM etf_daily_data "
+                    "WHERE ticker=%s AND current_price > 0 "
+                    "ORDER BY date DESC LIMIT %s",
+                    (ticker, 2 if p_up == "1D" else 5),
+                )
+            else:
+                cursor.execute(
+                    "SELECT date, current_price FROM etf_daily_data "
+                    "WHERE ticker=%s AND date >= %s AND current_price > 0 "
+                    "ORDER BY date ASC",
+                    (ticker, since.strftime("%Y-%m-%d")),
+                )
             rows = cursor.fetchall()
-        if len(rows) < min_rows:
-            logger.debug(f"DB price history {ticker} period={p_up}: only {len(rows)} rows (need {min_rows})")
+        if p_up in ("1D", "5D"):
+            rows = list(reversed(rows))
+        if not rows:
+            logger.debug(f"DB price history {ticker} period={p_up}: only {len(rows)} valid rows")
             return None
         labels = [str(r["date"])[:10] for r in rows]
         prices = [round(float(r["current_price"]), 2) for r in rows]
+        if p_up in ("1D", "5D"):
+            return {
+                "labels": labels,
+                "prices": prices,
+                "is_intraday": False,
+                "is_partial": True,
+                "fallback_reason": "recent_closes",
+            }
         # is_partial=True 表示資料未涵蓋完整請求期間（DB 尚在補齊中），前端可顯示提示
         # 使用獨立的 _PARTIAL_THRESHOLD（約 50% 預期交易日），避免 3Y/5Y 圖表資料嚴重不足卻不顯示警告
         is_partial = len(rows) < _PARTIAL_THRESHOLD.get(p_up, 125)
@@ -643,6 +655,11 @@ def _merge_price_histories(period: str, *histories: Optional[dict]) -> Optional[
         "prices": [round(points[label], 2) for label in labels],
         "is_intraday": False,
         "is_partial": len(labels) < _PARTIAL_THRESHOLD.get(p_up, 125),
+        "fallback_reason": next(
+            (history.get("fallback_reason") for history in reversed(histories)
+             if history and history.get("fallback_reason")),
+            None,
+        ),
     }
 
 
@@ -784,7 +801,7 @@ _HIST_CACHE_TTL = {
 @router.get("/api/etf/price-history/{ticker}")
 async def get_price_history(ticker: str, period: str = "1y", adjusted: bool = False):
     ticker = ticker.upper()
-    # 對齊 Yahoo Finance 標準期間（1D 5D 1M 6M YTD 1Y 5Y All）
+    # 對齊 Yahoo Finance 標準期間；YTD 僅保留 API 向下相容，前端不再顯示。
     RANGE_MAP = {
         "1D":  "1d",   "5D":  "5d",
         "1M":  "1mo",  "3M":  "3mo",   # 3M 保留向下相容
@@ -955,9 +972,9 @@ async def get_price_history(ticker: str, period: str = "1y", adjusted: bool = Fa
         if not data:
             data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
     else:
-        # US ETF（即時或歷史）：Yahoo Finance 為唯一來源；歷史失敗則 DB fallback
+        # US ETF：Yahoo 優先；不論即時或歷史失敗，都以 DB 最近可用資料降級顯示。
         data = await asyncio.to_thread(_fetch)
-        if not data and not is_intraday:
+        if not data:
             data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
     if not data:
         return safe_json({"status": "error", "message": "無法取得歷史資料"}, 400)
@@ -970,6 +987,7 @@ async def get_price_history(ticker: str, period: str = "1y", adjusted: bool = Fa
         "adjusted": data.get("adjusted", False),
         "adjustment_source": data.get("adjustment_source", "raw"),
         "adjustment_events": data.get("adjustment_events", []),
+        "fallback_reason": data.get("fallback_reason"),
     }
     cache.set(_hist_cache_key, response_data, _HIST_CACHE_TTL.get(p, 3600))
     return safe_json(response_data)
