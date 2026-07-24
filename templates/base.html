@@ -14,7 +14,7 @@
   <noscript>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
   </noscript>
-  <link href="/static/css/main.css?v=20260719" rel="stylesheet">
+  <link href="/static/css/main.css?v=20260725-search" rel="stylesheet">
   {% block extra_head %}{% endblock %}
 </head>
 <body class="bg-slate-50 dark:bg-slate-900 pb-mobile">
@@ -35,14 +35,20 @@
     </div>
     <div class="flex items-center gap-2">
       <!-- 全站搜尋 -->
-      <div class="relative hidden md:block">
-        <input type="text" id="search-input" placeholder="搜尋 ETF…" autocomplete="off"
-          class="input pl-9 pr-4 w-48 text-sm">
+      <div class="global-search relative hidden md:block">
+        <input type="search" id="search-input" placeholder="搜尋 ETF 代碼或名稱" autocomplete="off"
+          class="input search-input text-sm"
+          aria-label="搜尋 ETF 代碼或名稱"
+          aria-controls="search-dropdown"
+          aria-expanded="false">
         <button id="search-btn" type="button"
-          class="fas fa-search absolute left-3 top-2.5 text-slate-400 text-xs hover:text-indigo-500 cursor-pointer bg-transparent border-0 p-0"
-          aria-label="搜尋"></button>
+          class="search-icon-button"
+          aria-label="送出搜尋">
+          <i class="fas fa-search" aria-hidden="true"></i>
+        </button>
         <div id="search-dropdown"
-          class="hidden absolute top-full left-0 right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 max-h-72 overflow-y-auto"></div>
+          class="search-dropdown hidden absolute top-full right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 max-h-72 overflow-y-auto"
+          role="listbox"></div>
       </div>
       <!-- 手機搜尋按鈕 -->
       <button id="mobile-search-btn" class="md:hidden p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
@@ -57,12 +63,18 @@
   </div>
   <!-- 手機搜尋欄（展開） -->
   <div id="mobile-search-bar" class="hidden md:hidden border-t border-slate-200 dark:border-slate-700 px-4 py-2">
-    <div class="relative">
-      <input type="text" id="mobile-search-input" placeholder="搜尋 ETF 代碼或名稱…" autocomplete="off"
-        class="input pl-9 pr-4 w-full text-sm">
-      <i class="fas fa-search absolute left-3 top-2.5 text-slate-400 text-xs"></i>
+    <div class="global-search global-search-mobile relative">
+      <input type="search" id="mobile-search-input" placeholder="搜尋 ETF 代碼或名稱" autocomplete="off"
+        class="input search-input text-sm"
+        aria-label="搜尋 ETF 代碼或名稱"
+        aria-controls="mobile-search-dropdown"
+        aria-expanded="false">
+      <span class="search-icon-button search-icon-static" aria-hidden="true">
+        <i class="fas fa-search"></i>
+      </span>
       <div id="mobile-search-dropdown"
-        class="hidden absolute top-full left-0 right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 max-h-60 overflow-y-auto"></div>
+        class="search-dropdown search-dropdown-mobile hidden absolute top-full left-0 right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 max-h-60 overflow-y-auto"
+        role="listbox"></div>
     </div>
   </div>
 </nav>
@@ -118,20 +130,28 @@ function _initSearch() {
 
   function _fire() {
     const q = input.value.trim();
-    if (!q) { drop.classList.add('hidden'); return; }
+    if (!q) { _setSearchOpen(input, drop, false); return; }
     clearTimeout(_searchTimer);
     _doSearch(q, drop);
   }
   input.addEventListener('input', () => {
     const q = input.value.trim();
-    if (!q) { drop.classList.add('hidden'); return; }
+    if (!q) { _setSearchOpen(input, drop, false); return; }
     clearTimeout(_searchTimer);
     _searchTimer = setTimeout(() => _doSearch(q, drop), 220);
   });
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); _fire(); } });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); _fire(); }
+    if (e.key === 'Escape') {
+      _setSearchOpen(input, drop, false);
+      input.blur();
+    }
+  });
   btn?.addEventListener('click', _fire);
   document.addEventListener('click', e => {
-    if (!input.contains(e.target) && !drop.contains(e.target)) drop.classList.add('hidden');
+    if (!input.contains(e.target) && !btn?.contains(e.target) && !drop.contains(e.target)) {
+      _setSearchOpen(input, drop, false);
+    }
   });
 }
 
@@ -149,13 +169,24 @@ function _initMobileSearch() {
   let _mTimer;
   mInput?.addEventListener('input', () => {
     const q = mInput.value.trim();
-    if (!q) { mDrop.classList.add('hidden'); return; }
+    if (!q) { _setSearchOpen(mInput, mDrop, false); return; }
     clearTimeout(_mTimer);
     _mTimer = setTimeout(() => _doSearch(q, mDrop), 220);
   });
   mInput?.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); _doSearch(mInput.value.trim(), mDrop); }
+    if (e.key === 'Escape') {
+      _setSearchOpen(mInput, mDrop, false);
+      mBar.classList.add('hidden');
+      mBtn.focus();
+    }
   });
+}
+
+function _setSearchOpen(inputEl, dropEl, isOpen) {
+  if (!inputEl || !dropEl) return;
+  dropEl.classList.toggle('hidden', !isOpen);
+  inputEl.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
 }
 
 // ── 共用搜尋（本地索引優先，0 API round-trip；fallback → server）──
@@ -182,7 +213,10 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_ensureEtfIdx, 
 
 async function _doSearch(q, dropEl) {
   if (!q || !dropEl) return;
-  dropEl.classList.remove('hidden');
+  const inputEl = dropEl.id === 'mobile-search-dropdown'
+    ? document.getElementById('mobile-search-input')
+    : document.getElementById('search-input');
+  _setSearchOpen(inputEl, dropEl, true);
 
   const idx = await _ensureEtfIdx();
   if (idx && idx.length > 0) {
