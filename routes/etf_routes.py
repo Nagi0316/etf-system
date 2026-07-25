@@ -963,12 +963,15 @@ async def get_price_history(ticker: str, period: str = "1y", adjusted: bool = Fa
         _nov1 += timedelta(days=(6 - _nov1.weekday()) % 7)
         tz_offset_h = -4 if _mar2 <= _now < _nov1 else -5  # EDT or EST
 
-    # timeout 策略：1D/5D (intraday) 用 5s 快速失敗；非即時歷史資料用 12s（US ETF 1Y 回傳 ~252 筆）
-    yahoo_timeout = 5 if is_intraday else 12
+    # 短線需要在 Railway HTTP request budget 內完成多來源輪替；單次 2 秒即可
+    # 涵蓋正常 Chart 回應，又不會因 Yahoo 429/black-hole 累積成 502。
+    yahoo_timeout = 2 if is_intraday else 12
 
     def _fetch(use_adjusted: bool = False):
         symbols = [yt]
-        if market == "TW" and yt.endswith(".TW"):
+        # 台股 ETF 幾乎都在 TWSE；短線若再依序嘗試 .TWO，最壞會讓四個
+        # HTTP request timeout 疊加。長線仍保留 .TWO 向下相容。
+        if not is_intraday and market == "TW" and yt.endswith(".TW"):
             symbols.append(f"{ticker}.TWO")
 
         for symbol in symbols:
@@ -1048,7 +1051,7 @@ async def get_price_history(ticker: str, period: str = "1y", adjusted: bool = Fa
                         progress=False,
                         auto_adjust=False,
                         threads=False,
-                        timeout=8,
+                        timeout=5,
                     )
                     normalized = _frame_to_price_history(
                         frame,
