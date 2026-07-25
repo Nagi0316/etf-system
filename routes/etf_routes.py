@@ -798,6 +798,117 @@ _HIST_CACHE_TTL = {
 }
 
 
+def _yahoo_chart_urls(symbol: str, yf_range: str, yf_interval: str) -> list[str]:
+    """建立 Yahoo 雙主機候選 URL。
+
+    Railway 的出口 IP 可能只被其中一個 query host 限流；兩個官方 chart
+    host 輪替可避免單點失敗，Cloudflare 代理與直連也共用同一組候選。
+    """
+    query = (
+        f"/v8/finance/chart/{symbol}?range={yf_range}&interval={yf_interval}"
+        "&events=div%2Csplits%2CcapitalGains"
+    )
+    return [
+        f"https://query2.finance.yahoo.com{query}",
+        f"https://query1.finance.yahoo.com{query}",
+    ]
+
+
+def _frame_to_price_history(frame, period: str, market_tz: str) -> Optional[dict]:
+    """把 yfinance DataFrame 正規化為前端圖表格式。"""
+    if frame is None or getattr(frame, "empty", True):
+        return None
+    try:
+        closes = frame["Close"]
+        # yf.download 單一 ticker 在部分版本仍回傳 MultiIndex。
+        if getattr(closes, "ndim", 1) > 1:
+            closes = closes.iloc[:, 0]
+        points = []
+        for stamp, value in closes.dropna().items():
+            numeric = float(value)
+            if numeric <= 0:
+                continue
+            dt = pd.Timestamp(stamp)
+            if dt.tzinfo is None:
+                dt = dt.tz_localize(market_tz)
+            else:
+                dt = dt.tz_convert(market_tz)
+            label = dt.strftime("%H:%M") if period == "1D" else dt.strftime("%m/%d %H:%M")
+            points.append((label, round(numeric, 2)))
+        if not points:
+            return None
+        return {
+            "labels": [point[0] for point in points],
+            "prices": [point[1] for point in points],
+            "is_intraday": True,
+            "adjusted": False,
+            "adjustment_source": "raw",
+            "adjustment_events": [],
+        }
+    except Exception as e:
+        logger.debug(f"normalize yfinance intraday frame: {e}")
+        return None
+
+
+def _fetch_twse_intraday_history(ticker: str) -> Optional[dict]:
+    """直接從 TWSE MIS 取得台股當日分鐘成交線。
+
+    Yahoo 在 Railway 出口 IP 被限流時，1D 不必退回日收盤價；上市與上櫃
+    端點依序嘗試，休市或尚未成交時則交回上層使用其他來源。
+    """
+    url = "https://mis.twse.com.tw/stock/api/getChartOhlcStatis.jsp"
+    headers = {
+        "Accept": "application/json,text/plain,*/*",
+        "Referer": "https://mis.twse.com.tw/",
+        "User-Agent": _TWSE_HIST_HEADERS["User-Agent"],
+    }
+    for exchange in ("tse", "otc"):
+        try:
+            response = _req.get(
+                url,
+                params={"ex": exchange, "ch": f"{ticker}.tw", "fqy": "1"},
+                headers=headers,
+                timeout=6,
+                verify=_certifi.where(),
+            )
+            if response.status_code != 200 or not response.content:
+                continue
+            body = response.json()
+            if str(body.get("rtcode", "")) != "0000":
+                continue
+
+            points = []
+            for row in body.get("ohlcArray") or []:
+                try:
+                    price = float(row.get("c"))
+                    timestamp = int(row.get("t"))
+                    if timestamp > 10_000_000_000:
+                        timestamp //= 1000
+                    if price <= 0 or timestamp <= 0:
+                        continue
+                    label = datetime.fromtimestamp(
+                        timestamp, tz=ZoneInfo("Asia/Taipei")
+                    ).strftime("%H:%M")
+                    points.append((timestamp, label, round(price, 2)))
+                except (TypeError, ValueError, OSError):
+                    continue
+            if not points:
+                continue
+            points.sort(key=lambda point: point[0])
+            return {
+                "labels": [point[1] for point in points],
+                "prices": [point[2] for point in points],
+                "is_intraday": True,
+                "adjusted": False,
+                "adjustment_source": "raw",
+                "adjustment_events": [],
+                "source": "twse_mis",
+            }
+        except Exception as e:
+            logger.debug(f"TWSE MIS intraday {exchange}/{ticker}: {e}")
+    return None
+
+
 @router.get("/api/etf/price-history/{ticker}")
 async def get_price_history(ticker: str, period: str = "1y", adjusted: bool = False):
     ticker = ticker.upper()
@@ -861,13 +972,15 @@ async def get_price_history(ticker: str, period: str = "1y", adjusted: bool = Fa
             symbols.append(f"{ticker}.TWO")
 
         for symbol in symbols:
-            try:
-                url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
-                       f"?range={yf_range}&interval={yf_interval}"
-                       f"&events=div%2Csplits%2CcapitalGains")
-                # CF Proxy 優先（繞過 Railway IP 封鎖），fallback 直連 Yahoo
-                r = (_cf_yahoo_get(url, timeout=yahoo_timeout)
-                     or _new_session(f"https://finance.yahoo.com/quote/{symbol}").get(url, timeout=yahoo_timeout))
+            for url in _yahoo_chart_urls(symbol, yf_range, yf_interval):
+              try:
+                # CF Proxy 優先（繞過 Railway IP 封鎖），再從 Railway 直連。
+                # query1/query2 分開嘗試，避免單一 Yahoo 節點 429。
+                r = _cf_yahoo_get(url, timeout=yahoo_timeout)
+                if r is None:
+                    r = _new_session(
+                        f"https://finance.yahoo.com/quote/{symbol}"
+                    ).get(url, timeout=yahoo_timeout)
                 if r.status_code != 200:
                     continue
                 result = r.json().get("chart", {}).get("result")
@@ -920,8 +1033,32 @@ async def get_price_history(ticker: str, period: str = "1y", adjusted: bool = Fa
                     "adjustment_source": "provider" if use_adjusted else "raw",
                     "adjustment_events": split_events,
                 }
-            except Exception as e:
+              except Exception as e:
                 logger.debug(f"price history {symbol}: {e}")
+
+        # Raw chart 端點都失敗時，最後直接交給 yfinance 的 cookie/curl_cffi
+        # 流程抓取；這條路徑與上面的 requests 連線實作不同。
+        if is_intraday and not use_adjusted:
+            for symbol in symbols:
+                try:
+                    frame = yf.download(
+                        symbol,
+                        period=yf_range,
+                        interval=yf_interval,
+                        progress=False,
+                        auto_adjust=False,
+                        threads=False,
+                        timeout=8,
+                    )
+                    normalized = _frame_to_price_history(
+                        frame,
+                        p,
+                        "Asia/Taipei" if market == "TW" else "America/New_York",
+                    )
+                    if normalized:
+                        return normalized
+                except Exception as e:
+                    logger.debug(f"yfinance intraday {symbol}: {e}")
         return None
 
     if adjusted and not is_intraday:
@@ -967,8 +1104,13 @@ async def get_price_history(ticker: str, period: str = "1y", adjusted: bool = Fa
                 if not data:
                     data = official_data or db_data       # 網路失敗才退回部分 DB
     elif is_intraday and market == "TW":
-        # TW ETF 即時（1D/5D）：嘗試 Yahoo；失敗則用 DB 最近資料回傳「最近交易日」走勢
-        data = await asyncio.to_thread(_fetch)
+        # 1D 先直接抓 TWSE MIS 分鐘線；5D 由 Yahoo 提供跨交易日分鐘線。
+        # 外部分鐘來源全失敗時，才使用 DB 最近收盤價。
+        data = None
+        if p == "1D":
+            data = await asyncio.to_thread(_fetch_twse_intraday_history, ticker)
+        if not data:
+            data = await asyncio.to_thread(_fetch)
         if not data:
             data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
     else:
@@ -988,8 +1130,11 @@ async def get_price_history(ticker: str, period: str = "1y", adjusted: bool = Fa
         "adjustment_source": data.get("adjustment_source", "raw"),
         "adjustment_events": data.get("adjustment_events", []),
         "fallback_reason": data.get("fallback_reason"),
+        "source": data.get("source", "yahoo"),
     }
-    cache.set(_hist_cache_key, response_data, _HIST_CACHE_TTL.get(p, 3600))
+    # 降級收盤價只短暫快取，避免某次 429 讓使用者接下來 5 分鐘都無法重抓即時線。
+    cache_ttl = 30 if data.get("fallback_reason") else _HIST_CACHE_TTL.get(p, 3600)
+    cache.set(_hist_cache_key, response_data, cache_ttl)
     return safe_json(response_data)
 
 
