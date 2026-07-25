@@ -513,7 +513,6 @@ TW_ETFS = [
     {'ticker': '00861',  'name': '元大全球AI',              'market': 'TW', 'hot': True, 'issuer': '元大投信',     'listing_date': '2021-07-01', 'category': 'sector'},
     {'ticker': '00875',  'name': '國泰智能電動車',          'market': 'TW', 'hot': True, 'issuer': '國泰投信',     'listing_date': '2021-07-13', 'category': 'sector'},
     {'ticker': '00887',  'name': '永豐美國科技',            'market': 'TW', 'hot': True, 'issuer': '永豐投信',     'listing_date': '2021-09-16', 'category': 'sector'},
-    {'ticker': '00874',  'name': '國泰網路資安',            'market': 'TW', 'hot': True, 'issuer': '國泰投信',     'listing_date': '2021-03-23', 'category': 'sector'},
     # ── ESG 補充 ──
     {'ticker': '00923',  'name': '群益台ESG低碳50',         'market': 'TW', 'hot': True, 'issuer': '群益投信',     'listing_date': '2023-05-09', 'category': 'esg'},
     # ── 債券 ──

@@ -316,12 +316,37 @@ async def get_etf_index():
             div_row = cursor.fetchone()
             divs_count = int((div_row or {}).get("cnt") or 0)
 
-        payload = {"data": rows, "divs_count": divs_count}
+        payload = {
+            "data": rows,
+            "divs_count": divs_count,
+            "stats": _build_etf_index_stats(rows),
+        }
         cache.set("etf:index", payload, 1800)  # 30 分鐘快取
         return safe_json({"status": "success", **payload})
     except Exception as e:
         logger.error(f"etf index error: {e}", exc_info=True)
         return safe_json({"status": "success", "data": []})
+
+
+def _build_etf_index_stats(rows: list[dict]) -> dict:
+    """建立有明確口徑的 ETF 清單統計，避免把熱門報價池誤稱為全市場。"""
+    active_rows = [
+        row for row in rows
+        if str(row.get("market", "")).upper() in ("TW", "US")
+    ]
+    tw_rows = [row for row in active_rows if row.get("market") == "TW"]
+    us_rows = [row for row in active_rows if row.get("market") == "US"]
+    tracked_rows = [row for row in active_rows if bool(row.get("is_hot"))]
+    return {
+        "catalog_total": len(active_rows),
+        "tw_active": len(tw_rows),
+        # 美股資料為系統精選清單，不宣稱涵蓋美國全市場 ETF。
+        "us_curated": len(us_rows),
+        "quote_tracked_total": len(tracked_rows),
+        "quote_tracked_tw": sum(row.get("market") == "TW" for row in tracked_rows),
+        "quote_tracked_us": sum(row.get("market") == "US" for row in tracked_rows),
+        "as_of": date.today().isoformat(),
+    }
 
 
 # ── 搜尋 ──

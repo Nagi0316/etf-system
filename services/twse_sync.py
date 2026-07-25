@@ -48,7 +48,17 @@ def _parse_twse_products_csv(content: bytes) -> list[dict]:
     CSV 第一列是報表名稱、第二列才是欄名；代碼使用 Excel 公式格式
     ``="0050"``，必須移除包裝後再寫入資料庫。
     """
-    text = content.decode("cp950")
+    if content.lstrip().lower().startswith((b"<!doctype html", b"<html")):
+        return []
+    text = None
+    for encoding in ("cp950", "utf-8-sig", "utf-8"):
+        try:
+            text = content.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        return []
     rows = list(csv.reader(io.StringIO(text)))
     if len(rows) < 3:
         return []
@@ -240,13 +250,15 @@ def sync_tw_etfs() -> int:
                 ],
             )
 
-        # ── 3. 標記「不在今日清單且 auto_discovered=1」的代碼為疑似下市 ──
+        # ── 3. 標記「不在今日完整清單」的台股代碼為疑似下市 ──
         # 只有上市、上櫃兩個來源都成功時才做，避免單一來源故障造成誤下市。
+        # 不再只清 auto_discovered=1：早期靜態種子也可能包含誤植或已下市代碼，
+        # 若跳過它們，首頁全市場統計會永久多算。
         if active_codes and sources_complete:
             fmt = ",".join(["%s"] * len(active_codes))
             cursor.execute(
                 f"UPDATE etf_master SET is_delisted=1 "
-                f"WHERE market='TW' AND auto_discovered=1 AND is_delisted=0 "
+                f"WHERE market='TW' AND is_delisted=0 "
                 f"AND ticker NOT IN ({fmt})",
                 list(active_codes),
             )
