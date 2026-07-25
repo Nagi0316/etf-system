@@ -187,7 +187,7 @@ _RANK_ALIASES = {"volume": "hot", "size": "asset", "holder": "holders"}
 
 
 @router.get("/api/etf-rankings/{rank_type}")
-async def get_etf_rankings(rank_type: str, market: str = ""):
+def get_etf_rankings(rank_type: str, market: str = ""):
     """舊端點：向下相容（前端新版改用 /api/etf/rankings/combined）"""
     market = market.upper().strip() if market.upper().strip() in ("TW", "US") else "TW"
     normalized_type = _RANK_ALIASES.get(rank_type, rank_type)
@@ -218,7 +218,7 @@ async def get_etf_rankings(rank_type: str, market: str = ""):
 
 
 @router.get("/api/etf/rankings/combined")
-async def get_combined_rankings(market: str = "TW"):
+def get_combined_rankings(market: str = "TW"):
     """一次回傳熱門、規模、持有人、殖利率與年化報酬排行。"""
     market = market.upper() if market.upper() in ("TW", "US") else "TW"
     cache_key = f"rank:combined:{market}"
@@ -254,7 +254,7 @@ async def get_combined_rankings(market: str = "TW"):
 
 
 @router.get("/api/etf/rankings/all")
-async def get_all_rankings():
+def get_all_rankings():
     """一次回傳 TW + US 全部排行，前端只需 1 個 API 請求（而非 2）。
     快取 TTL 與 combined 相同（CACHE_TTL_RANK）。
     """
@@ -290,7 +290,7 @@ async def get_all_rankings():
 
 
 @router.get("/api/etf/index")
-async def get_etf_index():
+def get_etf_index():
     """輕量 ETF 清單（只含 ticker/name/market），供前端本地搜尋/自動補全用。
     無需每次打字都 DB 查詢，Client 端過濾速度提升 20x 以上。
     """
@@ -390,13 +390,12 @@ async def search_etf(request: Request, q: str = Query(..., min_length=1)):
     if not rows and _looks_like_ticker(q_up):
         fwd = request.headers.get("x-forwarded-for", "")
         client_ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
-        if not _check_demand_rate(client_ip):
-            # 觸發背景探索，不等待結果
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(_on_demand_fetch(q_up, client_ip))
-            except Exception:
-                pass
+        # 限流只在背景工作內計算一次，避免單次搜尋被重複記錄。
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_on_demand_fetch(q_up, client_ip))
+        except Exception:
+            pass
 
     cache.set(cache_key, rows, 60)
     return safe_json({"status": "success", "data": rows})

@@ -11,9 +11,8 @@ from urllib.parse import quote as _url_quote
 import requests as req_lib
 import certifi
 import yfinance as yf
-from dateutil.relativedelta import relativedelta
 
-from cache import cache, CACHE_TTL_DETAIL
+from cache import cache
 from database import get_db
 from utils import safe_float
 
@@ -1388,7 +1387,7 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         try:
             df = yf.download(ticker, period="10d", interval="1d", progress=False, auto_adjust=True)
             if not df.empty and len(df) >= 2:
-                if isinstance(df.columns, pd.MultiIndex):
+                if getattr(df.columns, "nlevels", 1) > 1:
                     df.columns = df.columns.get_level_values(0)
                 price = float(df['Close'].iloc[-1])
                 prev  = float(df['Close'].iloc[-2])

@@ -14,7 +14,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from config import TEMPLATES_DIR, STATIC_DIR, APP_URL
 from database import init_db, get_db
-from etf_data import seed_etf_master, fetch_one_etf, save_etf_data
+from etf_data import seed_etf_master
 import scheduler as sched
 
 # ── 路由模組 ──

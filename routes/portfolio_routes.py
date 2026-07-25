@@ -17,7 +17,6 @@ routes/portfolio_routes.py — 庫存 / 交易記錄
 """
 import hashlib
 import logging
-from datetime import date
 from fastapi import APIRouter, Depends
 
 from auth import get_current_user

@@ -136,8 +136,3 @@ def push_notification(user_id: int, ntype: str, title: str, content: str, ticker
             (user_id, ntype, title, content, ticker, extra_str)
         )
         conn.commit()
-
-
-# check_price_alerts 已移至 services/alerts.py（修正架構倒置：基礎設施層不應依賴展示層）
-# 此處保留 re-export 以避免任何尚未更新的呼叫點出現 ImportError
-from services.alerts import check_price_alerts  # noqa: E402, F401
