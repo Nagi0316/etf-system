@@ -59,18 +59,19 @@ async def _startup_sequence():
     """
     await asyncio.sleep(3)
 
-    # 先在背景修復舊版誤寫的週末／未來日期；不可放在 init_db，
-    # 避免 TiDB 遠端合併阻塞 Railway 啟動健康檢查。
-    from database import _repair_non_trading_daily_rows
-    await asyncio.to_thread(_repair_non_trading_daily_rows)
-
-    # Step 0: 先同步官方 ETF 商品範圍與低頻指標，讓新上市商品立即進入報價池。
+    # Step 0: 最優先同步官方 ETF 商品範圍，讓首頁清單數與搜尋索引先正確。
+    # 歷史日期修復可能掃描大量資料，若放在前面會讓過期／誤植商品繼續顯示數分鐘。
     try:
         from services.twse_sync import sync_tw_etfs
         synced = await asyncio.to_thread(sync_tw_etfs)
         logger.info(f"▶ 啟動 ETF 商品同步完成：新增 {synced} 檔")
     except Exception as e:
         logger.warning(f"啟動 ETF 商品同步失敗（沿用既有清單）: {e}")
+
+    # Step 0b: 商品清單完成後再修復舊版誤寫的週末／未來日期；不可放在
+    # init_db，避免 TiDB 遠端合併阻塞 Railway 啟動健康檢查。
+    from database import _repair_non_trading_daily_rows
+    await asyncio.to_thread(_repair_non_trading_daily_rows)
 
     # Step 1: 批量同步全部 ETF。市場休市時仍會取得最近交易日資料，
     # 且 etf_data 會使用來源交易日，不會把週五收盤價誤標成週末日期。
