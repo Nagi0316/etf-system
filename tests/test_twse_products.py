@@ -22,6 +22,23 @@ class TwseProductsCsvTest(unittest.TestCase):
         self.assertEqual(rows[0]["holder_count"], 997_455)
         self.assertEqual(rows[0]["listing_date"], "2026-05-12")
 
+    def test_accepts_utf8_csv_and_rejects_maintenance_html(self):
+        csv_text = (
+            '"ETF 投資篩選器"\n'
+            '"股票代號","ETF名稱","上市日期","標的指數","資產規模(億元)",'
+            '"收盤價","成交值","成交量","受益人數(人)","發行人"\n'
+            '="0050","元大台灣50","2003.06.25","","100","100",'
+            '"1","1","10","元大投信"\n'
+        )
+
+        rows = _parse_twse_products_csv(csv_text.encode("utf-8"))
+
+        self.assertEqual(rows[0]["ticker"], "0050")
+        self.assertEqual(
+            _parse_twse_products_csv(b"<!DOCTYPE html><title>maintenance</title>"),
+            [],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
