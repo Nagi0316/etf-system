@@ -265,6 +265,7 @@ const STATIC_INFO = {
 let etfData = null, priceChart = null, inWatchlist = false, currentPeriod = '1Y', currentTicker = '';
 let adjustedPrice = false;
 let _chartReqId = 0;
+let _chartRetryTimer = null;
 
 /** fetch 包裝：超過 ms 毫秒自動中止，避免頁面無限等待 */
 async function _tFetch(url, opts = {}, ms = 12000) {
@@ -461,6 +462,10 @@ async function loadDipAlert(ticker) {
 
 async function loadPriceHistory(ticker, period = '1Y') {
   const reqId = ++_chartReqId;
+  if (_chartRetryTimer) {
+    clearTimeout(_chartRetryTimer);
+    _chartRetryTimer = null;
+  }
   const supportsAdjustment = !['1D', '5D'].includes(period.toUpperCase());
   const requestAdjusted = adjustedPrice && supportsAdjustment;
   const canvas = document.getElementById('price-chart');
@@ -498,8 +503,15 @@ async function loadPriceHistory(ticker, period = '1Y') {
         drawChart(cleanLabels, cleanPrices, false, intraday);
         const noteEl = document.getElementById('chart-note');
         if (data.fallback_reason === 'recent_closes') {
-          noteEl.textContent = `⚠️ 即時行情暫時無法取得，目前顯示最近 ${cleanPoints.length} 個交易日收盤價`;
+          noteEl.textContent = period.toUpperCase() === '5D'
+            ? `目前顯示最近 ${cleanPoints.length} 個交易日收盤價；系統每 30 秒重新抓取盤中線`
+            : `⚠️ 盤中線暫時無法取得，目前顯示最近收盤價；系統每 30 秒自動重抓`;
           noteEl.classList.remove('hidden');
+          _chartRetryTimer = setTimeout(() => {
+            if (currentTicker === ticker && currentPeriod === period) {
+              loadPriceHistory(ticker, period);
+            }
+          }, 30000);
         } else if (data.is_partial) {
           noteEl.textContent = `⚠️ 歷史資料補充中，目前顯示 ${cleanLabels[0]} 至今的資料`;
           noteEl.classList.remove('hidden');
