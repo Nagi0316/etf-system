@@ -2,7 +2,7 @@
 models.py — Pydantic 請求 / 回應模型
 """
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import Optional, List
+from typing import Optional
 from datetime import date, datetime
 
 

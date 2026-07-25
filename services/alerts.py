@@ -155,7 +155,6 @@ def check_price_alerts(ticker: str, current_price: float) -> None:
     單一 DB 連線完成讀取、批次插入通知、批次更新狀態，
     避免 N×3 次連線開銷。由排程器（_fast_price_tick / _update_active）呼叫。
     """
-    import json
     from database import get_db
 
     try:

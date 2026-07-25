@@ -18,7 +18,7 @@ services/us_history.py — 補齊 US ETF 歷史收盤價
 
 import logging
 import time
-from datetime import date, datetime
+from datetime import datetime
 
 from database import get_db
 from etf_data import _cf_yahoo_get

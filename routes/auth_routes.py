@@ -4,7 +4,7 @@ routes/auth_routes.py — 登入 / 登出 / Google OAuth / 密碼變更
 """
 import logging, os, time
 from fastapi import APIRouter, Request, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from auth import (
