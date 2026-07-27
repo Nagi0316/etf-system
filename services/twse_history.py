@@ -207,7 +207,7 @@ def backfill_tw_history(ticker: str = None, years: int = 5) -> dict:
         else:
             cursor.execute(
                 "SELECT ticker, listing_date FROM etf_master "
-                "WHERE market='TW' AND is_delisted=0 "
+                "WHERE market='TW' AND is_hot=1 AND is_delisted=0 "
                 "ORDER BY is_hot DESC, ticker ASC LIMIT %s",
                 (MAX_ETFS,),
             )
