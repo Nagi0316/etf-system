@@ -79,38 +79,9 @@ async def _startup_sequence():
     logger.info("▶ 開始同步全部 ETF 最新行情...")
     await _fast_price_tick(force_all_markets=True)
 
-    # Step 2: 背景補齊歷史收盤價，補齊後立即重算年化報酬率。
-    # 殖利率、費用率等低頻欄位由 30 分鐘／每日排程與詳情頁靜默補抓負責，
-    # 避免每次部署逐檔呼叫 90 檔外部 API，拖延歷史補齊數分鐘。
-    async def _bg_backfill():
-        await asyncio.sleep(5)
-        try:
-            from services.twse_history import backfill_tw_history
-            result = await asyncio.to_thread(backfill_tw_history)
-            logger.info(f"▶ 啟動 TW 歷史補齊完成：{result['etfs']} 檔，補 {result['days_inserted']} 日")
-        except Exception as e:
-            logger.warning(f"啟動 TW 歷史補齊失敗（繼續）: {e}")
-
-        # Step 3b: 補齊 US ETF 歷史收盤價（透過 CF 代理，只補缺失日期，冪等）
-        try:
-            from services.us_history import backfill_us_history
-            us_result = await asyncio.to_thread(backfill_us_history)
-            logger.info(f"▶ 啟動 US 歷史補齊完成：{us_result['etfs']} 檔，補 {us_result['days_inserted']} 日")
-        except Exception as e:
-            logger.warning(f"啟動 US 歷史補齊失敗（繼續）: {e}")
-
-        # Step 4: 歷史補齊後立即重算年化報酬率（讓排行榜 return tab 有資料）
-        try:
-            from services.returns_calc import recalc_all_returns
-            ret = await asyncio.to_thread(recalc_all_returns)
-            logger.info(f"▶ 啟動報酬率重算完成：更新 {ret['updated']} 檔")
-            from cache import cache
-            cache.delete_prefix("rank:")   # 讓下次請求取得最新報酬率排名
-        except Exception as e:
-            logger.warning(f"啟動報酬率重算失敗（繼續）: {e}")
-
-    asyncio.create_task(_bg_backfill())
-    logger.info("✅ 啟動序列完成（歷史補齊 + 報酬率重算已在背景啟動）")
+    # 歷史補齊與報酬率重算交由每日固定排程。部署啟動時不再立刻掃描
+    # 五年歷史，避免 9 萬筆以上資料查詢與外部請求和首頁流量搶資源。
+    logger.info("✅ 啟動序列完成（歷史補齊與報酬率重算由每日排程執行）")
 
 
 # ══════════════════════════════════════════════════════════
