@@ -194,7 +194,7 @@ async def health_detail():
 
     _hd_cached = _cache.get("health:detail")
     if _hd_cached:
-        return _hd_cached
+        return safe_json(_hd_cached)
 
     today = _date.today()
     db_ok = True
@@ -296,7 +296,7 @@ async def health_detail():
         default=None,
     )
 
-    result = safe_json({
+    payload = {
         "status":          overall,
         "checked_at":      today.isoformat(),
         "db":              "ok",
@@ -310,9 +310,9 @@ async def health_detail():
         "last_update":     most_recent,
         "needs_attention": needs_attention,
         "etfs":            etf_rows,
-    })
-    _cache.set("health:detail", result, 60)
-    return result
+    }
+    _cache.set("health:detail", payload, 60)
+    return safe_json(payload)
 
 
 @app.get("/api/health/data")
@@ -335,7 +335,7 @@ async def health_data():
     # ── 60 秒快取：防止監控輪詢重複打 9 個複雜查詢 ──
     _cached = cache.get("health:data")
     if _cached:
-        return _cached
+        return safe_json(_cached)
 
     today = _date.today()
     stale_cutoff = (today - _td(days=3)).isoformat()   # 用 Python 算，相容 MySQL + SQLite
@@ -625,15 +625,15 @@ async def health_data():
     else:
         overall = "ok"
 
-    result = safe_json({
+    payload = {
         "status":      overall,
         "checked_at":  today.isoformat(),
         "summary":     summary,
         "issues":      issues,
         "issue_count": len(issues),
-    })
-    cache.set("health:data", result, 60)
-    return result
+    }
+    cache.set("health:data", payload, 60)
+    return safe_json(payload)
 
 
 if __name__ == "__main__":
