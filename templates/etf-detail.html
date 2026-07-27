@@ -128,6 +128,7 @@
           <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">配息頻率</span><span id="payout-freq" class="font-medium text-slate-700 dark:text-slate-300">-</span></div>
           <div class="flex justify-between py-2.5 text-sm"><span class="text-slate-400">近年殖利率</span><span id="dividend-yield" class="font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">-</span></div>
         </div>
+        <p id="return-data-note" class="hidden mt-3 text-[11px] leading-5 text-slate-400"></p>
       </div>
     </div>
 
@@ -395,6 +396,24 @@ function renderData() {
   document.getElementById('return-1y').innerHTML = retFmt(d.annual_return_1y != null ? parseFloat(d.annual_return_1y) : null);
   document.getElementById('return-3y').innerHTML = retFmt(d.annual_return_3y != null ? parseFloat(d.annual_return_3y) : null);
   document.getElementById('return-5y').innerHTML = retFmt(d.annual_return_5y != null ? parseFloat(d.annual_return_5y) : null);
+
+  const returnNote = document.getElementById('return-data-note');
+  if (returnNote && listing) {
+    const listedAt = new Date(`${String(listing).slice(0, 10)}T00:00:00`);
+    const ageYears = (Date.now() - listedAt.getTime()) / (365.2425 * 86400000);
+    const unavailable = [
+      [1, d.annual_return_1y],
+      [3, d.annual_return_3y],
+      [5, d.annual_return_5y],
+    ].filter(([years, value]) => value == null && ageYears < years)
+      .map(([years]) => `${years} 年`);
+    if (unavailable.length) {
+      returnNote.textContent = `上市資料期間不足，尚無法計算${unavailable.join('、')}報酬；「-」不代表抓取失敗。`;
+      returnNote.classList.remove('hidden');
+    } else {
+      returnNote.classList.add('hidden');
+    }
+  }
 
   document.getElementById('payout-freq').textContent = freq || '-';
   const yld = parseFloat(d.dividend_yield) || 0;
