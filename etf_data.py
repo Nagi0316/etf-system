@@ -650,6 +650,48 @@ def seed_etf_master():
             ("SPLG", "TIPS", "INVESCO", "VANGUARD S&P 500 ETF"),
         )
 
+        # SPLG→SPYM 是同一基金更名，歷史價格與配息必須延續，不能讓新代碼
+        # 看起來像剛上市而失去年化報酬。重複執行安全，既有 SPYM 當日報價優先。
+        cursor.execute("""
+            INSERT INTO etf_daily_data
+              (ticker,date,current_price,price_change,price_change_percent,volume,
+               asset_size,nav,dividend_yield,payout_freq,
+               annual_return_1y,annual_return_3y,annual_return_5y,
+               pe_ratio,expense_ratio,day_high,day_low,
+               fifty_two_week_high,fifty_two_week_low,discount_premium)
+            SELECT
+               'SPYM',old.date,old.current_price,old.price_change,
+               old.price_change_percent,old.volume,
+               old.asset_size,old.nav,old.dividend_yield,old.payout_freq,
+               old.annual_return_1y,old.annual_return_3y,old.annual_return_5y,
+               old.pe_ratio,old.expense_ratio,old.day_high,old.day_low,
+               old.fifty_two_week_high,old.fifty_two_week_low,old.discount_premium
+            FROM etf_daily_data AS old WHERE old.ticker='SPLG'
+            ON DUPLICATE KEY UPDATE
+               annual_return_1y=COALESCE(
+                   etf_daily_data.annual_return_1y,VALUES(annual_return_1y)
+               ),
+               annual_return_3y=COALESCE(
+                   etf_daily_data.annual_return_3y,VALUES(annual_return_3y)
+               ),
+               annual_return_5y=COALESCE(
+                   etf_daily_data.annual_return_5y,VALUES(annual_return_5y)
+               ),
+               dividend_yield=COALESCE(
+                   etf_daily_data.dividend_yield,VALUES(dividend_yield)
+               ),
+               expense_ratio=IF(
+                   etf_daily_data.expense_ratio>0,
+                   etf_daily_data.expense_ratio,
+                   VALUES(expense_ratio)
+               )
+        """)
+        cursor.execute("""
+            INSERT IGNORE INTO etf_dividends (ticker,ex_date,amount,currency)
+            SELECT 'SPYM',ex_date,amount,currency
+            FROM etf_dividends WHERE ticker='SPLG'
+        """)
+
         conn.commit()
     logger.info(f"✅ etf_master 種子資料完成（{len(ALL_ETFS)} 檔熱門 ETF，含 category）")
 
