@@ -569,7 +569,7 @@ US_ETFS = [
     {'ticker': 'QQQM', 'name': 'Invesco NASDAQ 100 ETF',               'market': 'US', 'hot': True, 'issuer': 'Invesco',      'listing_date': '2020-10-13', 'category': 'growth'},
     # ── 價值型 ──
     {'ticker': 'VTV',  'name': 'Vanguard Value ETF',                   'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2004-01-26', 'category': 'broad_market'},
-    {'ticker': 'SPLG', 'name': 'SPDR Portfolio S&P 500 ETF',           'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '2005-11-08', 'category': 'broad_market'},
+    {'ticker': 'SPYM', 'name': 'State Street SPDR Portfolio S&P 500 ETF','market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '2005-11-08', 'category': 'broad_market'},
     {'ticker': 'VB',   'name': 'Vanguard Small-Cap ETF',               'market': 'US', 'hot': True, 'issuer': 'Vanguard',     'listing_date': '2004-01-26', 'category': 'broad_market'},
     {'ticker': 'MDY',  'name': 'SPDR S&P MidCap 400 ETF',             'market': 'US', 'hot': True, 'issuer': 'State Street', 'listing_date': '1995-05-04', 'category': 'broad_market'},
     # ── 股息補充 ──
@@ -640,6 +640,15 @@ def seed_etf_master():
             demoted = cursor.rowcount
             if demoted:
                 logger.info(f"🔄 {demoted} 檔 ETF 移出熱門清單（is_hot → 0）")
+
+        # 已確認的代碼更名／歷史誤植：保留舊資料但從有效名錄排除。
+        # SPLG 已於 2025-10-31 更名為 SPYM；其餘三筆是早期匯入時把
+        # 發行商／基金名稱誤當 ticker，或把 TIP 錯植為 TIPS。
+        cursor.execute(
+            "UPDATE etf_master SET is_hot=0, is_delisted=1 "
+            "WHERE ticker IN (%s,%s,%s,%s)",
+            ("SPLG", "TIPS", "INVESCO", "VANGUARD S&P 500 ETF"),
+        )
 
         conn.commit()
     logger.info(f"✅ etf_master 種子資料完成（{len(ALL_ETFS)} 檔熱門 ETF，含 category）")
@@ -779,6 +788,126 @@ def _fetch_tw_yahoo_quote(ticker: str) -> Optional[dict]:
     return None
 
 
+def _parse_tw_market_date(raw) -> date:
+    """解析證交所／櫃買中心的民國年月日（例如 1150727）。"""
+    digits = "".join(ch for ch in str(raw or "") if ch.isdigit())
+    if len(digits) == 7:
+        try:
+            return date(int(digits[:3]) + 1911, int(digits[3:5]), int(digits[5:7]))
+        except ValueError:
+            pass
+    return _quote_date(raw)
+
+
+def _fetch_tw_official_bulk() -> dict:
+    """從 TWSE/TPEX OpenAPI 一次取得全市場最近交易日收盤。
+
+    MIS 適合盤中即時價，但雲端出口偶爾連線不穩；官方 OpenAPI 回傳整個
+    上市／上櫃市場，可在兩次請求內穩定補齊價格、成交量與日高低。
+    """
+    sources = (
+        (
+            "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+            {
+                "ticker": "Code", "date": "Date", "price": "ClosingPrice",
+                "change": "Change", "high": "HighestPrice", "low": "LowestPrice",
+                "volume": "TradeVolume",
+            },
+        ),
+        (
+            "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes",
+            {
+                "ticker": "SecuritiesCompanyCode", "date": "Date", "price": "Close",
+                "change": "Change", "high": "High", "low": "Low",
+                "volume": "TradingShares",
+            },
+        ),
+    )
+    result: dict = {}
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (compatible; ETF-System/2.0)",
+    }
+    for url, fields in sources:
+        try:
+            response = req_lib.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            for item in response.json():
+                ticker = str(item.get(fields["ticker"], "")).strip().upper()
+                price = safe_float(item.get(fields["price"]))
+                if not ticker or price <= 0:
+                    continue
+                change = safe_float(item.get(fields["change"]))
+                previous = price - change
+                result[ticker] = {
+                    "current_price": price,
+                    "price_change": round(change, 4),
+                    "price_change_percent": (
+                        round(change / previous * 100, 4) if previous > 0 else 0.0
+                    ),
+                    "day_high": safe_float(item.get(fields["high"])) or price,
+                    "day_low": safe_float(item.get(fields["low"])) or price,
+                    "volume": int(safe_float(item.get(fields["volume"]))),
+                    "is_after_hours": True,
+                    "quote_date": _parse_tw_market_date(item.get(fields["date"])),
+                }
+        except Exception as e:
+            logger.warning(f"TW official bulk source failed ({url}): {e}")
+    return result
+
+
+def _fetch_tw_official_month_quote(ticker: str) -> Optional[dict]:
+    """補抓不在全市場快照中的特殊 ETF（外幣加掛、期貨槓反等）。"""
+    today = date.today()
+    url = "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY"
+    try:
+        response = req_lib.get(
+            url,
+            params={
+                "stockNo": ticker,
+                "date": f"{today.year}{today.month:02d}01",
+                "response": "json",
+            },
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0 (compatible; ETF-System/2.0)",
+            },
+            timeout=12,
+        )
+        response.raise_for_status()
+        rows = response.json().get("data") or []
+        valid = []
+        for row in rows:
+            if len(row) < 7:
+                continue
+            close = safe_float(str(row[6]).replace(",", ""))
+            if close > 0:
+                valid.append((row, close))
+        if not valid:
+            return None
+
+        row, price = valid[-1]
+        previous = valid[-2][1] if len(valid) >= 2 else price
+        change = round(price - previous, 4)
+        tw_date = str(row[0]).strip().split("/")
+        quote_date = date(int(tw_date[0]) + 1911, int(tw_date[1]), int(tw_date[2]))
+        return {
+            "current_price": price,
+            "price_change": change,
+            "price_change_percent": (
+                round(change / previous * 100, 4) if previous > 0 else 0.0
+            ),
+            "day_high": safe_float(str(row[4]).replace(",", "")) or price,
+            "day_low": safe_float(str(row[5]).replace(",", "")) or price,
+            "volume": int(safe_float(str(row[1]).replace(",", ""))),
+            "is_after_hours": True,
+            "quote_date": quote_date,
+        }
+    except Exception as e:
+        logger.debug(f"TW official monthly quote {ticker}: {e}")
+        return None
+
+
 def _fetch_tw_realtime_bulk(tickers: list) -> dict:
     """TWSE / TPEX 批量即時報價：一次 HTTP 請求取得所有台股 ETF 現價。
 
@@ -857,7 +986,35 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
         )
         result.update(otc_result)
 
-    # ─ Pass 3：Yahoo chart 備援 ─
+    # ─ Pass 3：TWSE/TPEX 官方全市場 OpenAPI 備援 ─
+    # 固定兩次請求即可覆蓋上市與上櫃，避免 MIS 不穩時退化成數百次 Yahoo 請求。
+    incomplete = {
+        t for t in tickers
+        if (
+            t not in result
+            or result[t].get("volume", 0) <= 0
+            or result[t].get("day_high", 0) <= 0
+            or result[t].get("day_low", 0) <= 0
+        )
+    }
+    if incomplete:
+        official = _fetch_tw_official_bulk()
+        for ticker in incomplete:
+            if ticker in official:
+                result[ticker] = official[ticker]
+
+    # ─ Pass 4：官方單檔月成交備援 ─
+    # 外幣加掛、期貨槓反等少數商品不一定出現在 STOCK_DAY_ALL。
+    remaining = [
+        ticker for ticker in tickers
+        if ticker not in result or result[ticker].get("current_price", 0) <= 0
+    ]
+    for ticker in remaining[:40]:
+        quote = _fetch_tw_official_month_quote(ticker)
+        if quote:
+            result[ticker] = quote
+
+    # ─ Pass 5：Yahoo chart 最終備援 ─
     # Railway 的出口 IP 可能無法連線 MIS。只針對前兩輪未命中的代碼，
     # 以有限並發透過 Cloudflare Worker 抓取，避免單一來源故障讓全台股停更。
     fallback_targets = [
@@ -938,6 +1095,8 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
     if fallback_targets:
         import concurrent.futures
 
+        # 上游同時故障時設硬上限，避免 355 檔逐筆 timeout 讓整輪排程卡死。
+        fallback_targets = fallback_targets[:24]
         max_workers = min(12, len(fallback_targets))
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
             future_to_ticker = {
@@ -1197,15 +1356,22 @@ def _fetch_tw_detail(ticker: str) -> dict:
 #  美股報價
 # ══════════════════════════════════════════════════════════
 
-def _fetch_us_quote(ticker: str) -> Optional[dict]:
+def _fetch_us_quote(ticker: str, fast: bool = False) -> Optional[dict]:
     url = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=10d&interval=1d"
     referer = f"https://finance.yahoo.com/quote/{ticker}"
     try:
         # CF Proxy 優先（Railway IP 被 Yahoo 封鎖）→ 直連 fallback
         s = _new_session(referer)
         s.headers["Origin"] = "https://finance.yahoo.com"
-        r = (_cf_yahoo_get(url, timeout=15)
-             or _get_with_retry(s, url, timeout=6, max_attempts=3))
+        r = (
+            _cf_yahoo_get(url, timeout=6 if fast else 15)
+            or _get_with_retry(
+                s,
+                url,
+                timeout=4 if fast else 6,
+                max_attempts=1 if fast else 3,
+            )
+        )
         if not r or r.status_code != 200:
             return None
         j = r.json()
@@ -1237,6 +1403,64 @@ def _fetch_us_quote(ticker: str) -> Optional[dict]:
     except Exception as e:
         logger.debug(f"US quote {ticker}: {e}")
     return None
+
+
+def _fetch_us_nasdaq_quote(ticker: str) -> Optional[dict]:
+    """從 Nasdaq 官方歷史報價取得最近兩個交易日，作為 Yahoo 備援。"""
+    from datetime import timedelta
+
+    today = date.today()
+    url = f"https://api.nasdaq.com/api/quote/{ticker}/historical"
+    try:
+        response = req_lib.get(
+            url,
+            params={
+                "assetclass": "etf",
+                "fromdate": (today - timedelta(days=14)).isoformat(),
+                "todate": today.isoformat(),
+                "limit": 10,
+            },
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Referer": f"https://www.nasdaq.com/market-activity/etf/{ticker.lower()}",
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
+                ),
+            },
+            timeout=12,
+        )
+        response.raise_for_status()
+        rows = (
+            response.json().get("data", {}).get("tradesTable", {}).get("rows")
+            or []
+        )
+        valid = []
+        for row in rows:
+            price = safe_float(str(row.get("close", "")).replace(",", "").replace("$", ""))
+            if price > 0:
+                valid.append((row, price))
+        if not valid:
+            return None
+
+        row, price = valid[0]  # Nasdaq 由新到舊排列
+        previous = valid[1][1] if len(valid) >= 2 else price
+        change = round(price - previous, 4)
+        quote_date = datetime.strptime(row["date"], "%m/%d/%Y").date()
+        return {
+            "current_price": price,
+            "price_change": change,
+            "price_change_percent": (
+                round(change / previous * 100, 4) if previous > 0 else 0.0
+            ),
+            "day_high": safe_float(str(row.get("high", "")).replace(",", "").replace("$", "")) or price,
+            "day_low": safe_float(str(row.get("low", "")).replace(",", "").replace("$", "")) or price,
+            "volume": int(safe_float(str(row.get("volume", "")).replace(",", ""))),
+            "quote_date": quote_date,
+        }
+    except Exception as e:
+        logger.debug(f"Nasdaq quote {ticker}: {e}")
+        return None
 
 
 def _fetch_us_realtime_bulk(tickers: list) -> dict:
@@ -1292,6 +1516,48 @@ def _fetch_us_realtime_bulk(tickers: list) -> dict:
                 }
         except Exception as e:
             logger.debug(f"US bulk realtime chunk {i}: {e}")
+
+    # Yahoo v7 quote 在部分出口會回 401；先以 Nasdaq 官方歷史報價補齊。
+    missing = [ticker for ticker in tickers if ticker not in result]
+    if missing:
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(12, len(missing))
+        ) as pool:
+            future_to_ticker = {
+                pool.submit(_fetch_us_nasdaq_quote, ticker): ticker
+                for ticker in missing
+            }
+            for future in concurrent.futures.as_completed(future_to_ticker):
+                ticker = future_to_ticker[future]
+                try:
+                    quote = future.result()
+                    if quote:
+                        result[ticker] = quote
+                except Exception as e:
+                    logger.debug(f"US Nasdaq bulk fallback {ticker}: {e}")
+
+    # Nasdaq 未收錄或暫時失敗時，最後再走 Yahoo v8 chart／CF proxy。
+    missing = [ticker for ticker in tickers if ticker not in result]
+    if missing:
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(12, len(missing))
+        ) as pool:
+            future_to_ticker = {
+                pool.submit(_fetch_us_quote, ticker, True): ticker
+                for ticker in missing
+            }
+            for future in concurrent.futures.as_completed(future_to_ticker):
+                ticker = future_to_ticker[future]
+                try:
+                    quote = future.result()
+                    if quote:
+                        result[ticker] = quote
+                except Exception as e:
+                    logger.debug(f"US Yahoo chart fallback {ticker}: {e}")
 
     logger.debug(
         f"US bulk realtime: 請求 {len(tickers)} 檔，命中 {len(result)} 檔，"
