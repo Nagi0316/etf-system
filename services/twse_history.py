@@ -34,7 +34,7 @@ _HEADERS = {
 }
 _TIMEOUT = 20
 _SLEEP   = 0.15  # seconds between requests（TWSE 公開 API 限制寬鬆，0.15s 足夠）
-MAX_ETFS = 200   # safety cap per run
+MAX_ETFS = 500   # 高於目前全市場 ETF 數，避免固定前 200 檔永久餓死後段代碼
 
 
 # ── 核心抓取：單一 ETF 單一月份 ──
@@ -147,18 +147,14 @@ def _save_days(ticker: str, days: list[dict]):
     if not days:
         return
     with get_db() as (conn, cursor):
-        for d in days:
-            try:
-                cursor.execute(
-                    "INSERT INTO etf_daily_data (ticker, date, current_price, volume) "
-                    "VALUES (%s, %s, %s, %s) "
-                    "ON DUPLICATE KEY UPDATE "
-                    "current_price = IF(current_price=0, VALUES(current_price), current_price), "
-                    "volume        = IF(volume=0,         VALUES(volume),        volume)",
-                    (ticker, d["date"], d["close"], d["volume"]),
-                )
-            except Exception as e:
-                logger.debug(f"insert {ticker} {d['date']}: {e}")
+        cursor.executemany(
+            "INSERT INTO etf_daily_data (ticker, date, current_price, volume) "
+            "VALUES (%s, %s, %s, %s) "
+            "ON DUPLICATE KEY UPDATE "
+            "current_price = IF(current_price=0, VALUES(current_price), current_price), "
+            "volume        = IF(volume=0,         VALUES(volume),        volume)",
+            [(ticker, d["date"], d["close"], d["volume"]) for d in days],
+        )
         conn.commit()
 
 
@@ -210,11 +206,16 @@ def backfill_tw_history(ticker: str = None, years: int = 5) -> dict:
             )
         else:
             cursor.execute(
-                "SELECT ticker FROM etf_master WHERE market='TW' AND is_delisted=0 "
+                "SELECT ticker, listing_date FROM etf_master "
+                "WHERE market='TW' AND is_delisted=0 "
                 "ORDER BY is_hot DESC, ticker ASC LIMIT %s",
                 (MAX_ETFS,),
             )
-        tickers = [r["ticker"] for r in cursor.fetchall()]
+        master_rows = cursor.fetchall()
+        tickers = [r["ticker"] for r in master_rows]
+        listing_dates = {
+            r["ticker"]: r.get("listing_date") for r in master_rows
+        }
 
     if not tickers:
         logger.warning("backfill_tw_history: 沒有找到目標 ETF")
@@ -229,7 +230,20 @@ def backfill_tw_history(ticker: str = None, years: int = 5) -> dict:
     logger.info(f"📦 已批次查詢 {len(tickers)} 檔現有月份資料（節省 {len(tickers)-1} 次 DB 連線）")
 
     for t in tickers:
-        inserted = _backfill_one(t, since, until, existing=existing_map.get(t, set()))
+        ticker_since = since
+        listing_date = listing_dates.get(t)
+        if listing_date:
+            try:
+                listed = (
+                    listing_date if isinstance(listing_date, date)
+                    else date.fromisoformat(str(listing_date)[:10])
+                )
+                ticker_since = max(since, listed)
+            except ValueError:
+                pass
+        inserted = _backfill_one(
+            t, ticker_since, until, existing=existing_map.get(t, set())
+        )
         if inserted:
             logger.info(f"✅ {t}: 補 {inserted} 日")
         total_etfs += 1

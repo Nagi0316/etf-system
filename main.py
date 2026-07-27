@@ -374,7 +374,48 @@ async def health_data():
     try:
         with get_db() as (conn, cursor):
 
-            # 1. 缺漏 ETF（in master but no price data at all）
+            # 0. 全名錄覆蓋率：不能只檢查熱門池，否則搜尋可見的冷門 ETF
+            # 即使完全沒有報價也不會被健康檢查發現。
+            cursor.execute("""
+                SELECT m.market,
+                       COUNT(*) AS catalog,
+                       SUM(CASE WHEN d.ticker IS NOT NULL THEN 1 ELSE 0 END) AS with_quote,
+                       SUM(CASE WHEN d.ticker IS NULL THEN 1 ELSE 0 END) AS without_quote,
+                       MIN(d.last_date) AS oldest_latest_quote,
+                       MAX(d.last_date) AS newest_latest_quote
+                FROM etf_master m
+                LEFT JOIN (
+                    SELECT ticker, MAX(date) AS last_date
+                    FROM etf_daily_data
+                    WHERE current_price > 0
+                    GROUP BY ticker
+                ) d ON d.ticker=m.ticker
+                WHERE m.is_delisted=0
+                GROUP BY m.market
+                ORDER BY m.market
+            """)
+            coverage_rows = cursor.fetchall()
+            summary["catalog_coverage"] = {
+                r["market"]: {
+                    "catalog": int(r["catalog"] or 0),
+                    "with_quote": int(r["with_quote"] or 0),
+                    "without_quote": int(r["without_quote"] or 0),
+                    "coverage_pct": round(
+                        int(r["with_quote"] or 0) / int(r["catalog"] or 1) * 100, 2
+                    ),
+                    "oldest_latest_quote": (
+                        str(r["oldest_latest_quote"])[:10]
+                        if r["oldest_latest_quote"] else None
+                    ),
+                    "newest_latest_quote": (
+                        str(r["newest_latest_quote"])[:10]
+                        if r["newest_latest_quote"] else None
+                    ),
+                }
+                for r in coverage_rows
+            }
+
+            # 1. 熱門池缺漏 ETF（會直接影響首頁與排行榜）
             cursor.execute("""
                 SELECT m.ticker, m.market
                 FROM etf_master m

@@ -18,7 +18,9 @@ services/us_history.py — 補齊 US ETF 歷史收盤價
 
 import logging
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
+
+import requests
 
 from database import get_db
 from etf_data import _cf_yahoo_get
@@ -39,14 +41,12 @@ def _fetch_history(ticker: str) -> list[dict]:
     url = _YF_CHART_URL.format(ticker=ticker)
     resp = _cf_yahoo_get(url, timeout=20)
     if resp is None:
-        logger.debug(f"US history {ticker}: CF proxy unavailable")
-        return []
+        return _fetch_nasdaq_history(ticker)
     try:
         body = resp.json()
         result_list = body.get("chart", {}).get("result")
         if not result_list:
-            logger.debug(f"US history {ticker}: empty chart result")
-            return []
+            return _fetch_nasdaq_history(ticker)
         result = result_list[0]
         timestamps = result.get("timestamp", [])
         indicators  = result.get("indicators", {})
@@ -68,7 +68,61 @@ def _fetch_history(ticker: str) -> list[dict]:
         return days
     except Exception as e:
         logger.debug(f"US history {ticker} parse error: {e}")
+        return _fetch_nasdaq_history(ticker)
+
+
+def _fetch_nasdaq_history(ticker: str) -> list[dict]:
+    """Yahoo/CF 不可用時，從 Nasdaq 官方 API 一次取得五年日線。"""
+    today = date.today()
+    try:
+        response = requests.get(
+            f"https://api.nasdaq.com/api/quote/{ticker}/historical",
+            params={
+                "assetclass": "etf",
+                "fromdate": (today - timedelta(days=365 * 5 + 10)).isoformat(),
+                "todate": today.isoformat(),
+                "limit": 5000,
+            },
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Referer": f"https://www.nasdaq.com/market-activity/etf/{ticker.lower()}",
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
+                ),
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        rows = (
+            response.json().get("data", {}).get("tradesTable", {}).get("rows")
+            or []
+        )
+        days = []
+        for row in reversed(rows):  # Nasdaq 新到舊；DB 補寫使用舊到新
+            close = _number(row.get("close"))
+            if close <= 0:
+                continue
+            try:
+                iso_date = datetime.strptime(row["date"], "%m/%d/%Y").strftime("%Y-%m-%d")
+            except (KeyError, TypeError, ValueError):
+                continue
+            days.append({
+                "date": iso_date,
+                "close": close,
+                "volume": int(_number(row.get("volume"))),
+            })
+        return days
+    except Exception as e:
+        logger.debug(f"Nasdaq history {ticker}: {e}")
         return []
+
+
+def _number(value) -> float:
+    try:
+        return float(str(value or "").replace(",", "").replace("$", "").strip())
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # ── 查詢 DB 中已有的日期集合 ──
@@ -102,18 +156,14 @@ def _save_days(ticker: str, days: list[dict]):
     if not days:
         return
     with get_db() as (conn, cursor):
-        for d in days:
-            try:
-                cursor.execute(
-                    "INSERT INTO etf_daily_data (ticker, date, current_price, volume) "
-                    "VALUES (%s, %s, %s, %s) "
-                    "ON DUPLICATE KEY UPDATE "
-                    "current_price = IF(current_price=0, VALUES(current_price), current_price), "
-                    "volume        = IF(volume=0,         VALUES(volume),        volume)",
-                    (ticker, d["date"], d["close"], d["volume"]),
-                )
-            except Exception as e:
-                logger.debug(f"insert {ticker} {d['date']}: {e}")
+        cursor.executemany(
+            "INSERT INTO etf_daily_data (ticker, date, current_price, volume) "
+            "VALUES (%s, %s, %s, %s) "
+            "ON DUPLICATE KEY UPDATE "
+            "current_price = IF(current_price=0, VALUES(current_price), current_price), "
+            "volume        = IF(volume=0,         VALUES(volume),        volume)",
+            [(ticker, d["date"], d["close"], d["volume"]) for d in days],
+        )
         conn.commit()
 
 
@@ -156,8 +206,9 @@ def backfill_us_history(ticker: str = None) -> dict:
             )
         else:
             cursor.execute(
-                "SELECT ticker FROM etf_master WHERE market='US' AND is_hot=1 AND is_delisted=0 "
-                "ORDER BY ticker ASC LIMIT %s",
+                "SELECT ticker FROM etf_master "
+                "WHERE market='US' AND is_delisted=0 "
+                "ORDER BY is_hot DESC, ticker ASC LIMIT %s",
                 (MAX_ETFS,),
             )
         tickers = [r["ticker"] for r in cursor.fetchall()]
