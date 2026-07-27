@@ -506,6 +506,7 @@ async def get_etf_detail(ticker: str):
 
 
 _REFRESH_COOLDOWN = 300          # 同一 ticker 5 分鐘內最多觸發一次
+_RETURN_HISTORY_GRACE_DAYS = 330
 
 
 def _latest_expected_quote_day(market: str) -> date:
@@ -519,6 +520,27 @@ def _latest_expected_quote_day(market: str) -> date:
     while candidate.weekday() >= 5:
         candidate -= timedelta(days=1)
     return candidate
+
+
+def _missing_returns_need_refresh(row: dict, today: date | None = None) -> bool:
+    """只有理論上已累積一年資料的 ETF，才因報酬欄位缺漏觸發重抓。
+
+    新上市 ETF 的 1/3/5 年報酬原本就無法計算；持續重抓只會浪費外部
+    API 配額、拖慢回應，還可能增加被資料源限流的機率。
+    """
+    if row.get("annual_return_1y") is not None or row.get("annual_return_3y") is not None:
+        return False
+
+    listing_date = row.get("listing_date")
+    if not listing_date:
+        return True
+    try:
+        if isinstance(listing_date, str):
+            listing_date = datetime.strptime(listing_date[:10], "%Y-%m-%d").date()
+        return ((today or date.today()) - listing_date).days >= _RETURN_HISTORY_GRACE_DAYS
+    except (TypeError, ValueError):
+        return True
+
 
 def _maybe_background_refresh(ticker: str, row: dict):
     """若資料超過 1 天或關鍵欄位缺失，在背景靜默重抓一次。
@@ -540,8 +562,7 @@ def _maybe_background_refresh(ticker: str, row: dict):
         is_stale = (not data_date) or data_date < expected_day
     except Exception:
         is_stale = True
-    missing_returns = (row.get("annual_return_1y") is None and
-                       row.get("annual_return_3y") is None)
+    missing_returns = _missing_returns_need_refresh(row)
     if not (is_stale or missing_returns):
         return
 
@@ -693,17 +714,31 @@ def _save_history_to_db(ticker: str, days: list[dict]):
         return
     try:
         with get_db() as (conn, cursor):
-            for d in days:
-                cursor.execute(
-                    "INSERT INTO etf_daily_data (ticker, date, current_price) "
-                    "VALUES (%s, %s, %s) "
-                    "ON DUPLICATE KEY UPDATE "
-                    "current_price = IF(current_price = 0, VALUES(current_price), current_price)",
-                    (ticker, d["date"], d["close"]),
-                )
+            cursor.executemany(
+                "INSERT INTO etf_daily_data (ticker, date, current_price) "
+                "VALUES (%s, %s, %s) "
+                "ON DUPLICATE KEY UPDATE "
+                "current_price = IF(current_price = 0, VALUES(current_price), current_price)",
+                [(ticker, d["date"], d["close"]) for d in days],
+            )
             conn.commit()
     except Exception as e:
         logger.debug(f"save history to DB {ticker}: {e}")
+
+
+def _history_points_for_storage(data: dict) -> list[dict]:
+    """將供應商歷史回應轉為可持久化的有效日資料。"""
+    points = []
+    for label, price in zip(data.get("labels", []), data.get("prices", [])):
+        label = str(label)
+        numeric_price = safe_float(price)
+        try:
+            datetime.strptime(label[:10], "%Y-%m-%d")
+        except ValueError:
+            continue
+        if len(label) == 10 and numeric_price > 0:
+            points.append({"date": label, "close": numeric_price})
+    return points
 
 
 def _fetch_twse_month(ticker: str, year: int, month: int) -> list[dict]:
@@ -1147,6 +1182,14 @@ async def get_price_history(ticker: str, period: str = "1y", adjusted: bool = Fa
             data = await asyncio.to_thread(_fetch_db_price_history, ticker, p)
     if not data:
         return safe_json({"status": "error", "message": "無法取得歷史資料"}, 400)
+
+    # Yahoo/代理成功取得的長期原始價格也要回填 DB。否則每次都重新下載，
+    # 排程重算年化報酬時仍看不到這些資料，造成「圖有資料、報酬卻是空白」。
+    if not is_intraday and not adjusted:
+        storage_points = _history_points_for_storage(data)
+        if storage_points:
+            await asyncio.to_thread(_save_history_to_db, ticker, storage_points)
+
     response_data = {
         "status":     "success",
         "labels":     data["labels"],

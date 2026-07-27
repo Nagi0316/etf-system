@@ -317,7 +317,7 @@ async def health_detail():
 
 @app.get("/api/health/data")
 async def health_data():
-    """資料完整性健康檢查（快取 60 秒，避免監控頻繁輪詢打爆 DB）。
+    """資料完整性健康檢查（快取 5 分鐘，避免監控頻繁輪詢打爆 DB）。
 
     檢查項目：
     1. 缺漏 ETF   — 在 etf_master 但 etf_daily_data 完全無資料（從未抓到）
@@ -332,13 +332,28 @@ async def health_data():
     from utils import safe_json
     from cache import cache
 
-    # ── 60 秒快取：防止監控輪詢重複打 9 個複雜查詢 ──
+    # ── 5 分鐘快取：完整稽核很重；即時存活狀態另由 /health 提供 ──
     _cached = cache.get("health:data")
     if _cached:
         return safe_json(_cached)
 
     today = _date.today()
-    stale_cutoff = (today - _td(days=3)).isoformat()   # 用 Python 算，相容 MySQL + SQLite
+
+    def _business_days_before(day, count):
+        candidate = day
+        remaining = count
+        while remaining:
+            candidate -= _td(days=1)
+            if candidate.weekday() < 5:
+                remaining -= 1
+        return candidate
+
+    # 以各市場最近應有交易日往前推三個工作日，避免週末造成美股假性過期。
+    from routes.etf_routes import _latest_expected_quote_day
+    stale_cutoffs = {
+        market: _business_days_before(_latest_expected_quote_day(market), 3).isoformat()
+        for market in ("TW", "US")
+    }
     issues: list[dict] = []
     summary: dict = {}
 
@@ -410,10 +425,13 @@ async def health_data():
                 JOIN etf_daily_data d ON m.ticker = d.ticker AND d.current_price > 0
                 WHERE m.is_hot = 1 AND m.is_delisted = 0
                 GROUP BY m.ticker, m.market
-                HAVING MAX(d.date) < %s
+                HAVING MAX(d.date) < CASE
+                    WHEN m.market = 'TW' THEN %s
+                    ELSE %s
+                END
                 ORDER BY last_date ASC
                 LIMIT 50
-            """, (stale_cutoff,))
+            """, (stale_cutoffs["TW"], stale_cutoffs["US"]))
             stale = cursor.fetchall()
             summary["stale_etfs"] = len(stale)
             for r in stale:
@@ -469,10 +487,12 @@ async def health_data():
 
             # 5. 異常價格：current_price ≤ 0（包含被零值覆蓋的紀錄）
             cursor.execute("""
-                SELECT ticker, date, current_price
-                FROM etf_daily_data
-                WHERE current_price <= 0 OR current_price IS NULL
-                ORDER BY date DESC
+                SELECT d.ticker, d.date, d.current_price
+                FROM etf_daily_data d
+                JOIN etf_master m ON m.ticker = d.ticker
+                WHERE m.is_delisted = 0
+                  AND (d.current_price <= 0 OR d.current_price IS NULL)
+                ORDER BY d.date DESC
                 LIMIT 20
             """)
             bad_prices = cursor.fetchall()
@@ -498,26 +518,25 @@ async def health_data():
 
             # 7. 異常價格波動：熱門 ETF 當日收盤與前一交易日相差 > 30%（可能爬蟲抓到錯誤價格）
             cursor.execute("""
-                SELECT t1.ticker,
-                       t1.current_price AS today_price,
-                       t2.current_price AS prev_price,
-                       ROUND(ABS(t1.current_price - t2.current_price)
-                             / t2.current_price * 100, 1) AS pct_diff
-                FROM etf_daily_data t1
-                JOIN etf_daily_data t2 ON t1.ticker = t2.ticker
-                JOIN etf_master m ON m.ticker = t1.ticker
-                WHERE t1.date = (
-                    SELECT MAX(d1.date) FROM etf_daily_data d1
-                    WHERE d1.ticker = t1.ticker AND d1.current_price > 0
-                )
-                  AND t2.date = (
-                    SELECT MAX(d2.date) FROM etf_daily_data d2
-                    WHERE d2.ticker = t1.ticker AND d2.current_price > 0
-                      AND d2.date < t1.date
-                )
-                  AND t1.current_price > 0 AND t2.current_price > 0
-                  AND ABS(t1.current_price - t2.current_price) / t2.current_price > 0.30
-                  AND m.is_hot = 1 AND m.is_delisted = 0
+                SELECT ticker, today_price, prev_price,
+                       ROUND(ABS(today_price - prev_price)
+                             / prev_price * 100, 1) AS pct_diff
+                FROM (
+                    SELECT d.ticker,
+                           d.current_price AS today_price,
+                           LAG(d.current_price) OVER (
+                               PARTITION BY d.ticker ORDER BY d.date
+                           ) AS prev_price,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY d.ticker ORDER BY d.date DESC
+                           ) AS latest_row
+                    FROM etf_daily_data d
+                    JOIN etf_master m ON m.ticker = d.ticker
+                    WHERE d.current_price > 0
+                      AND m.is_hot = 1 AND m.is_delisted = 0
+                ) latest
+                WHERE latest_row = 1 AND prev_price > 0
+                  AND ABS(today_price - prev_price) / prev_price > 0.30
                 ORDER BY pct_diff DESC
                 LIMIT 10
             """)
@@ -632,7 +651,7 @@ async def health_data():
         "issues":      issues,
         "issue_count": len(issues),
     }
-    cache.set("health:data", payload, 60)
+    cache.set("health:data", payload, 300)
     return safe_json(payload)
 
 
