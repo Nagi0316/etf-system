@@ -51,16 +51,22 @@ async def lifespan(app: FastAPI):
 
 async def _startup_sequence():
     """啟動後：
-    1. 批量同步系統內全部 ETF 的最新可用行情
-    2. 歷史補齊與報酬率重算在背景運行（不阻塞排行榜顯示）
+    1. 立即批量同步系統內全部 ETF 的最新可用行情
+    2. 再同步商品名錄並修復舊日期
+    3. 歷史補齊與報酬率重算由固定排程執行
 
-    ETF 商品清單與資產規模在健康檢查完成後的背景序列同步，不阻塞服務啟動。
+    行情優先於較慢的商品名錄同步，避免部署後數分鐘仍顯示舊價格。
     每日 08:00 排程仍會再次同步，補上新上市、下市及受益人數變化。
     """
     await asyncio.sleep(3)
 
-    # Step 0: 最優先同步官方 ETF 商品範圍，讓首頁清單數與搜尋索引先正確。
-    # 歷史日期修復可能掃描大量資料，若放在前面會讓過期／誤植商品繼續顯示數分鐘。
+    # Step 0: 先修復所有有效 ETF 行情。商品名錄與歷史清理可能耗時數分鐘，
+    # 不應阻擋使用者最先看到的價格、漲跌與成交量。
+    from scheduler import _fast_price_tick
+    logger.info("▶ 優先同步全部 ETF 最新行情...")
+    await _fast_price_tick(force_all_markets=True)
+
+    # Step 1: 同步官方 ETF 商品範圍、資產規模與受益人數。
     try:
         from services.twse_sync import sync_tw_etfs
         synced = await asyncio.to_thread(sync_tw_etfs)
@@ -68,16 +74,10 @@ async def _startup_sequence():
     except Exception as e:
         logger.warning(f"啟動 ETF 商品同步失敗（沿用既有清單）: {e}")
 
-    # Step 0b: 商品清單完成後再修復舊版誤寫的週末／未來日期；不可放在
+    # Step 2: 商品清單完成後再修復舊版誤寫的週末／未來日期；不可放在
     # init_db，避免 TiDB 遠端合併阻塞 Railway 啟動健康檢查。
     from database import _repair_non_trading_daily_rows
     await asyncio.to_thread(_repair_non_trading_daily_rows)
-
-    # Step 1: 批量同步全部 ETF。市場休市時仍會取得最近交易日資料，
-    # 且 etf_data 會使用來源交易日，不會把週五收盤價誤標成週末日期。
-    from scheduler import _fast_price_tick
-    logger.info("▶ 開始同步全部 ETF 最新行情...")
-    await _fast_price_tick(force_all_markets=True)
 
     # 歷史補齊與報酬率重算交由每日固定排程。部署啟動時不再立刻掃描
     # 五年歷史，避免 9 萬筆以上資料查詢與外部請求和首頁流量搶資源。
