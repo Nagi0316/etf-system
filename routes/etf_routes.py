@@ -186,6 +186,10 @@ _RANK_SPECS = {
 _RANK_ALIASES = {"volume": "hot", "size": "asset", "holder": "holders"}
 
 
+def _ranking_updated_at() -> str:
+    return datetime.now(ZoneInfo("Asia/Taipei")).strftime("%H:%M")
+
+
 @router.get("/api/etf-rankings/{rank_type}")
 def get_etf_rankings(rank_type: str, market: str = ""):
     """舊端點：向下相容（前端新版改用 /api/etf/rankings/combined）"""
@@ -209,12 +213,12 @@ def get_etf_rankings(rank_type: str, market: str = ""):
             )
             rows = cursor.fetchall()
 
-        payload = {"data": rows, "updated_at": datetime.now().strftime('%H:%M')}
+        payload = {"data": rows, "updated_at": _ranking_updated_at()}
         cache.set(cache_key, payload, CACHE_TTL_RANK)
         return safe_json({"status": "success", **payload})
     except Exception as e:
         logger.error(f"etf rankings error ({rank_type}/{market}): {e}", exc_info=True)
-        return safe_json({"status": "success", "data": [], "updated_at": datetime.now().strftime('%H:%M')})
+        return safe_json({"status": "success", "data": [], "updated_at": _ranking_updated_at()})
 
 
 @router.get("/api/etf/rankings/combined")
@@ -240,7 +244,7 @@ def get_combined_rankings(market: str = "TW"):
 
         # 舊版首頁仍以 volume 讀取候選清單；內容與今日熱門相同。
         result["volume"] = result["hot"]
-        result["updated_at"] = datetime.now().strftime('%H:%M')
+        result["updated_at"] = _ranking_updated_at()
         cache.set(cache_key, result, CACHE_TTL_RANK)
         return safe_json({"status": "success", **result})
     except Exception as e:
@@ -249,7 +253,7 @@ def get_combined_rankings(market: str = "TW"):
         return safe_json({
             "status": "success",
             "hot": [], "asset": [], "holders": [], "return": [], "yield": [], "volume": [],
-            "updated_at": datetime.now().strftime('%H:%M'),
+            "updated_at": _ranking_updated_at(),
         })
 
 
@@ -276,7 +280,7 @@ def get_all_rankings():
                     result[market][rank_type] = cursor.fetchall()
                 result[market]["volume"] = result[market]["hot"]
 
-        result["updated_at"] = datetime.now().strftime('%H:%M')
+        result["updated_at"] = _ranking_updated_at()
         cache.set("rank:all", result, CACHE_TTL_RANK)
         return safe_json({"status": "success", **result})
     except Exception as e:
@@ -285,7 +289,7 @@ def get_all_rankings():
             "status": "success",
             "TW": {"hot": [], "asset": [], "holders": [], "return": [], "yield": [], "volume": []},
             "US": {"hot": [], "asset": [], "holders": [], "return": [], "yield": [], "volume": []},
-            "updated_at": datetime.now().strftime('%H:%M'),
+            "updated_at": _ranking_updated_at(),
         })
 
 

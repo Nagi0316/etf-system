@@ -650,6 +650,21 @@ def seed_etf_master():
             ("SPLG", "TIPS", "INVESCO", "VANGUARD S&P 500 ETF"),
         )
 
+        # 已由產品性質確認不配息的台股槓桿／反向／商品 ETF：修復舊版
+        # 抓取曾誤標成季配的歷史列。只處理明確白名單，不猜測其他商品。
+        no_payout_tw = tuple(
+            ticker for ticker, freq in KNOWN_PAYOUT_FREQ.items()
+            if freq == "不配息" and ticker[:1].isdigit()
+        )
+        if no_payout_tw:
+            fmt = ",".join(["%s"] * len(no_payout_tw))
+            cursor.execute(
+                f"UPDATE etf_daily_data "
+                f"SET payout_freq='不配息', dividend_yield=0 "
+                f"WHERE ticker IN ({fmt})",
+                no_payout_tw,
+            )
+
         # SPLG→SPYM 是同一基金更名，歷史價格與配息必須延續，不能讓新代碼
         # 看起來像剛上市而失去年化報酬。重複執行安全，既有 SPYM 當日報價優先。
         cursor.execute("""
