@@ -1,5 +1,6 @@
 import unittest
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from unittest.mock import Mock, patch
 
 from etf_data import (
@@ -9,6 +10,8 @@ from etf_data import (
     _parse_tw_market_date,
     _parse_tw_mis_quote,
     _resolved_payout_freq,
+    _expected_tw_quote_day,
+    _tw_quote_is_fresh,
 )
 from routes.etf_routes import _ranking_updated_at
 
@@ -60,6 +63,15 @@ class OfficialQuoteBulkTest(unittest.TestCase):
             dt.now.return_value = datetime(2026, 8, 4, 19, 5)
             self.assertEqual(_ranking_updated_at(), "19:05")
             self.assertEqual(dt.now.call_args.args[0].key, "Asia/Taipei")
+
+    def test_expected_tw_quote_day_rolls_weekend_back(self):
+        sunday = datetime(2026, 8, 9, 18, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+        self.assertEqual(_expected_tw_quote_day(sunday), date(2026, 8, 7))
+
+    def test_rejects_stale_official_quote_after_market_open(self):
+        expected = date(2026, 8, 4)
+        self.assertFalse(_tw_quote_is_fresh({"quote_date": date(2026, 8, 3)}, expected))
+        self.assertTrue(_tw_quote_is_fresh({"quote_date": "2026-08-04"}, expected))
 
     def test_parses_roc_market_date(self):
         self.assertEqual(_parse_tw_market_date("1150727"), date(2026, 7, 27))
