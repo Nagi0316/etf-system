@@ -1096,10 +1096,27 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
         ticker for ticker in tickers
         if ticker not in result or result[ticker].get("current_price", 0) <= 0
     ]
-    for ticker in remaining[:40]:
-        quote = _fetch_tw_official_month_quote(ticker)
-        if quote and _tw_quote_is_fresh(quote, expected_day):
-            result[ticker] = quote
+    if remaining:
+        # Railway 可能擋住 MIS，若逐檔串行抓 40 檔，最壞會卡 8 分鐘且
+        # 整批結束前一筆都不會寫入。有限並發把收盤後修復壓到數十秒內。
+        import concurrent.futures
+
+        monthly_targets = remaining[:40]
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(12, len(monthly_targets))
+        ) as pool:
+            future_to_ticker = {
+                pool.submit(_fetch_tw_official_month_quote, ticker): ticker
+                for ticker in monthly_targets
+            }
+            for future in concurrent.futures.as_completed(future_to_ticker):
+                ticker = future_to_ticker[future]
+                try:
+                    quote = future.result()
+                    if quote and _tw_quote_is_fresh(quote, expected_day):
+                        result[ticker] = quote
+                except Exception as e:
+                    logger.debug(f"TW monthly bulk fallback {ticker}: {e}")
 
     # ─ Pass 5：Yahoo chart 最終備援 ─
     # Railway 的出口 IP 可能無法連線 MIS。只針對前兩輪未命中的代碼，
