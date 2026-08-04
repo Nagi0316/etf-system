@@ -68,6 +68,9 @@ def record_sync_state(dataset: str, market: str, expected_count: int,
                     status, detail[:500], now, success_at,
                 ))
             conn.commit()
+        # 同步狀態本身也是 API 資料；即使價格沒有變，狀態與觀測時間仍已更新。
+        cache.delete_prefix("rank:")
+        cache.delete("health:data")
     except Exception as exc:
         logger.warning("record_sync_state %s/%s failed: %s", dataset, market, exc)
 
