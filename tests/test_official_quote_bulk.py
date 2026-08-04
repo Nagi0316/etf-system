@@ -7,10 +7,53 @@ from etf_data import (
     _fetch_tw_official_month_quote,
     _fetch_us_nasdaq_quote,
     _parse_tw_market_date,
+    _parse_tw_mis_quote,
+    _resolved_payout_freq,
 )
 
 
 class OfficialQuoteBulkTest(unittest.TestCase):
+    def test_mis_uses_last_trade_instead_of_previous_close_after_hours(self):
+        result = _parse_tw_mis_quote({
+            "d": "20260804", "z": "-", "pz": "100.65", "y": "102.00",
+            "h": "102.25", "l": "99.75", "v": "114397",
+        })
+
+        self.assertEqual(result["current_price"], 100.65)
+        self.assertEqual(result["price_change"], -1.35)
+        self.assertAlmostEqual(result["price_change_percent"], -1.3235)
+        self.assertEqual(result["volume"], 114_397_000)
+        self.assertTrue(result["is_after_hours"])
+
+    def test_mis_rejects_previous_close_when_today_has_activity(self):
+        result = _parse_tw_mis_quote({
+            "d": "20260804", "z": "-", "pz": "-", "y": "102.00",
+            "h": "102.25", "l": "99.75", "v": "114397",
+        })
+
+        self.assertIsNone(result)
+
+    def test_mis_accepts_true_unchanged_close(self):
+        result = _parse_tw_mis_quote({
+            "d": "20260804", "z": "32.57", "pz": "32.57", "y": "32.57",
+            "h": "32.88", "l": "32.32", "v": "56047",
+        })
+
+        self.assertEqual(result["current_price"], 32.57)
+        self.assertEqual(result["price_change_percent"], 0.0)
+
+    def test_confirmed_no_dividend_can_clear_wrong_frequency(self):
+        self.assertEqual(
+            _resolved_payout_freq("不配息", "季配", confirmed=True),
+            "不配息",
+        )
+
+    def test_unconfirmed_no_dividend_preserves_known_frequency(self):
+        self.assertEqual(
+            _resolved_payout_freq("不配息", "季配", confirmed=False),
+            "季配",
+        )
+
     def test_parses_roc_market_date(self):
         self.assertEqual(_parse_tw_market_date("1150727"), date(2026, 7, 27))
 

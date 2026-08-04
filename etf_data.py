@@ -700,6 +700,50 @@ def seed_etf_master():
 #  台股即時報價
 # ══════════════════════════════════════════════════════════
 
+def _parse_tw_mis_quote(d: dict) -> Optional[dict]:
+    """解析 TWSE/TPEX MIS 報價，避免收盤後把昨收誤當今日收盤。
+
+    MIS 在收盤撮合後的短暫時段可能令 ``z`` 為空，但 ``pz`` 已有最後
+    成交價；``y`` 永遠是昨收。若今日已有成交卻拿不到 z/pz，寧可交給
+    備援來源，也不能把昨收、今日成交量與今日高低拼成矛盾資料。
+    """
+    z_val = d.get("z", "-")
+    pz_val = d.get("pz", "-")
+    prev = safe_float(d.get("y", "0"))
+    high = safe_float(d.get("h", "0"))
+    low = safe_float(d.get("l", "0"))
+    vol_k = safe_float(d.get("v", "0"))
+
+    current = safe_float(z_val)
+    used_fallback_last = False
+    if current <= 0:
+        current = safe_float(pz_val)
+        used_fallback_last = current > 0
+
+    has_session_activity = vol_k > 0 or high > 0 or low > 0
+    if current <= 0:
+        if has_session_activity:
+            return None
+        current = prev
+    if current <= 0:
+        return None
+
+    change = round(current - prev, 4) if prev > 0 else 0.0
+    return {
+        "current_price": current,
+        "price_change": change,
+        "price_change_percent": (
+            round(change / prev * 100, 4) if prev > 0 else 0.0
+        ),
+        "day_high": high or current,
+        "day_low": low or current,
+        "volume": int(vol_k * 1000),
+        "is_after_hours": z_val in ("-", ""),
+        "used_fallback_last": used_fallback_last,
+        "quote_date": _quote_date(d.get("d")),
+    }
+
+
 def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
     """台股即時報價。
 
@@ -720,30 +764,13 @@ def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
             if not items:
                 continue
             d = items[0]
-            z_val = d.get("z", "-")
-            y_val = d.get("y", "0")
-            is_after_hours = z_val in ("-", "")
-            price = safe_float(z_val) if not is_after_hours else safe_float(y_val)
-            if price <= 0:
+            parsed = _parse_tw_mis_quote(d)
+            if not parsed:
                 continue
-            prev  = safe_float(y_val) if y_val not in ("-", "") else price
-            high  = safe_float(d.get("h", "0")) or price
-            low   = safe_float(d.get("l", "0")) or price
-            vol_k = safe_float(d.get("v", "0"))
-            # 盤後時段 z 為空，盤中價 == 昨收，強制設 0 而非算出假的 0 差
-            chg     = 0.0 if is_after_hours else round(price - prev, 4)
-            chg_pct = 0.0 if is_after_hours else (round(chg / prev * 100, 4) if prev > 0 else 0.0)
-            parsed = {
-                "current_price": price, "price_change": chg,
-                "price_change_percent": chg_pct,
-                "day_high": high, "day_low": low,
-                "volume": int(vol_k * 1000),
-                "is_after_hours": is_after_hours,
-                "quote_date": _quote_date(d.get("d")),
-            }
             # 部分雲端出口取得的 MIS 盤後回應只有現價／昨收，日高低與成交量為空。
             # 以 Yahoo 補齊缺失欄位，避免新日期列把完整詳情變成 0。
-            if parsed["volume"] <= 0 or high <= 0 or low <= 0:
+            if (parsed["volume"] <= 0 or parsed["day_high"] <= 0
+                    or parsed["day_low"] <= 0):
                 fallback = _fetch_tw_yahoo_quote(ticker)
                 if fallback:
                     return fallback
@@ -984,29 +1011,10 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
                     t = d.get("c", "")          # TWSE 回傳的股票代碼（純數字/英文）
                     if not t:
                         continue
-                    z_val = d.get("z", "-")
-                    y_val = d.get("y", "0")
-                    is_after_hours = z_val in ("-", "")
-                    price = safe_float(z_val) if not is_after_hours else safe_float(y_val)
-                    if price <= 0:
+                    parsed = _parse_tw_mis_quote(d)
+                    if not parsed:
                         continue
-                    prev  = safe_float(y_val) if y_val not in ("-", "") else price
-                    high  = safe_float(d.get("h", "0")) or price
-                    low   = safe_float(d.get("l", "0")) or price
-                    vol_k = safe_float(d.get("v", "0"))
-                    chg     = 0.0 if is_after_hours else round(price - prev, 4)
-                    chg_pct = (0.0 if is_after_hours
-                               else (round(chg / prev * 100, 4) if prev > 0 else 0.0))
-                    batch_result[t] = {
-                        "current_price":        price,
-                        "price_change":         chg,
-                        "price_change_percent": chg_pct,
-                        "day_high":             high,
-                        "day_low":              low,
-                        "volume":               int(vol_k * 1000),
-                        "is_after_hours":       is_after_hours,
-                        "quote_date":            _quote_date(d.get("d")),
-                    }
+                    batch_result[t] = parsed
             except Exception as e:
                 logger.debug(f"TW bulk realtime {prefix}: {e}")
         return batch_result
@@ -1650,23 +1658,10 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
 
     detail = _fetch_tw_detail(ticker)
 
-    # 盤後時段：price_change / price_change_percent 為 0，嘗試從 DB 補上最後一個交易日的值
+    # MIS 解析器已依本日最後成交價與昨收計算漲跌；不可在真正平盤時拿
+    # 前一交易日的漲跌覆蓋，否則會把歷史變動誤標成今日變動。
     price_change     = quote["price_change"]
     price_change_pct = quote["price_change_percent"]
-    if quote.get("is_after_hours") and price_change == 0:
-        try:
-            with get_db() as (conn, cursor):
-                cursor.execute(
-                    "SELECT price_change, price_change_percent FROM etf_daily_data "
-                    "WHERE ticker=%s ORDER BY date DESC LIMIT 1",
-                    (ticker,)
-                )
-                prev_row = cursor.fetchone()
-            if prev_row and prev_row.get("price_change") is not None:
-                price_change     = float(prev_row["price_change"] or 0)
-                price_change_pct = float(prev_row["price_change_percent"] or 0)
-        except Exception as e:
-            logger.debug(f"TW after-hours change DB fallback {ticker}: {e}")
 
     return {
         'ticker': ticker, 'current_price': price,
@@ -1806,6 +1801,14 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
 #  存入 DB
 # ══════════════════════════════════════════════════════════
 
+def _resolved_payout_freq(data_freq: str | None, previous_freq: str | None,
+                          confirmed: bool) -> str:
+    incoming = data_freq or "不配息"
+    if incoming == "不配息" and not confirmed and previous_freq:
+        return previous_freq
+    return incoming
+
+
 def save_etf_data(data: dict):
     today  = _quote_date(data.get("quote_date"))
     ticker  = data.get("ticker", "")
@@ -1849,9 +1852,11 @@ def save_etf_data(data: dict):
             prev_yield = previous.get("dividend_yield")
             dy_to_store = prev_yield if prev_yield is not None else None
 
-        payout_freq = data.get("payout_freq", "不配息")
-        if payout_freq == "不配息" and previous.get("payout_freq"):
-            payout_freq = previous["payout_freq"]
+        # 已確認無配息時必須允許把舊的錯誤頻率改回「不配息」；只有資料源
+        # 未確認時，才沿用上一筆已知頻率。
+        payout_freq = _resolved_payout_freq(
+            data.get("payout_freq"), previous.get("payout_freq"), div_confirmed
+        )
 
         def _positive_or_previous(key: str) -> float:
             value = safe_float(data.get(key))
@@ -1896,10 +1901,9 @@ def save_etf_data(data: dict):
               dividend_yield=IF(VALUES(dividend_yield) IS NOT NULL,
                                 VALUES(dividend_yield),
                                 COALESCE(dividend_yield,0)),
-              -- 配息頻率：新值非「不配息」才更新（確保已知頻率不被清空）
-              payout_freq=IF(VALUES(payout_freq)!='不配息',
-                             VALUES(payout_freq),
-                             COALESCE(payout_freq,'不配息')),
+              -- 未確認來源已在 Python 端沿用舊值；此處直接寫入，才能讓
+              -- 已確認不配息的商品修正過去誤標的配息頻率。
+              payout_freq=VALUES(payout_freq),
               -- 年化報酬：新值 IS NOT NULL 才更新（NULL = 資料不足，保留 DB 舊值）
               annual_return_1y=IF(VALUES(annual_return_1y) IS NOT NULL,
                                   VALUES(annual_return_1y),
