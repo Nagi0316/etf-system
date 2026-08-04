@@ -60,11 +60,17 @@ async def _startup_sequence():
     """
     await asyncio.sleep(3)
 
+    # 匯率與行情互不依賴；平行預熱，避免部署後健康檢查短暫誤報
+    #「匯率從未取得」，也不延後主要行情同步。
+    from services.exchange_rate import get_usd_twd
+    fx_task = asyncio.create_task(asyncio.to_thread(get_usd_twd))
+
     # Step 0: 先修復所有有效 ETF 行情。商品名錄與歷史清理可能耗時數分鐘，
     # 不應阻擋使用者最先看到的價格、漲跌與成交量。
     from scheduler import _fast_price_tick
     logger.info("▶ 優先同步全部 ETF 最新行情...")
     await _fast_price_tick(force_all_markets=True)
+    await asyncio.gather(fx_task, return_exceptions=True)
 
     # Step 1: 同步官方 ETF 商品範圍、資產規模與受益人數。
     try:

@@ -58,6 +58,7 @@ def get_usd_twd() -> float:
         cache.set("fx:USDTWD", rate, CACHE_TTL_FX)
         cache.set(_CACHE_LAST_KEY, rate, _CACHE_LAST_TTL)   # 更新長期快取
         cache.set(_CACHE_AGE_KEY, time.time(), _CACHE_LAST_TTL)  # 更新最後成功時間戳
+        cache.delete("health:data")
         return rate
 
     # 長期快取（最後一次成功的值）
