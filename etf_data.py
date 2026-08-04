@@ -4,9 +4,10 @@ etf_data.py — ETF 靜態清單、資料抓取、DB 存取
 """
 from __future__ import annotations
 import os, random, time, logging, threading
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional
 from urllib.parse import quote as _url_quote
+from zoneinfo import ZoneInfo
 
 import requests as req_lib
 import certifi
@@ -759,6 +760,26 @@ def _parse_tw_mis_quote(d: dict) -> Optional[dict]:
     }
 
 
+def _expected_tw_quote_day(now: datetime | None = None) -> date:
+    current = now or datetime.now(ZoneInfo("Asia/Taipei"))
+    candidate = current.date()
+    if candidate.weekday() >= 5 or current.hour < 9:
+        candidate -= timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def _tw_quote_is_fresh(quote: dict, expected: date | None = None) -> bool:
+    quote_day = quote.get("quote_date")
+    if isinstance(quote_day, str):
+        try:
+            quote_day = date.fromisoformat(quote_day[:10])
+        except ValueError:
+            return False
+    return isinstance(quote_day, date) and quote_day >= (expected or _expected_tw_quote_day())
+
+
 def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
     """台股即時報價。
 
@@ -1005,6 +1026,7 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
     """
     if not tickers:
         return {}
+    expected_day = _expected_tw_quote_day()
 
     def _batch_request(prefix: str, batch_tickers: list,
                        base_url: str, referer: str) -> dict:
@@ -1027,7 +1049,7 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
                     if not t:
                         continue
                     parsed = _parse_tw_mis_quote(d)
-                    if not parsed:
+                    if not parsed or not _tw_quote_is_fresh(parsed, expected_day):
                         continue
                     batch_result[t] = parsed
             except Exception as e:
@@ -1065,7 +1087,7 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
     if incomplete:
         official = _fetch_tw_official_bulk()
         for ticker in incomplete:
-            if ticker in official:
+            if ticker in official and _tw_quote_is_fresh(official[ticker], expected_day):
                 result[ticker] = official[ticker]
 
     # ─ Pass 4：官方單檔月成交備援 ─
@@ -1076,7 +1098,7 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
     ]
     for ticker in remaining[:40]:
         quote = _fetch_tw_official_month_quote(ticker)
-        if quote:
+        if quote and _tw_quote_is_fresh(quote, expected_day):
             result[ticker] = quote
 
     # ─ Pass 5：Yahoo chart 最終備援 ─
@@ -1139,6 +1161,8 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
                         "is_after_hours": False,
                         "quote_date": _quote_date(item.get("regularMarketTime")),
                     }
+                    if not _tw_quote_is_fresh(candidate, expected_day):
+                        continue
                     # 第一個有效市場即足夠；避免無效替代代碼覆蓋正式市場。
                     result.setdefault(ticker, candidate)
                     if (result[ticker].get("volume", 0) <= 0 or
@@ -1172,7 +1196,7 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
                 ticker = future_to_ticker[future]
                 try:
                     quote = future.result()
-                    if quote:
+                    if quote and _tw_quote_is_fresh(quote, expected_day):
                         result[ticker] = quote
                 except Exception as e:
                     logger.debug(f"TW bulk Yahoo fallback {ticker}: {e}")
