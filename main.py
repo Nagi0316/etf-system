@@ -404,7 +404,7 @@ async def health_data():
             # 資料管線狀態：區分「資料值未變」與「同步根本失敗」。
             cursor.execute("""
                 SELECT dataset, market, expected_count, received_count,
-                       data_date, status, last_attempt_at, last_success_at
+                       data_date, status, detail, last_attempt_at, last_success_at
                 FROM data_sync_state
                 ORDER BY dataset, market
             """)
@@ -419,6 +419,7 @@ async def health_data():
                         / int(r["expected_count"] or 1) * 100, 2
                     ),
                     "data_date": str(r["data_date"])[:10] if r["data_date"] else None,
+                    "detail": r["detail"] or "",
                     "last_attempt_at": str(r["last_attempt_at"]),
                     "last_success_at": (
                         str(r["last_success_at"]) if r["last_success_at"] else None

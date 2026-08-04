@@ -292,12 +292,14 @@ async def _fast_price_tick_inner(force_all_markets: bool = False):
     await asyncio.gather(
         *(
             [asyncio.to_thread(
-                record_sync_state, "quotes", "TW", len(tw_tickers), tw_raw
+                record_sync_state, "quotes", "TW", len(tw_tickers), tw_raw,
+                "missing=" + ",".join(sorted(set(tw_tickers) - set(tw_raw)))
             )] if tw_tickers else []
         ),
         *(
             [asyncio.to_thread(
-                record_sync_state, "quotes", "US", len(us_tickers), us_raw
+                record_sync_state, "quotes", "US", len(us_tickers), us_raw,
+                "missing=" + ",".join(sorted(set(us_tickers) - set(us_raw)))
             )] if us_tickers else []
         ),
     )
