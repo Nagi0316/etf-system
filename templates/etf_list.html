@@ -197,7 +197,14 @@ function renderRanking() {
 
   // 更新時間
   const ts = d.updated_at || '';
-  document.getElementById('update-time').textContent = ts ? `更新於 ${ts}` : '';
+  const dataDate = d.data_date || '';
+  const coverage = d.coverage || {};
+  const coverageText = coverage.expected
+    ? ` · 覆蓋 ${coverage.received}/${coverage.expected}`
+    : '';
+  document.getElementById('update-time').textContent = ts
+    ? `資料日 ${dataDate || '—'} · 同步於 ${ts}${coverageText}`
+    : '';
   document.getElementById('rank-col-header').textContent = TAB_HEADERS[currentTab] || '';
 
   const rows = (d[currentTab] || []).slice(0, 10);

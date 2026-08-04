@@ -320,8 +320,23 @@ def init_db():
             fifty_two_week_high  DECIMAL(10,2)  DEFAULT 0,
             fifty_two_week_low   DECIMAL(10,2)  DEFAULT 0,
             discount_premium     DECIMAL(10,2)  DEFAULT 0,
+            quote_source         VARCHAR(40),
+            quote_updated_at     DATETIME,
             created_at           {ts_now},
             UNIQUE (ticker, date)
+        ){engine}""",
+
+        f"""CREATE TABLE IF NOT EXISTS data_sync_state (
+            dataset        VARCHAR(40) NOT NULL,
+            market         VARCHAR(20) NOT NULL,
+            expected_count INT         DEFAULT 0,
+            received_count INT         DEFAULT 0,
+            data_date      DATE,
+            status         VARCHAR(20) NOT NULL,
+            detail         VARCHAR(500),
+            last_attempt_at DATETIME NOT NULL,
+            last_success_at DATETIME,
+            PRIMARY KEY (dataset, market)
         ){engine}""",
 
         f"""CREATE TABLE IF NOT EXISTS users (
@@ -448,6 +463,8 @@ def init_db():
 
     new_cols = [
         ("etf_daily_data", "discount_premium",   "DECIMAL(10,2) DEFAULT 0"),
+        ("etf_daily_data", "quote_source",       "VARCHAR(40) DEFAULT NULL"),
+        ("etf_daily_data", "quote_updated_at",   "DATETIME DEFAULT NULL"),
         ("etf_daily_data", "annual_return_3y",   "DECIMAL(7,4)  DEFAULT NULL"),
         ("etf_daily_data", "annual_return_5y",   "DECIMAL(7,4)  DEFAULT NULL"),
         ("etf_daily_data", "fifty_two_week_high","DECIMAL(10,2) DEFAULT 0"),

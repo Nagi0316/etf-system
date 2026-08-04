@@ -231,7 +231,12 @@ async def _fast_price_tick_inner(force_all_markets: bool = False):
     if not force_all_markets and not (tw_open or us_open):
         return
 
-    from etf_data import _fetch_tw_realtime_bulk, _fetch_us_realtime_bulk, save_price_bulk
+    from etf_data import (
+        _fetch_tw_realtime_bulk,
+        _fetch_us_realtime_bulk,
+        record_sync_state,
+        save_price_bulk,
+    )
 
     pool = _get_all_etf_pool()
     if not pool:
@@ -281,6 +286,21 @@ async def _fast_price_tick_inner(force_all_markets: bool = False):
             us_raw = r if isinstance(r, dict) else {}
             if isinstance(r, Exception):
                 logger.warning(f"_fetch_us_realtime_bulk 失敗: {r}")
+
+    # 將「抓取狀態」與價格列分開記錄。即使價格未變、dirty check 不寫 DB，
+    # 系統仍能知道本輪何時成功觀測過資料，以及覆蓋率是否完整。
+    await asyncio.gather(
+        *(
+            [asyncio.to_thread(
+                record_sync_state, "quotes", "TW", len(tw_tickers), tw_raw
+            )] if tw_tickers else []
+        ),
+        *(
+            [asyncio.to_thread(
+                record_sync_state, "quotes", "US", len(us_tickers), us_raw
+            )] if us_tickers else []
+        ),
+    )
 
     # ── 組合有效結果 ──
     data_list: list = []

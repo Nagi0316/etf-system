@@ -186,8 +186,43 @@ _RANK_SPECS = {
 _RANK_ALIASES = {"volume": "hot", "size": "asset", "holder": "holders"}
 
 
-def _ranking_updated_at() -> str:
+def _ranking_updated_at(value=None) -> str:
+    """格式化真實同步時間；僅在舊資料庫尚無狀態列時使用目前時間。"""
+    if value:
+        if isinstance(value, str):
+            try:
+                value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                value = None
+        if isinstance(value, datetime):
+            if value.tzinfo is not None:
+                value = value.astimezone(ZoneInfo("Asia/Taipei"))
+            return value.strftime("%H:%M")
     return datetime.now(ZoneInfo("Asia/Taipei")).strftime("%H:%M")
+
+
+def _ranking_data_meta(cursor, market: str) -> dict:
+    """回傳排行所依據的資料日、同步時間與實際覆蓋率。"""
+    cursor.execute("""
+        SELECT expected_count, received_count, data_date, status,
+               last_attempt_at, last_success_at
+        FROM data_sync_state
+        WHERE dataset='quotes' AND market=%s
+    """, (market,))
+    row = cursor.fetchone() or {}
+    expected = int(row.get("expected_count") or 0)
+    received = int(row.get("received_count") or 0)
+    last_success = row.get("last_success_at")
+    return {
+        "updated_at": _ranking_updated_at(last_success) if last_success else None,
+        "data_date": str(row.get("data_date"))[:10] if row.get("data_date") else None,
+        "sync_status": row.get("status") or "unknown",
+        "coverage": {
+            "received": received,
+            "expected": expected,
+            "percent": round(received / expected * 100, 1) if expected else 0.0,
+        },
+    }
 
 
 @router.get("/api/etf-rankings/{rank_type}")
@@ -212,13 +247,17 @@ def get_etf_rankings(rank_type: str, market: str = ""):
                 (market,)
             )
             rows = cursor.fetchall()
+            meta = _ranking_data_meta(cursor, market)
 
-        payload = {"data": rows, "updated_at": _ranking_updated_at()}
+        payload = {"data": rows, **meta}
         cache.set(cache_key, payload, CACHE_TTL_RANK)
         return safe_json({"status": "success", **payload})
     except Exception as e:
         logger.error(f"etf rankings error ({rank_type}/{market}): {e}", exc_info=True)
-        return safe_json({"status": "success", "data": [], "updated_at": _ranking_updated_at()})
+        return safe_json({
+            "status": "error", "data": [],
+            "message": "排行榜資料暫時無法讀取",
+        }, 503)
 
 
 @router.get("/api/etf/rankings/combined")
@@ -241,20 +280,19 @@ def get_combined_rankings(market: str = "TW"):
                     (market,)
                 )
                 result[rank_type] = cursor.fetchall()
+            result.update(_ranking_data_meta(cursor, market))
 
         # 舊版首頁仍以 volume 讀取候選清單；內容與今日熱門相同。
         result["volume"] = result["hot"]
-        result["updated_at"] = _ranking_updated_at()
         cache.set(cache_key, result, CACHE_TTL_RANK)
         return safe_json({"status": "success", **result})
     except Exception as e:
         logger.error(f"combined rankings error (market={market}): {e}", exc_info=True)
-        # 回傳空成功，讓前端顯示「暫無資料」而非無限轉圈
         return safe_json({
-            "status": "success",
+            "status": "error",
             "hot": [], "asset": [], "holders": [], "return": [], "yield": [], "volume": [],
-            "updated_at": _ranking_updated_at(),
-        })
+            "message": "排行榜資料暫時無法讀取",
+        }, 503)
 
 
 @router.get("/api/etf/rankings/all")
@@ -268,6 +306,7 @@ def get_all_rankings():
 
     try:
         result: dict = {"TW": {}, "US": {}}
+        market_meta: dict = {}
         with get_db() as (conn, cursor):
             for market in ("TW", "US"):
                 for rank_type, (order, condition) in _RANK_SPECS.items():
@@ -279,18 +318,20 @@ def get_all_rankings():
                     )
                     result[market][rank_type] = cursor.fetchall()
                 result[market]["volume"] = result[market]["hot"]
+                market_meta[market] = _ranking_data_meta(cursor, market)
 
-        result["updated_at"] = _ranking_updated_at()
+        result["meta"] = market_meta
+        result["updated_at"] = market_meta["TW"]["updated_at"]
         cache.set("rank:all", result, CACHE_TTL_RANK)
         return safe_json({"status": "success", **result})
     except Exception as e:
         logger.error(f"all rankings error: {e}", exc_info=True)
         return safe_json({
-            "status": "success",
+            "status": "error",
             "TW": {"hot": [], "asset": [], "holders": [], "return": [], "yield": [], "volume": []},
             "US": {"hot": [], "asset": [], "holders": [], "return": [], "yield": [], "volume": []},
-            "updated_at": _ranking_updated_at(),
-        })
+            "message": "排行榜資料暫時無法讀取",
+        }, 503)
 
 
 @router.get("/api/etf/index")

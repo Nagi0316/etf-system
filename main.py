@@ -401,6 +401,42 @@ async def health_data():
                 for r in coverage_rows
             }
 
+            # 資料管線狀態：區分「資料值未變」與「同步根本失敗」。
+            cursor.execute("""
+                SELECT dataset, market, expected_count, received_count,
+                       data_date, status, last_attempt_at, last_success_at
+                FROM data_sync_state
+                ORDER BY dataset, market
+            """)
+            sync_rows = cursor.fetchall()
+            summary["sync_state"] = {
+                f"{r['dataset']}:{r['market']}": {
+                    "status": r["status"],
+                    "expected": int(r["expected_count"] or 0),
+                    "received": int(r["received_count"] or 0),
+                    "coverage_pct": round(
+                        int(r["received_count"] or 0)
+                        / int(r["expected_count"] or 1) * 100, 2
+                    ),
+                    "data_date": str(r["data_date"])[:10] if r["data_date"] else None,
+                    "last_attempt_at": str(r["last_attempt_at"]),
+                    "last_success_at": (
+                        str(r["last_success_at"]) if r["last_success_at"] else None
+                    ),
+                }
+                for r in sync_rows
+            }
+            for r in sync_rows:
+                if r["status"] != "success":
+                    issues.append({
+                        "type": "sync_incomplete",
+                        "market": r["market"],
+                        "detail": (
+                            f"{r['dataset']} 同步 {r['status']}："
+                            f"{r['received_count']}/{r['expected_count']}"
+                        ),
+                    })
+
             # 1. 熱門池缺漏 ETF（會直接影響首頁與排行榜）
             cursor.execute("""
                 SELECT m.ticker, m.market
@@ -635,6 +671,7 @@ async def health_data():
                       + summary.get("portfolio_drift_count", 0))
     warning_count  = (summary["stale_etfs"] + summary["null_fields_etfs"]
                       + summary.get("volatile_price_count", 0))
+    warning_count += sum(1 for i in issues if i["type"] == "sync_incomplete")
     if "fx_stale" in [i["type"] for i in issues]:
         warning_count += 1
     if critical_count > 0:

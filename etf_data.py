@@ -20,6 +20,58 @@ from utils import safe_float
 logger = logging.getLogger(__name__)
 
 
+def record_sync_state(dataset: str, market: str, expected_count: int,
+                      quotes: dict, detail: str = "") -> None:
+    """保存資料管線狀態，而不是用頁面請求時間假裝資料更新時間。
+
+    每個資料集／市場只保留一列，避免高頻排程形成無限增長的稽核表。
+    ``last_success_at`` 只在至少取得一筆有效資料時前進。
+    """
+    received_count = len(quotes)
+    status = (
+        "success" if expected_count > 0 and received_count >= expected_count
+        else "partial" if received_count > 0
+        else "failed"
+    )
+    quote_days = [_quote_date(q.get("quote_date")) for q in quotes.values()]
+    data_day = max(quote_days) if quote_days else None
+    now = datetime.now(ZoneInfo("Asia/Taipei")).replace(tzinfo=None)
+    success_at = now if received_count > 0 else None
+    try:
+        with get_db() as (conn, cursor):
+            cursor.execute(
+                "SELECT data_date, last_success_at FROM data_sync_state "
+                "WHERE dataset=%s AND market=%s",
+                (dataset, market),
+            )
+            previous = cursor.fetchone()
+            if previous:
+                cursor.execute("""
+                    UPDATE data_sync_state SET
+                      expected_count=%s, received_count=%s, data_date=%s,
+                      status=%s, detail=%s, last_attempt_at=%s,
+                      last_success_at=%s
+                    WHERE dataset=%s AND market=%s
+                """, (
+                    expected_count, received_count,
+                    data_day or previous.get("data_date"), status, detail[:500], now,
+                    success_at or previous.get("last_success_at"), dataset, market,
+                ))
+            else:
+                cursor.execute("""
+                    INSERT INTO data_sync_state
+                      (dataset, market, expected_count, received_count, data_date,
+                       status, detail, last_attempt_at, last_success_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (
+                    dataset, market, expected_count, received_count, data_day,
+                    status, detail[:500], now, success_at,
+                ))
+            conn.commit()
+    except Exception as exc:
+        logger.warning("record_sync_state %s/%s failed: %s", dataset, market, exc)
+
+
 def _quote_date(value=None) -> date:
     """將資料源的交易時間轉成交易日；無有效來源時間才退回今天。"""
     if isinstance(value, date):
@@ -757,6 +809,7 @@ def _parse_tw_mis_quote(d: dict) -> Optional[dict]:
         "is_after_hours": z_val in ("-", ""),
         "used_fallback_last": used_fallback_last,
         "quote_date": _quote_date(d.get("d")),
+        "quote_source": "twse_mis",
     }
 
 
@@ -885,6 +938,7 @@ def _fetch_tw_yahoo_quote(ticker: str) -> Optional[dict]:
                 "quote_date": _quote_date(
                     timestamps[-1] if timestamps else meta.get("regularMarketTime")
                 ),
+                "quote_source": "yahoo_chart",
             }
             cache.set(cache_key, parsed, ttl=45)
             return parsed
@@ -955,6 +1009,7 @@ def _fetch_tw_official_bulk() -> dict:
                     "volume": int(safe_float(item.get(fields["volume"]))),
                     "is_after_hours": True,
                     "quote_date": _parse_tw_market_date(item.get(fields["date"])),
+                    "quote_source": "tw_official_openapi",
                 }
         except Exception as e:
             logger.warning(f"TW official bulk source failed ({url}): {e}")
@@ -1007,6 +1062,7 @@ def _fetch_tw_official_month_quote(ticker: str) -> Optional[dict]:
             "volume": int(safe_float(str(row[1]).replace(",", ""))),
             "is_after_hours": True,
             "quote_date": quote_date,
+            "quote_source": "twse_monthly",
         }
     except Exception as e:
         logger.debug(f"TW official monthly quote {ticker}: {e}")
@@ -1177,6 +1233,7 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
                         "volume": int(safe_float(item.get("regularMarketVolume"))),
                         "is_after_hours": False,
                         "quote_date": _quote_date(item.get("regularMarketTime")),
+                        "quote_source": "yahoo_quote",
                     }
                     if not _tw_quote_is_fresh(candidate, expected_day):
                         continue
@@ -1505,6 +1562,7 @@ def _fetch_us_quote(ticker: str, fast: bool = False) -> Optional[dict]:
             "quote_date": _quote_date(
                 timestamps[-1] if timestamps else meta.get("regularMarketTime")
             ),
+            "quote_source": "yahoo_chart",
         }
     except Exception as e:
         logger.debug(f"US quote {ticker}: {e}")
@@ -1563,6 +1621,7 @@ def _fetch_us_nasdaq_quote(ticker: str) -> Optional[dict]:
             "day_low": safe_float(str(row.get("low", "")).replace(",", "").replace("$", "")) or price,
             "volume": int(safe_float(str(row.get("volume", "")).replace(",", ""))),
             "quote_date": quote_date,
+            "quote_source": "nasdaq_history",
         }
     except Exception as e:
         logger.debug(f"Nasdaq quote {ticker}: {e}")
@@ -1619,6 +1678,7 @@ def _fetch_us_realtime_bulk(tickers: list) -> dict:
                     "day_low":   safe_float(item.get("regularMarketDayLow",   price)),
                     "volume":    int(safe_float(item.get("regularMarketVolume", 0))),
                     "quote_date": _quote_date(item.get("regularMarketTime")),
+                    "quote_source": "yahoo_quote",
                 }
         except Exception as e:
             logger.debug(f"US bulk realtime chunk {i}: {e}")
@@ -1943,8 +2003,10 @@ def save_etf_data(data: dict):
              dividend_yield, payout_freq,
              annual_return_1y, annual_return_3y, annual_return_5y,
              pe_ratio, expense_ratio,
-             day_high, day_low, fifty_two_week_high, fifty_two_week_low)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+             day_high, day_low, fifty_two_week_high, fifty_two_week_low,
+             quote_source, quote_updated_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,CURRENT_TIMESTAMP)
             ON DUPLICATE KEY UPDATE
               -- price>0 才覆蓋：防止爬取瞬間失效（price=0）清除已有正確價格
               current_price=IF(VALUES(current_price)>0, VALUES(current_price), current_price),
@@ -1975,6 +2037,8 @@ def save_etf_data(data: dict):
               asset_size=IF(VALUES(asset_size)>0, VALUES(asset_size), asset_size),
               nav=IF(VALUES(nav)>0, VALUES(nav), nav),
               day_high=VALUES(day_high), day_low=VALUES(day_low),
+              quote_source=IF(VALUES(current_price)>0, VALUES(quote_source), quote_source),
+              quote_updated_at=IF(VALUES(current_price)>0, CURRENT_TIMESTAMP, quote_updated_at),
               fifty_two_week_high=VALUES(fifty_two_week_high),
               fifty_two_week_low=VALUES(fifty_two_week_low)
         """, (
@@ -1993,6 +2057,7 @@ def save_etf_data(data: dict):
             day_low,
             _positive_or_previous("fifty_two_week_high"),
             _positive_or_previous("fifty_two_week_low"),
+            data.get("quote_source") or "unknown",
         ))
         conn.commit()
     cache.delete(f"detail:{ticker}")
@@ -2045,8 +2110,8 @@ def save_price_only(data: dict):
         cursor.execute("""
             INSERT INTO etf_daily_data
               (ticker, date, current_price, price_change, price_change_percent,
-               day_high, day_low, volume)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+               day_high, day_low, volume, quote_source, quote_updated_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,CURRENT_TIMESTAMP)
             ON DUPLICATE KEY UPDATE
               -- price>0 才覆蓋（save_price_only 同樣需要防零價守衛）
               current_price=IF(VALUES(current_price)>0, VALUES(current_price), current_price),
@@ -2054,7 +2119,9 @@ def save_price_only(data: dict):
               price_change_percent=IF(VALUES(current_price)>0, VALUES(price_change_percent), price_change_percent),
               day_high=IF(VALUES(current_price)>0, VALUES(day_high), day_high),
               day_low=IF(VALUES(current_price)>0, VALUES(day_low), day_low),
-              volume=IF(VALUES(current_price)>0, VALUES(volume), volume)
+              volume=IF(VALUES(current_price)>0, VALUES(volume), volume),
+              quote_source=IF(VALUES(current_price)>0, VALUES(quote_source), quote_source),
+              quote_updated_at=IF(VALUES(current_price)>0, CURRENT_TIMESTAMP, quote_updated_at)
         """, (
             ticker, today, cp,
             safe_float(data.get("price_change")),
@@ -2062,6 +2129,7 @@ def save_price_only(data: dict):
             safe_float(data.get("day_high", cp)),
             safe_float(data.get("day_low", cp)),
             int(safe_float(data.get("volume", 0))),
+            data.get("quote_source") or "unknown",
         ))
         conn.commit()
 
@@ -2091,21 +2159,30 @@ def save_price_bulk(data_list: list) -> int:
            asset_size, nav, discount_premium,
            dividend_yield, payout_freq,
            annual_return_1y, annual_return_3y, annual_return_5y,
-           pe_ratio, expense_ratio, fifty_two_week_high, fifty_two_week_low)
+           pe_ratio, expense_ratio, fifty_two_week_high, fifty_two_week_low,
+           quote_source, quote_updated_at)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                %s,CURRENT_TIMESTAMP)
         ON DUPLICATE KEY UPDATE
           current_price         = IF(VALUES(current_price)>0, VALUES(current_price), current_price),
           price_change          = IF(VALUES(current_price)>0, VALUES(price_change), price_change),
           price_change_percent  = IF(VALUES(current_price)>0, VALUES(price_change_percent), price_change_percent),
           day_high              = IF(VALUES(current_price)>0, VALUES(day_high), day_high),
           day_low               = IF(VALUES(current_price)>0, VALUES(day_low), day_low),
-          volume                = IF(VALUES(current_price)>0, VALUES(volume), volume)
+          volume                = IF(VALUES(current_price)>0, VALUES(volume), volume),
+          quote_source          = IF(VALUES(current_price)>0, VALUES(quote_source), quote_source),
+          quote_updated_at      = IF(VALUES(current_price)>0, CURRENT_TIMESTAMP, quote_updated_at)
     """
 
     rows_to_write: list  = []   # executemany 的參數列表
     dirty_updates: list  = []   # 寫入成功後更新 dirty cache 的 (ticker, price, volume, date)
     tickers_written: set = set()
+    source_by_ticker = {
+        data.get("ticker", ""): data.get("quote_source") or "unknown"
+        for data in data_list
+        if data.get("ticker")
+    }
 
     for data in data_list:
         ticker = data.get("ticker", "")
@@ -2180,6 +2257,7 @@ def save_price_bulk(data_list: list) -> int:
                 previous.get("expense_ratio"),
                 previous.get("fifty_two_week_high"),
                 previous.get("fifty_two_week_low"),
+                source_by_ticker.get(row[0], "unknown"),
             ))
 
         cursor.executemany(_SQL, enriched_rows)
