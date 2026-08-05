@@ -716,7 +716,8 @@ def seed_etf_master():
             fmt = ",".join(["%s"] * len(no_payout_tw))
             cursor.execute(
                 f"UPDATE etf_daily_data "
-                f"SET payout_freq='不配息', dividend_yield=0 "
+                f"SET payout_freq='不配息', dividend_yield=0, "
+                f"dividend_status='not_applicable' "
                 f"WHERE ticker IN ({fmt})",
                 no_payout_tw,
             )

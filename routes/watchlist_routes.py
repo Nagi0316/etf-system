@@ -39,7 +39,6 @@ async def get_watchlist(current_user: dict = Depends(get_current_user)):
                 d.dividend_yield as dividend_yield,
                 COALESCE(d.dividend_status,
                   CASE WHEN d.dividend_yield > 0 THEN 'confirmed'
-                       WHEN d.payout_freq='不配息' THEN 'not_applicable'
                        ELSE 'unknown' END) as dividend_status,
                 d.annual_return_1y
             FROM user_watchlist w

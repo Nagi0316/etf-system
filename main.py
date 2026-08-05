@@ -452,15 +452,11 @@ async def health_data():
                 SELECT
                   SUM(CASE WHEN COALESCE(d.dividend_status,
                     CASE WHEN d.dividend_yield>0 THEN 'confirmed'
-                         WHEN d.payout_freq='不配息' THEN 'not_applicable'
                          ELSE 'unknown' END)='confirmed' THEN 1 ELSE 0 END) AS confirmed,
                   SUM(CASE WHEN d.dividend_status='estimated' THEN 1 ELSE 0 END) AS estimated,
-                  SUM(CASE WHEN COALESCE(d.dividend_status,
-                    CASE WHEN d.payout_freq='不配息' THEN 'not_applicable'
-                         ELSE 'unknown' END)='not_applicable' THEN 1 ELSE 0 END) AS not_applicable,
+                  SUM(CASE WHEN d.dividend_status='not_applicable' THEN 1 ELSE 0 END) AS not_applicable,
                   SUM(CASE WHEN COALESCE(d.dividend_status,
                     CASE WHEN d.dividend_yield>0 THEN 'confirmed'
-                         WHEN d.payout_freq='不配息' THEN 'not_applicable'
                          ELSE 'unknown' END)='unknown' THEN 1 ELSE 0 END) AS unknown
                 FROM etf_master m
                 JOIN (

@@ -72,7 +72,6 @@ _ETF_DETAIL_SELECT = """
         COALESCE(d.payout_freq,'未知') as payout_freq,
         COALESCE(d.dividend_status,
           CASE WHEN d.dividend_yield > 0 THEN 'confirmed'
-               WHEN d.payout_freq='不配息' THEN 'not_applicable'
                ELSE 'unknown' END) as dividend_status,
         d.annual_return_1y,   -- NULL = 資料不足（前端顯示「—」）
         d.annual_return_3y,
@@ -139,7 +138,6 @@ _RANK_SELECT = """
         COALESCE(d.payout_freq,'未知')         AS payout_freq,
         COALESCE(d.dividend_status,
           CASE WHEN d.dividend_yield > 0 THEN 'confirmed'
-               WHEN d.payout_freq='不配息' THEN 'not_applicable'
                ELSE 'unknown' END)           AS dividend_status,
         d.annual_return_1y,
         COALESCE(d.expense_ratio,0)          AS expense_ratio,
@@ -422,7 +420,6 @@ async def search_etf(request: Request, q: str = Query(..., min_length=1)):
                     COALESCE(d.payout_freq,'未知') as payout_freq,
                     COALESCE(d.dividend_status,
                       CASE WHEN d.dividend_yield > 0 THEN 'confirmed'
-                           WHEN d.payout_freq='不配息' THEN 'not_applicable'
                            ELSE 'unknown' END) as dividend_status,
                     d.annual_return_1y
                 FROM etf_master m

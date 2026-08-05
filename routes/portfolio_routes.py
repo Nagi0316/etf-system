@@ -67,7 +67,6 @@ async def get_portfolio(current_user: dict = Depends(get_current_user)):
                 COALESCE(d.payout_freq, '未知') AS payout_freq,
                 COALESCE(d.dividend_status,
                   CASE WHEN d.dividend_yield > 0 THEN 'confirmed'
-                       WHEN d.payout_freq='不配息' THEN 'not_applicable'
                        ELSE 'unknown' END) AS dividend_status,
                 COALESCE(d.price_change_percent, 0) AS price_change_percent
             FROM user_portfolio p
