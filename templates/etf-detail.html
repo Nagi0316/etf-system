@@ -331,7 +331,8 @@ function renderData() {
   document.title = `${d.ticker} ${d.name||''} — ETF投資系統`;
   document.getElementById('market-badge').textContent = d.market === 'TW' ? '台股' : '美股';
 
-  const freq = d.payout_freq || '';
+  const dividendStatus = d.dividend_status || 'unknown';
+  const freq = dividendStatus === 'unknown' ? '待確認' : (d.payout_freq || '');
   const badgeMap = {
     '月配':  'bg-blue-100 text-blue-700',
     '雙月配':'bg-cyan-100 text-cyan-700',
@@ -417,7 +418,9 @@ function renderData() {
 
   document.getElementById('payout-freq').textContent = freq || '-';
   const yld = parseFloat(d.dividend_yield) || 0;
-  document.getElementById('dividend-yield').textContent = yld > 0 ? yld.toFixed(2)+'%' : '-';
+  document.getElementById('dividend-yield').textContent = yld > 0
+    ? yld.toFixed(2)+'%' + (dividendStatus === 'estimated' ? '（估）' : '')
+    : dividendStatus === 'not_applicable' ? '不配息' : '待同步';
 
   // 顯示資料來源的實際交易日，並啟動頁面自動同步。
   const updEl = document.getElementById('last-updated');

@@ -309,7 +309,8 @@ def init_db():
             asset_size           DECIMAL(20,2)  DEFAULT 0,
             nav                  DECIMAL(10,2)  DEFAULT 0,
             dividend_yield       DECIMAL(10,4)  DEFAULT NULL,
-            payout_freq          VARCHAR(20)    DEFAULT '季配',
+            payout_freq          VARCHAR(20)    DEFAULT NULL,
+            dividend_status      VARCHAR(20)    DEFAULT NULL,
             annual_return_1y     DECIMAL(7,4)   DEFAULT NULL,
             annual_return_3y     DECIMAL(7,4)   DEFAULT NULL,
             annual_return_5y     DECIMAL(7,4)   DEFAULT NULL,
@@ -446,6 +447,7 @@ def init_db():
         modify_stmts = [
             # dividend_yield 精度修正（歷史原因）
             "ALTER TABLE etf_daily_data MODIFY COLUMN dividend_yield DECIMAL(10,4) DEFAULT NULL",
+            "ALTER TABLE etf_daily_data MODIFY COLUMN payout_freq VARCHAR(20) DEFAULT NULL",
             # annual_return 改為 DEFAULT NULL：區分「無資料」與「0%」，前端顯示「—」而非 +0.00%
             "ALTER TABLE etf_daily_data MODIFY COLUMN annual_return_1y DECIMAL(7,4) DEFAULT NULL",
             "ALTER TABLE etf_daily_data MODIFY COLUMN annual_return_3y DECIMAL(7,4) DEFAULT NULL",
@@ -465,6 +467,7 @@ def init_db():
         ("etf_daily_data", "discount_premium",   "DECIMAL(10,2) DEFAULT 0"),
         ("etf_daily_data", "quote_source",       "VARCHAR(40) DEFAULT NULL"),
         ("etf_daily_data", "quote_updated_at",   "DATETIME DEFAULT NULL"),
+        ("etf_daily_data", "dividend_status",    "VARCHAR(20) DEFAULT NULL"),
         ("etf_daily_data", "annual_return_3y",   "DECIMAL(7,4)  DEFAULT NULL"),
         ("etf_daily_data", "annual_return_5y",   "DECIMAL(7,4)  DEFAULT NULL"),
         ("etf_daily_data", "fifty_two_week_high","DECIMAL(10,2) DEFAULT 0"),

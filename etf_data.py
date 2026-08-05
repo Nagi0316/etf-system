@@ -1745,6 +1745,44 @@ def fetch_one_etf(ticker: str, market: str) -> Optional[dict]:
     return _fetch_us_etf(ticker)
 
 
+def fetch_dividend_only(ticker: str, market: str, current_price: float) -> dict:
+    """低頻補齊專用：只抓配息，避免為全市場重抓歷史與基金詳情。"""
+    if market != "TW" or current_price <= 0:
+        return {"dividend_status": "unknown"}
+    value, frequency, confirmed = _fetch_tw_dividend(ticker, current_price)
+    return {
+        "dividend_yield": value if value > 0 else None,
+        "payout_freq": frequency,
+        "dividend_confirmed": confirmed,
+        "dividend_status": _resolved_dividend_status(
+            value, frequency, confirmed, ticker
+        ),
+    }
+
+
+def save_dividend_snapshot(ticker: str, quote_date, data: dict) -> bool:
+    """只更新指定交易日的配息欄位；未知結果不覆蓋既有可信資料。"""
+    status = data.get("dividend_status") or "unknown"
+    if status == "unknown":
+        return False
+    with get_db() as (conn, cursor):
+        cursor.execute("""
+            UPDATE etf_daily_data SET
+              dividend_yield=%s, payout_freq=%s, dividend_status=%s
+            WHERE ticker=%s AND date=%s
+        """, (
+            data.get("dividend_yield"), data.get("payout_freq"), status,
+            ticker, _quote_date(quote_date),
+        ))
+        changed = cursor.rowcount > 0
+        conn.commit()
+    if changed:
+        cache.delete(f"detail:{ticker}")
+        cache.delete_prefix("rank:")
+        cache.delete("health:data")
+    return changed
+
+
 def _fetch_tw_etf(ticker: str) -> Optional[dict]:
     quote = _fetch_tw_realtime_perfect(ticker)
     if not quote:
@@ -1796,6 +1834,9 @@ def _fetch_tw_etf(ticker: str) -> Optional[dict]:
         'dividend_yield': div_yield,
         'payout_freq': payout_freq or "不配息",
         'dividend_confirmed': div_confirmed,  # True=API 明確確認（可覆蓋 DB 即使值為 0）
+        'dividend_status': _resolved_dividend_status(
+            div_yield, payout_freq, div_confirmed, ticker
+        ),
         'annual_return_1y': ann_1y,
         'annual_return_3y': ann_3y,
         'annual_return_5y': ann_5y,
@@ -1909,6 +1950,9 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         'pe_ratio': pe_ratio, 'expense_ratio': expense_ratio,
         'dividend_yield': div_yield, 'payout_freq': payout_freq,
         'dividend_confirmed': div_confirmed,  # True=Yahoo 明確確認（可覆蓋 DB 即使值為 0）
+        'dividend_status': _resolved_dividend_status(
+            div_yield, payout_freq, div_confirmed, ticker
+        ),
         'annual_return_1y': ann_1y,  # None = 資料不足（存 DB NULL，前端顯示「—」）
         'annual_return_3y': ann_3y,
         'annual_return_5y': ann_5y,
@@ -1926,6 +1970,19 @@ def _resolved_payout_freq(data_freq: str | None, previous_freq: str | None,
     if incoming == "不配息" and not confirmed and previous_freq:
         return previous_freq
     return incoming
+
+
+def _resolved_dividend_status(dividend_yield, payout_freq: str | None,
+                              confirmed: bool, ticker: str = "") -> str:
+    """區分有數值、確定不配息、估算與尚未取得，避免全部顯示成破折號。"""
+    value = safe_float(dividend_yield)
+    if value > 0:
+        return "confirmed" if confirmed else "estimated"
+    if confirmed and payout_freq == "不配息":
+        return "not_applicable"
+    if payout_freq == "不配息" and KNOWN_PAYOUT_FREQ.get(ticker) == "不配息":
+        return "not_applicable"
+    return "unknown"
 
 
 def save_etf_data(data: dict):
@@ -1976,6 +2033,9 @@ def save_etf_data(data: dict):
         payout_freq = _resolved_payout_freq(
             data.get("payout_freq"), previous.get("payout_freq"), div_confirmed
         )
+        dividend_status = data.get("dividend_status") or _resolved_dividend_status(
+            dy_to_store, payout_freq, div_confirmed, ticker
+        )
 
         def _positive_or_previous(key: str) -> float:
             value = safe_float(data.get(key))
@@ -2004,11 +2064,12 @@ def save_etf_data(data: dict):
             (ticker, date, current_price, price_change, price_change_percent,
              volume, asset_size, nav, discount_premium,
              dividend_yield, payout_freq,
+             dividend_status,
              annual_return_1y, annual_return_3y, annual_return_5y,
              pe_ratio, expense_ratio,
              day_high, day_low, fifty_two_week_high, fifty_two_week_low,
              quote_source, quote_updated_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                     %s,CURRENT_TIMESTAMP)
             ON DUPLICATE KEY UPDATE
               -- price>0 才覆蓋：防止爬取瞬間失效（price=0）清除已有正確價格
@@ -2025,6 +2086,7 @@ def save_etf_data(data: dict):
               -- 未確認來源已在 Python 端沿用舊值；此處直接寫入，才能讓
               -- 已確認不配息的商品修正過去誤標的配息頻率。
               payout_freq=VALUES(payout_freq),
+              dividend_status=VALUES(dividend_status),
               -- 年化報酬：新值 IS NOT NULL 才更新（NULL = 資料不足，保留 DB 舊值）
               annual_return_1y=IF(VALUES(annual_return_1y) IS NOT NULL,
                                   VALUES(annual_return_1y),
@@ -2051,6 +2113,7 @@ def save_etf_data(data: dict):
             safe_float(data.get("volume")), _positive_or_previous("asset_size"),
             nav, dp,
             dy_to_store, payout_freq,
+            dividend_status,
             annual_return_1y,
             annual_return_3y,
             annual_return_5y,
@@ -2161,11 +2224,12 @@ def save_price_bulk(data_list: list) -> int:
            day_high, day_low, volume,
            asset_size, nav, discount_premium,
            dividend_yield, payout_freq,
+           dividend_status,
            annual_return_1y, annual_return_3y, annual_return_5y,
            pe_ratio, expense_ratio, fifty_two_week_high, fifty_two_week_low,
            quote_source, quote_updated_at)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,CURRENT_TIMESTAMP)
         ON DUPLICATE KEY UPDATE
           current_price         = IF(VALUES(current_price)>0, VALUES(current_price), current_price),
@@ -2227,7 +2291,7 @@ def save_price_bulk(data_list: list) -> int:
         cursor.execute(
             f"""
             SELECT d.asset_size, d.nav, d.discount_premium,
-                   d.dividend_yield, d.payout_freq,
+                   d.dividend_yield, d.payout_freq, d.dividend_status,
                    d.annual_return_1y, d.annual_return_3y, d.annual_return_5y,
                    d.pe_ratio, d.expense_ratio,
                    d.fifty_two_week_high, d.fifty_two_week_low,
@@ -2253,6 +2317,10 @@ def save_price_bulk(data_list: list) -> int:
                 previous.get("discount_premium"),
                 previous.get("dividend_yield"),
                 previous.get("payout_freq") or "不配息",
+                previous.get("dividend_status") or _resolved_dividend_status(
+                    previous.get("dividend_yield"), previous.get("payout_freq"),
+                    False, row[0]
+                ),
                 previous.get("annual_return_1y"),
                 previous.get("annual_return_3y"),
                 previous.get("annual_return_5y"),

@@ -68,8 +68,12 @@ _ETF_DETAIL_SELECT = """
         COALESCE(d.volume,0) as volume,
         COALESCE(d.nav,0) as nav,
         COALESCE(d.discount_premium,0) as discount_premium,
-        COALESCE(d.dividend_yield,0) as dividend_yield,
-        COALESCE(d.payout_freq,'不配息') as payout_freq,
+        d.dividend_yield as dividend_yield,
+        COALESCE(d.payout_freq,'未知') as payout_freq,
+        COALESCE(d.dividend_status,
+          CASE WHEN d.dividend_yield > 0 THEN 'confirmed'
+               WHEN d.payout_freq='不配息' THEN 'not_applicable'
+               ELSE 'unknown' END) as dividend_status,
         d.annual_return_1y,   -- NULL = 資料不足（前端顯示「—」）
         d.annual_return_3y,
         d.annual_return_5y,
@@ -131,8 +135,12 @@ _RANK_SELECT = """
         COALESCE(d.price_change,0)           AS price_change,
         COALESCE(d.price_change_percent,0)   AS price_change_percent,
         COALESCE(d.volume,0)                 AS volume,
-        COALESCE(d.dividend_yield,0)         AS dividend_yield,
-        COALESCE(d.payout_freq,'不配息')      AS payout_freq,
+        d.dividend_yield                     AS dividend_yield,
+        COALESCE(d.payout_freq,'未知')         AS payout_freq,
+        COALESCE(d.dividend_status,
+          CASE WHEN d.dividend_yield > 0 THEN 'confirmed'
+               WHEN d.payout_freq='不配息' THEN 'not_applicable'
+               ELSE 'unknown' END)           AS dividend_status,
         d.annual_return_1y,
         COALESCE(d.expense_ratio,0)          AS expense_ratio,
         COALESCE(m.holder_count,0)           AS holder_count,
@@ -410,8 +418,12 @@ async def search_etf(request: Request, q: str = Query(..., min_length=1)):
                 SELECT m.ticker, m.name, m.market,
                     COALESCE(d.current_price,0) as current_price,
                     COALESCE(d.price_change_percent,0) as price_change_percent,
-                    COALESCE(d.dividend_yield,0) as dividend_yield,
-                    COALESCE(d.payout_freq,'不配息') as payout_freq,
+                    d.dividend_yield as dividend_yield,
+                    COALESCE(d.payout_freq,'未知') as payout_freq,
+                    COALESCE(d.dividend_status,
+                      CASE WHEN d.dividend_yield > 0 THEN 'confirmed'
+                           WHEN d.payout_freq='不配息' THEN 'not_applicable'
+                           ELSE 'unknown' END) as dividend_status,
                     d.annual_return_1y
                 FROM etf_master m
                 {LATEST_DAILY_JOIN}
@@ -490,6 +502,7 @@ async def _on_demand_fetch(ticker: str, client_ip: str = "") -> Optional[dict]:
                 "price_change_percent": data.get("price_change_percent", 0),
                 "dividend_yield": data.get("dividend_yield", 0),
                 "payout_freq": data.get("payout_freq", ""),
+                "dividend_status": data.get("dividend_status", "unknown"),
                 "annual_return_1y": data.get("annual_return_1y"),  # None 保留，前端 retFmt 顯示「—」
             }
         except Exception as e:

@@ -138,9 +138,13 @@ function renderWatchlist() {
     const price  = item.current_price ? item.current_price.toFixed(2) : '-';
     const high   = item.day_high ? item.day_high.toFixed(2) : '-';
     const low    = item.day_low  ? item.day_low.toFixed(2)  : '-';
-    const yld    = item.dividend_yield ? item.dividend_yield.toFixed(2)+'%' : '-';
+    const yldValue = Number(item.dividend_yield) || 0;
+    const yld = yldValue > 0
+      ? yldValue.toFixed(2)+'%' + (item.dividend_status === 'estimated' ? '（估）' : '')
+      : item.dividend_status === 'not_applicable' ? '不配息' : '待同步';
     const bCls   = FREQ_BADGE[item.payout_freq] || 'bg-slate-100 text-slate-400';
-    const freqTag = item.payout_freq ? `<span class="text-[11px] px-1.5 py-0.5 rounded font-medium ${bCls} ml-1">${item.payout_freq}</span>` : '';
+    const freqTag = item.payout_freq && item.dividend_status !== 'unknown'
+      ? `<span class="text-[11px] px-1.5 py-0.5 rounded font-medium ${bCls} ml-1">${item.payout_freq}</span>` : '';
     return `
     <tr class="table-row cursor-pointer animate-fade-in" onclick="location.href='/etf-detail/${item.ticker}'">
       <td class="px-4 py-3.5">

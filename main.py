@@ -72,6 +72,10 @@ async def _startup_sequence():
     await _fast_price_tick(force_all_markets=True)
     await asyncio.gather(fx_task, return_exceptions=True)
 
+    # 配息是低頻資料，獨立分批補齊，不阻塞行情與頁面啟動。
+    from scheduler import _update_dividend_gaps
+    asyncio.create_task(_update_dividend_gaps())
+
     # Step 1: 同步官方 ETF 商品範圍、資產規模與受益人數。
     try:
         from services.twse_sync import sync_tw_etfs
@@ -443,6 +447,36 @@ async def health_data():
                             f"{r['received_count']}/{r['expected_count']}"
                         ),
                     })
+
+            cursor.execute("""
+                SELECT
+                  SUM(CASE WHEN COALESCE(d.dividend_status,
+                    CASE WHEN d.dividend_yield>0 THEN 'confirmed'
+                         WHEN d.payout_freq='不配息' THEN 'not_applicable'
+                         ELSE 'unknown' END)='confirmed' THEN 1 ELSE 0 END) AS confirmed,
+                  SUM(CASE WHEN d.dividend_status='estimated' THEN 1 ELSE 0 END) AS estimated,
+                  SUM(CASE WHEN COALESCE(d.dividend_status,
+                    CASE WHEN d.payout_freq='不配息' THEN 'not_applicable'
+                         ELSE 'unknown' END)='not_applicable' THEN 1 ELSE 0 END) AS not_applicable,
+                  SUM(CASE WHEN COALESCE(d.dividend_status,
+                    CASE WHEN d.dividend_yield>0 THEN 'confirmed'
+                         WHEN d.payout_freq='不配息' THEN 'not_applicable'
+                         ELSE 'unknown' END)='unknown' THEN 1 ELSE 0 END) AS unknown
+                FROM etf_master m
+                JOIN (
+                  SELECT d1.* FROM etf_daily_data d1
+                  INNER JOIN (
+                    SELECT ticker, MAX(date) md FROM etf_daily_data
+                    WHERE current_price>0 GROUP BY ticker
+                  ) d2 ON d1.ticker=d2.ticker AND d1.date=d2.md
+                ) d ON d.ticker=m.ticker
+                WHERE m.is_delisted=0
+            """)
+            dividend_quality = cursor.fetchone() or {}
+            summary["dividend_quality"] = {
+                key: int(dividend_quality.get(key) or 0)
+                for key in ("confirmed", "estimated", "not_applicable", "unknown")
+            }
 
             # 1. 熱門池缺漏 ETF（會直接影響首頁與排行榜）
             cursor.execute("""

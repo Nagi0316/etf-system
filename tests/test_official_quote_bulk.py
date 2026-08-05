@@ -10,6 +10,7 @@ from etf_data import (
     _parse_tw_market_date,
     _parse_tw_mis_quote,
     _resolved_payout_freq,
+    _resolved_dividend_status,
     _expected_tw_quote_day,
     _tw_quote_is_fresh,
 )
@@ -56,6 +57,24 @@ class OfficialQuoteBulkTest(unittest.TestCase):
         self.assertEqual(
             _resolved_payout_freq("不配息", "季配", confirmed=False),
             "季配",
+        )
+
+    def test_dividend_status_distinguishes_missing_from_no_distribution(self):
+        self.assertEqual(
+            _resolved_dividend_status(None, "不配息", False, "UNKNOWN"),
+            "unknown",
+        )
+        self.assertEqual(
+            _resolved_dividend_status(0, "不配息", False, "00631L"),
+            "not_applicable",
+        )
+        self.assertEqual(
+            _resolved_dividend_status(3.2, "季配", False, "0056"),
+            "estimated",
+        )
+        self.assertEqual(
+            _resolved_dividend_status(3.2, "季配", True, "0056"),
+            "confirmed",
         )
 
     def test_ranking_timestamp_uses_taipei_timezone(self):

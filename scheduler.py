@@ -79,6 +79,11 @@ def schedule_missing():
         asyncio.run_coroutine_threadsafe(_update_missing(), MAIN_LOOP)
 
 
+def schedule_dividend_gaps():
+    if MAIN_LOOP and MAIN_LOOP.is_running():
+        asyncio.run_coroutine_threadsafe(_update_dividend_gaps(), MAIN_LOOP)
+
+
 def schedule_twse_sync():
     if MAIN_LOOP and MAIN_LOOP.is_running():
         asyncio.run_coroutine_threadsafe(_run_twse_sync(), MAIN_LOOP)
@@ -471,6 +476,56 @@ async def _update_missing():
     logger.info("✅ 補漏掃描完成")
 
 
+async def _update_dividend_gaps(limit: int = 40):
+    """分批補齊全市場配息欄位，與高頻行情管線分離。"""
+    from database import get_db
+    from etf_data import fetch_dividend_only, save_dividend_snapshot
+
+    try:
+        with get_db() as (_, cursor):
+            cursor.execute("""
+                SELECT m.ticker, m.market, d.current_price, d.date
+                FROM etf_master m
+                JOIN (
+                    SELECT d1.* FROM etf_daily_data d1
+                    INNER JOIN (
+                        SELECT ticker, MAX(date) AS max_date
+                        FROM etf_daily_data WHERE current_price > 0 GROUP BY ticker
+                    ) d2 ON d1.ticker=d2.ticker AND d1.date=d2.max_date
+                ) d ON d.ticker=m.ticker
+                WHERE m.is_delisted=0 AND m.market='TW'
+                  AND COALESCE(d.dividend_status,'unknown')='unknown'
+                ORDER BY COALESCE(m.is_hot,0) DESC, m.ticker
+                LIMIT %s
+            """, (limit,))
+            rows = cursor.fetchall()
+    except Exception as exc:
+        logger.warning("配息缺口查詢失敗: %s", exc)
+        return
+
+    if not rows:
+        return
+    updated = 0
+    for i in range(0, len(rows), 4):
+        batch = rows[i:i + 4]
+        results = await asyncio.gather(*[
+            asyncio.to_thread(
+                fetch_dividend_only, row["ticker"], row["market"],
+                float(row["current_price"] or 0),
+            ) for row in batch
+        ], return_exceptions=True)
+        for row, result in zip(batch, results):
+            if isinstance(result, Exception):
+                logger.debug("配息補齊 %s: %s", row["ticker"], result)
+                continue
+            if await asyncio.to_thread(
+                save_dividend_snapshot, row["ticker"], row["date"], result
+            ):
+                updated += 1
+        await asyncio.sleep(1)
+    logger.info("✅ 配息缺口補齊：掃描 %s，更新 %s", len(rows), updated)
+
+
 # ──────────────────────────────────────────────
 #  TWSE 歷史價格補齊（每日 03:00 增量補缺月份）
 #  US ETF 歷史補齊（每日 04:30 美股收盤後）
@@ -646,6 +701,10 @@ def start_scheduler() -> BackgroundScheduler:
     # 每日 08:00 同步 TWSE/TPEX 全市場代碼
     sch.add_job(lambda: schedule_twse_sync(), CronTrigger(hour=8,  minute=0),  max_instances=1)
 
+    # 配息資料獨立低頻補齊：每輪最多 40 檔，避免拖慢即時行情。
+    sch.add_job(lambda: schedule_dividend_gaps(), CronTrigger(hour=6, minute=20), max_instances=1)
+    sch.add_job(lambda: schedule_dividend_gaps(), CronTrigger(hour=15, minute=10), max_instances=1)
+
     # 14:35 台股收盤後：先批量同步全市場價格，再補活躍標的完整資料
     sch.add_job(lambda: schedule_all_price_sync(), CronTrigger(hour=14, minute=34), max_instances=1)
     sch.add_job(lambda: schedule_update(),    CronTrigger(hour=14, minute=35), max_instances=1)
@@ -684,7 +743,7 @@ def start_scheduler() -> BackgroundScheduler:
         "   【盤中完整】每 30 分鐘更新含 dividend/history 補充資料\n"
         "   【台股】09:00–13:30 Asia/Taipei\n"
         "   【美股】09:30–16:00 America/New_York（DST-aware）\n"
-        "   03:00 TWSE 歷史補齊 | 03:30 報酬率重算 | 07:00 補漏掃描 | 08:00 TWSE 同步\n"
+        "   03:00 TWSE 歷史補齊 | 03:30 報酬率重算 | 06:20/15:10 配息補齊 | 07:00 補漏掃描 | 08:00 TWSE 同步\n"
         "   14:35 台股收盤完整更新 | 14:40 報酬率重算 | 05:15 美股收盤完整更新 | 05:30 US 歷史補齊 | 05:50 報酬率重算 | 每30分清快取"
     )
     return sch

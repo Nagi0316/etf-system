@@ -32,11 +32,15 @@ async def get_watchlist(current_user: dict = Depends(get_current_user)):
                 COALESCE(d.current_price,0) as current_price,
                 COALESCE(d.price_change,0) as price_change,
                 COALESCE(d.price_change_percent,0) as price_change_percent,
-                COALESCE(d.payout_freq,'不配息') as payout_freq,
+                COALESCE(d.payout_freq,'未知') as payout_freq,
                 COALESCE(d.volume,0) as volume,
                 COALESCE(d.day_high,0) as day_high,
                 COALESCE(d.day_low,0) as day_low,
-                COALESCE(d.dividend_yield,0) as dividend_yield,
+                d.dividend_yield as dividend_yield,
+                COALESCE(d.dividend_status,
+                  CASE WHEN d.dividend_yield > 0 THEN 'confirmed'
+                       WHEN d.payout_freq='不配息' THEN 'not_applicable'
+                       ELSE 'unknown' END) as dividend_status,
                 d.annual_return_1y
             FROM user_watchlist w
             JOIN etf_master m ON w.ticker = m.ticker

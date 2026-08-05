@@ -63,8 +63,12 @@ async def get_portfolio(current_user: dict = Depends(get_current_user)):
                 p.shares, p.avg_cost,
                 COALESCE(p.realized_profit, 0) AS realized_profit,
                 COALESCE(d.current_price, p.avg_cost) AS current_price,
-                COALESCE(d.dividend_yield, 0) AS dividend_yield,
-                COALESCE(d.payout_freq, '不配息') AS payout_freq,
+                d.dividend_yield AS dividend_yield,
+                COALESCE(d.payout_freq, '未知') AS payout_freq,
+                COALESCE(d.dividend_status,
+                  CASE WHEN d.dividend_yield > 0 THEN 'confirmed'
+                       WHEN d.payout_freq='不配息' THEN 'not_applicable'
+                       ELSE 'unknown' END) AS dividend_status,
                 COALESCE(d.price_change_percent, 0) AS price_change_percent
             FROM user_portfolio p
             JOIN etf_master m ON p.ticker = m.ticker
