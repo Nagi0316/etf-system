@@ -7,6 +7,7 @@ from etf_data import (
     _fetch_tw_official_bulk,
     _fetch_tw_official_month_quote,
     _fetch_us_nasdaq_quote,
+    _get_with_retry,
     _parse_tw_market_date,
     _parse_tw_mis_quote,
     _resolved_payout_freq,
@@ -59,6 +60,21 @@ class OfficialQuoteBulkTest(unittest.TestCase):
             _resolved_payout_freq("不配息", "季配", confirmed=False),
             "季配",
         )
+
+    @patch("etf_data.time.sleep")
+    def test_final_rate_limit_attempt_returns_without_extra_wait(self, sleep):
+        session = Mock()
+        response = Mock(status_code=429)
+        session.get.return_value = response
+
+        result = _get_with_retry(
+            session,
+            "https://example.invalid/quote",
+            max_attempts=1,
+        )
+
+        self.assertIs(result, response)
+        sleep.assert_not_called()
 
     def test_dividend_status_distinguishes_missing_from_no_distribution(self):
         self.assertEqual(

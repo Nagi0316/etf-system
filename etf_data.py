@@ -180,6 +180,8 @@ def _get_with_retry(session: req_lib.Session, url: str, timeout: int = 6,
             if r.status_code == 200:
                 return r
             if r.status_code == 429:
+                if attempt >= max_attempts - 1:
+                    return r
                 wait = min(60, 30 * (2 ** attempt)) + random.uniform(0, 5)
                 logger.debug(f"429 rate-limited {url[:60]}, wait {wait:.1f}s")
                 time.sleep(wait)
@@ -1359,7 +1361,11 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
     return result
 
 
-def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
+def _fetch_tw_dividend(
+    ticker: str,
+    current_price: float,
+    fast: bool = False,
+) -> tuple:
     """取得台股 ETF 配息資料，回傳 (dividend_yield_pct, payout_freq, confirmed)。
 
     confirmed=True  → API 成功回應（即使 dividend=0 也可信，可覆蓋 DB 舊值）
@@ -1380,8 +1386,15 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
         try:
             url = (f"https://query2.finance.yahoo.com/v8/finance/chart/{yt}"
                    f"?range=5y&interval=1mo&events=dividends")
-            r = (_cf_yahoo_get(url, timeout=15)
-                 or _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{yt}"), url, timeout=10))
+            r = (
+                _cf_yahoo_get(url, timeout=8 if fast else 15)
+                or _get_with_retry(
+                    _new_session(f"https://finance.yahoo.com/quote/{yt}"),
+                    url,
+                    timeout=5 if fast else 10,
+                    max_attempts=1 if fast else 3,
+                )
+            )
             if r and r.status_code == 200:
                 result = r.json().get("chart", {}).get("result")
                 if result:
@@ -1415,7 +1428,8 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
                     continue
         except Exception as e:
             logger.debug(f"TW dividend Yahoo {yt}: {e}")
-        _jitter(0.5, 1.5)
+        if not fast:
+            _jitter(0.5, 1.5)
 
     # 2. TWSE TWT48U（每筆 = 一個年度彙總，column[1] = 現金股利合計）
     #    只取最近一筆有效金額估算殖利率；頻率改由靜態備援決定
@@ -1423,7 +1437,12 @@ def _fetch_tw_dividend(ticker: str, current_price: float) -> tuple:
         try:
             url = (f"https://www.twse.com.tw/exchangeReport/TWT48U"
                    f"?response=json&stockNo={ticker}")
-            r = _get_with_retry(_new_session("https://www.twse.com.tw/"), url, timeout=10)
+            r = _get_with_retry(
+                _new_session("https://www.twse.com.tw/"),
+                url,
+                timeout=5 if fast else 10,
+                max_attempts=1 if fast else 3,
+            )
             rows = r.json().get("data", []) if r else []
             if rows:
                 for row in reversed(rows):          # 最新年度在後，倒序找第一筆有效值
@@ -1819,7 +1838,11 @@ def fetch_one_etf(ticker: str, market: str) -> Optional[dict]:
     return _fetch_us_etf(ticker)
 
 
-def _fetch_us_history_dividend(ticker: str, current_price: float) -> tuple:
+def _fetch_us_history_dividend(
+    ticker: str,
+    current_price: float,
+    fast: bool = False,
+) -> tuple:
     """Fetch US monthly closes and trailing-12-month distributions in one call."""
     history: list[float] = []
     dividend_yield = 0.0
@@ -1831,11 +1854,12 @@ def _fetch_us_history_dividend(ticker: str, current_price: float) -> tuple:
             "?range=5y&interval=1mo&events=dividends"
         )
         response = (
-            _cf_yahoo_get(url, timeout=15)
+            _cf_yahoo_get(url, timeout=8 if fast else 15)
             or _get_with_retry(
                 _new_session(f"https://finance.yahoo.com/quote/{ticker}"),
                 url,
-                timeout=6,
+                timeout=5 if fast else 6,
+                max_attempts=1 if fast else 3,
             )
         )
         if response and response.status_code == 200:
@@ -1886,10 +1910,12 @@ def fetch_dividend_only(ticker: str, market: str, current_price: float) -> dict:
     if current_price <= 0:
         return {"dividend_status": "unknown"}
     if market == "TW":
-        value, frequency, confirmed = _fetch_tw_dividend(ticker, current_price)
+        value, frequency, confirmed = _fetch_tw_dividend(
+            ticker, current_price, fast=True
+        )
     elif market == "US":
         _, value, frequency, confirmed = _fetch_us_history_dividend(
-            ticker, current_price
+            ticker, current_price, fast=True
         )
     else:
         return {"dividend_status": "unknown"}
