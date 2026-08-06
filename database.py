@@ -340,6 +340,13 @@ def init_db():
             PRIMARY KEY (dataset, market)
         ){engine}""",
 
+        f"""CREATE TABLE IF NOT EXISTS dividend_sync_state (
+            ticker          VARCHAR(20) NOT NULL,
+            last_attempt_at DATETIME    NOT NULL,
+            last_status     VARCHAR(20) NOT NULL,
+            PRIMARY KEY (ticker)
+        ){engine}""",
+
         f"""CREATE TABLE IF NOT EXISTS users (
             id             {pk_auto},
             username       VARCHAR(100) NOT NULL,
@@ -512,6 +519,7 @@ def init_db():
         ("idx_alerts_user",     "price_alerts",      "user_id, is_active"),
         ("idx_sessions_user",   "user_sessions",     "user_id, is_revoked"),
         ("idx_dividends_ticker","etf_dividends",     "ticker, ex_date"),
+        ("idx_dividend_sync",   "dividend_sync_state", "last_attempt_at"),
         ("idx_txn_idem",        "user_transactions", "user_id, idempotency_key"),
     ]
     with get_db() as (conn, cursor):

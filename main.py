@@ -450,6 +450,7 @@ async def health_data():
 
             cursor.execute("""
                 SELECT
+                  m.market,
                   SUM(CASE WHEN COALESCE(d.dividend_status,
                     CASE WHEN d.dividend_yield>0 THEN 'confirmed'
                          ELSE 'unknown' END)='confirmed' THEN 1 ELSE 0 END) AS confirmed,
@@ -467,11 +468,35 @@ async def health_data():
                   ) d2 ON d1.ticker=d2.ticker AND d1.date=d2.md
                 ) d ON d.ticker=m.ticker
                 WHERE m.is_delisted=0
+                GROUP BY m.market
+                ORDER BY m.market
             """)
-            dividend_quality = cursor.fetchone() or {}
+            dividend_rows = cursor.fetchall()
+            dividend_keys = (
+                "confirmed", "estimated", "not_applicable", "unknown"
+            )
+            summary["dividend_quality_by_market"] = {
+                row["market"]: {
+                    key: int(row.get(key) or 0) for key in dividend_keys
+                }
+                for row in dividend_rows
+            }
             summary["dividend_quality"] = {
-                key: int(dividend_quality.get(key) or 0)
-                for key in ("confirmed", "estimated", "not_applicable", "unknown")
+                key: sum(
+                    int(row.get(key) or 0) for row in dividend_rows
+                )
+                for key in dividend_keys
+            }
+            cursor.execute("""
+                SELECT COUNT(*) AS attempted,
+                       SUM(CASE WHEN last_status='unknown' THEN 1 ELSE 0 END)
+                         AS retryable
+                FROM dividend_sync_state
+            """)
+            dividend_sync = cursor.fetchone() or {}
+            summary["dividend_sync"] = {
+                "attempted": int(dividend_sync.get("attempted") or 0),
+                "retryable": int(dividend_sync.get("retryable") or 0),
             }
 
             # 1. 熱門池缺漏 ETF（會直接影響首頁與排行榜）
@@ -537,21 +562,32 @@ async def health_data():
                                 "market": r["market"],
                                 "detail": "annual_return_1y=NULL 且 dividend_yield=0/NULL"})
 
-            # 4. 市場標記錯誤（TW 代碼但 market=US，或反之）
+            # 4. 市場標記錯誤（以 Python 判斷，避免 MySQL REGEXP/
+            # CHAR_LENGTH 讓 SQLite 開發環境的健康檢查失效）
             cursor.execute("""
                 SELECT ticker, market
                 FROM etf_master
-                WHERE is_delisted = 0 AND (
-                    (CHAR_LENGTH(ticker) >= 4
-                     AND SUBSTRING(ticker,1,1) REGEXP '^[0-9]$'
-                     AND SUBSTRING(ticker,4,1) REGEXP '^[0-9]$'
-                     AND market != 'TW')
-                    OR
-                    (ticker REGEXP '^[A-Z]{2,5}$' AND market != 'US')
-                )
+                WHERE is_delisted = 0
                 ORDER BY ticker
             """)
-            wrong_market = cursor.fetchall()
+            wrong_market = []
+            for row in cursor.fetchall():
+                ticker = str(row["ticker"] or "")
+                looks_tw = (
+                    len(ticker) >= 4
+                    and ticker[0].isdigit()
+                    and ticker[3].isdigit()
+                )
+                looks_us = (
+                    2 <= len(ticker) <= 5
+                    and ticker.isalpha()
+                    and ticker.isupper()
+                )
+                if (
+                    (looks_tw and row["market"] != "TW")
+                    or (looks_us and row["market"] != "US")
+                ):
+                    wrong_market.append(row)
             summary["wrong_market_etfs"] = len(wrong_market)
             for r in wrong_market:
                 issues.append({"type": "wrong_market", "ticker": r["ticker"],
@@ -649,7 +685,12 @@ async def health_data():
                     FROM user_transactions
                     GROUP BY user_id, ticker
                 ) t ON p.user_id = t.user_id AND p.ticker = t.ticker
-                HAVING ABS(portfolio_shares - tx_net) > 0.001
+                WHERE ABS(
+                    p.shares - (
+                        COALESCE(t.buy_shares, 0)
+                        - COALESCE(t.sell_shares, 0)
+                    )
+                ) > 0.001
                 ORDER BY p.user_id, p.ticker
                 LIMIT 50
             """)

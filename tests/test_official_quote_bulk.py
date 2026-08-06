@@ -12,6 +12,7 @@ from etf_data import (
     _resolved_payout_freq,
     _resolved_dividend_status,
     _expected_tw_quote_day,
+    _tw_market_session_open,
     _tw_quote_is_fresh,
 )
 from routes.etf_routes import _ranking_updated_at
@@ -87,6 +88,12 @@ class OfficialQuoteBulkTest(unittest.TestCase):
         sunday = datetime(2026, 8, 9, 18, 0, tzinfo=ZoneInfo("Asia/Taipei"))
         self.assertEqual(_expected_tw_quote_day(sunday), date(2026, 8, 7))
 
+    def test_tw_market_session_boundary(self):
+        open_time = datetime(2026, 8, 6, 9, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+        after_close = datetime(2026, 8, 6, 13, 31, tzinfo=ZoneInfo("Asia/Taipei"))
+        self.assertTrue(_tw_market_session_open(open_time))
+        self.assertFalse(_tw_market_session_open(after_close))
+
     def test_rejects_stale_official_quote_after_market_open(self):
         expected = date(2026, 8, 4)
         self.assertFalse(_tw_quote_is_fresh({"quote_date": date(2026, 8, 3)}, expected))
@@ -127,6 +134,26 @@ class OfficialQuoteBulkTest(unittest.TestCase):
         self.assertEqual(result["0050"]["volume"], 12_345_678)
         self.assertEqual(result["0050"]["quote_date"], date(2026, 7, 24))
         self.assertAlmostEqual(result["00679B"]["price_change_percent"], 0.9006)
+
+    @patch("etf_data.req_lib.get")
+    def test_uses_official_csv_when_twse_openapi_resets(self, get):
+        csv_response = Mock()
+        csv_response.raise_for_status.return_value = None
+        csv_response.json.side_effect = ValueError("CSV response")
+        csv_response.content = (
+            "日期,證券代號,收盤價,漲跌價差,最高價,最低價,成交股數\n"
+            "1150805,0050,103.80,-0.65,104.10,103.20,12345678\n"
+        ).encode("utf-8")
+        tpex_response = Mock()
+        tpex_response.raise_for_status.return_value = None
+        tpex_response.json.return_value = []
+        get.side_effect = [ConnectionError("reset"), csv_response, tpex_response]
+
+        result = _fetch_tw_official_bulk()
+
+        self.assertEqual(result["0050"]["current_price"], 103.8)
+        self.assertEqual(result["0050"]["quote_source"], "tw_official_csv")
+        self.assertEqual(result["0050"]["quote_date"], date(2026, 8, 5))
 
     @patch("etf_data.req_lib.get")
     def test_reads_special_etf_from_monthly_official_source(self, get):

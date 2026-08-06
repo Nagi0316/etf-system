@@ -4,8 +4,8 @@ scheduler.py — APScheduler 排程器
 排程架構（Asia/Taipei 時區）：
 
 【盤中快速】每 30 秒，內部偵測市場是否開盤
-  ▸ 批量抓全資料庫現價：TW 走 TWSE MIS 批量 API（全部 1-2 次 HTTP）
-                     US 走 Yahoo /v7/finance/quote?symbols=（全部 1 次 HTTP）
+  ▸ 批量抓全資料庫現價：TW 走有硬逾時的 TWSE/TPEX MIS 分批請求
+                     US 走 Yahoo/Nasdaq 批量及有限並發備援
   ▸ dirty check：price / volume 均未變動的 ETF 跳過 DB 寫入
   ▸ executemany 批次寫入 → 1 次 DB 往返（TiDB 150ms RTT × 1）
   ▸ 更新完立即掃描到價提醒（延遲 ≤ 30 秒）
@@ -24,7 +24,7 @@ scheduler.py — APScheduler 排程器
 import asyncio
 import logging
 import random
-from datetime import time as _time
+from datetime import datetime, time as _time
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -40,7 +40,6 @@ _TZ_NY     = ZoneInfo("America/New_York")  # DST-aware（夏令 UTC-4 / 冬令 U
 
 def _is_tw_market_open() -> bool:
     """台股 09:00–13:30，週一至週五。"""
-    from datetime import datetime
     now = datetime.now(_TZ_TAIPEI)
     if now.weekday() >= 5:
         return False
@@ -49,7 +48,6 @@ def _is_tw_market_open() -> bool:
 
 def _is_us_market_open() -> bool:
     """美股 09:30–16:00（紐約時間，自動處理 DST）。"""
-    from datetime import datetime
     now_ny = datetime.now(_TZ_NY)
     if now_ny.weekday() >= 5:
         return False
@@ -225,11 +223,11 @@ async def _fast_price_tick_inner(force_all_markets: bool = False):
     """盤中高頻批量報價更新。
 
     優化架構（vs 舊版逐筆 fetch）：
-      · TW：_fetch_tw_realtime_bulk → TWSE MIS 批量 API，所有台股 1-2 次 HTTP
-      · US：_fetch_us_realtime_bulk → Yahoo v7/quote?symbols=，所有美股 1 次 HTTP
+      · TW：_fetch_tw_realtime_bulk → TWSE/TPEX MIS 有界批次，盤中不逐檔慢抓
+      · US：_fetch_us_realtime_bulk → Yahoo/Nasdaq 批量及有限並發備援
       · save_price_bulk → executemany 一次 DB 往返 + dirty check 跳過未變動標的
                           + cache.delete_prefix("rank:") 整批只呼叫 1 次
-      預估 60 檔從 60+ 秒降至 2-3 秒（含 TiDB 150ms RTT）。
+      正常來源可用時為數秒；單一來源逾時也不會退化成數百次逐檔請求。
     """
     tw_open = _is_tw_market_open()
     us_open = _is_us_market_open()
@@ -477,7 +475,11 @@ async def _update_missing():
 
 
 async def _update_dividend_gaps(limit: int = 40):
-    """分批補齊全市場配息欄位，與高頻行情管線分離。"""
+    """公平分批補齊全市場配息欄位，與高頻行情管線分離。
+
+    每次嘗試都持久化，並優先處理「從未嘗試／最久未嘗試」的標的；
+    避免上游暫時失敗時，永遠反覆卡在同一批代碼。
+    """
     from database import get_db
     from etf_data import fetch_dividend_only, save_dividend_snapshot
 
@@ -493,9 +495,13 @@ async def _update_dividend_gaps(limit: int = 40):
                         FROM etf_daily_data WHERE current_price > 0 GROUP BY ticker
                     ) d2 ON d1.ticker=d2.ticker AND d1.date=d2.max_date
                 ) d ON d.ticker=m.ticker
-                WHERE m.is_delisted=0 AND m.market='TW'
+                LEFT JOIN dividend_sync_state s ON s.ticker=m.ticker
+                WHERE m.is_delisted=0
                   AND COALESCE(d.dividend_status,'unknown')='unknown'
-                ORDER BY COALESCE(m.is_hot,0) DESC, m.ticker
+                ORDER BY CASE WHEN s.last_attempt_at IS NULL THEN 0 ELSE 1 END,
+                         s.last_attempt_at,
+                         COALESCE(m.is_hot,0) DESC,
+                         m.ticker
                 LIMIT %s
             """, (limit,))
             rows = cursor.fetchall()
@@ -514,14 +520,41 @@ async def _update_dividend_gaps(limit: int = 40):
                 float(row["current_price"] or 0),
             ) for row in batch
         ], return_exceptions=True)
+        attempts = []
         for row, result in zip(batch, results):
             if isinstance(result, Exception):
                 logger.debug("配息補齊 %s: %s", row["ticker"], result)
-                continue
-            if await asyncio.to_thread(
-                save_dividend_snapshot, row["ticker"], row["date"], result
-            ):
-                updated += 1
+                status = "unknown"
+            else:
+                status = result.get("dividend_status") or "unknown"
+                if await asyncio.to_thread(
+                    save_dividend_snapshot, row["ticker"], row["date"], result
+                ):
+                    updated += 1
+            attempts.append((
+                row["ticker"],
+                datetime.now(_TZ_TAIPEI).replace(tzinfo=None),
+                status,
+            ))
+
+        # 嘗試紀錄與配息值分開：unknown 不會污染財務資料，
+        # 但排程器仍能在下一輪跳過它，先掃到其他標的。
+        def _record_attempts():
+            with get_db() as (conn, cursor):
+                cursor.executemany("""
+                    INSERT INTO dividend_sync_state
+                      (ticker, last_attempt_at, last_status)
+                    VALUES (%s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                      last_attempt_at=VALUES(last_attempt_at),
+                      last_status=VALUES(last_status)
+                """, attempts)
+                conn.commit()
+
+        try:
+            await asyncio.to_thread(_record_attempts)
+        except Exception as exc:
+            logger.warning("配息嘗試狀態寫入失敗: %s", exc)
         await asyncio.sleep(1)
     logger.info("✅ 配息缺口補齊：掃描 %s，更新 %s", len(rows), updated)
 
@@ -672,8 +705,8 @@ def start_scheduler() -> BackgroundScheduler:
     # ════════════════════════════════════════
 
     # 每 30 秒：批量快速報價更新 + 到價提醒掃描（開盤期間）
-    # TW：TWSE MIS 批量 API（1-2 次 HTTP）；US：Yahoo v7/quote?symbols=（1 次 HTTP）
-    # dirty check 跳過未變動標的；executemany 1 次 DB 往返；整批 < 3 秒
+    # TW：TWSE/TPEX MIS 有界批次；US：Yahoo/Nasdaq 批量。
+    # dirty check 跳過未變動標的；executemany 僅需 1 次 DB 往返。
     sch.add_job(
         lambda: schedule_fast_price_tick(),
         "interval", seconds=30,
@@ -701,9 +734,14 @@ def start_scheduler() -> BackgroundScheduler:
     # 每日 08:00 同步 TWSE/TPEX 全市場代碼
     sch.add_job(lambda: schedule_twse_sync(), CronTrigger(hour=8,  minute=0),  max_instances=1)
 
-    # 配息資料獨立低頻補齊：每輪最多 40 檔，避免拖慢即時行情。
-    sch.add_job(lambda: schedule_dividend_gaps(), CronTrigger(hour=6, minute=20), max_instances=1)
-    sch.add_job(lambda: schedule_dividend_gaps(), CronTrigger(hour=15, minute=10), max_instances=1)
+    # 配息資料獨立低頻補齊：每 3 小時最多 40 檔。
+    # 配合持久化公平佇列，新名錄可在一日內完整掃過一次，
+    # 又不會讓低頻資料拖慢即時行情。
+    sch.add_job(
+        lambda: schedule_dividend_gaps(),
+        "interval", hours=3,
+        id="dividend_gap_scan", max_instances=1,
+    )
 
     # 14:35 台股收盤後：先批量同步全市場價格，再補活躍標的完整資料
     sch.add_job(lambda: schedule_all_price_sync(), CronTrigger(hour=14, minute=34), max_instances=1)

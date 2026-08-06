@@ -3,14 +3,21 @@ etf_data.py — ETF 靜態清單、資料抓取、DB 存取
 （從原 main.py 提取並整合 exchange_rate）
 """
 from __future__ import annotations
-import os, random, time, logging, threading
-from datetime import datetime, date, timedelta
+
+import csv
+import io
+import logging
+import os
+import random
+import threading
+import time
+from datetime import date, datetime, timedelta
 from typing import Optional
 from urllib.parse import quote as _url_quote
 from zoneinfo import ZoneInfo
 
-import requests as req_lib
 import certifi
+import requests as req_lib
 import yfinance as yf
 
 from cache import cache
@@ -828,6 +835,15 @@ def _expected_tw_quote_day(now: datetime | None = None) -> date:
     return candidate
 
 
+def _tw_market_session_open(now: datetime | None = None) -> bool:
+    """Return whether the regular Taiwan session is currently trading."""
+    current = now or datetime.now(ZoneInfo("Asia/Taipei"))
+    return (
+        current.weekday() < 5
+        and (9, 0) <= (current.hour, current.minute) <= (13, 30)
+    )
+
+
 def _tw_quote_is_fresh(quote: dict, expected: date | None = None) -> bool:
     quote_day = quote.get("quote_date")
     if isinstance(quote_day, str):
@@ -846,7 +862,9 @@ def _fetch_tw_realtime_perfect(ticker: str) -> Optional[dict]:
     """
     for prefix, base_url, referer in [
         ("tse", "https://mis.twse.com.tw/stock/api/getStockInfo.jsp",  "https://mis.twse.com.tw/"),
-        ("otc", "https://mis.tpex.org.tw/stock/api/getStockInfo.jsp",  "https://mis.tpex.org.tw/"),
+        # TWSE MIS 同時代理 otc_ 報價；此網域比 mis.tpex.org.tw 的
+        # HTML/逾時回應穩定，且仍是交易所官方來源。
+        ("otc", "https://mis.twse.com.tw/stock/api/getStockInfo.jsp",  "https://mis.twse.com.tw/"),
     ]:
         try:
             s = _new_session(referer)
@@ -971,20 +989,34 @@ def _fetch_tw_official_bulk() -> dict:
     """
     sources = (
         (
+            "TWSE",
             "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
             {
                 "ticker": "Code", "date": "Date", "price": "ClosingPrice",
                 "change": "Change", "high": "HighestPrice", "low": "LowestPrice",
                 "volume": "TradeVolume",
             },
+            "tw_official_openapi",
         ),
         (
+            "TWSE",
+            "https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=open_data",
+            {
+                "ticker": "證券代號", "date": "日期", "price": "收盤價",
+                "change": "漲跌價差", "high": "最高價", "low": "最低價",
+                "volume": "成交股數",
+            },
+            "tw_official_csv",
+        ),
+        (
+            "TPEX",
             "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes",
             {
                 "ticker": "SecuritiesCompanyCode", "date": "Date", "price": "Close",
                 "change": "Change", "high": "High", "low": "Low",
                 "volume": "TradingShares",
             },
+            "tw_official_openapi",
         ),
     )
     result: dict = {}
@@ -992,11 +1024,29 @@ def _fetch_tw_official_bulk() -> dict:
         "Accept": "application/json",
         "User-Agent": "Mozilla/5.0 (compatible; ETF-System/2.0)",
     }
-    for url, fields in sources:
+    completed_groups: set[str] = set()
+    for group, url, fields, source_name in sources:
+        # TWSE OpenAPI 偶爾重置雲端連線；只在主端點失敗時
+        # 改讀同一日報的官方 CSV，避免每輪多打一次請求。
+        if group in completed_groups:
+            continue
         try:
             response = req_lib.get(url, headers=headers, timeout=15)
             response.raise_for_status()
-            for item in response.json():
+            try:
+                rows = response.json()
+            except ValueError:
+                decoded = None
+                for encoding in ("utf-8-sig", "cp950", "utf-8"):
+                    try:
+                        decoded = response.content.decode(encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                rows = list(csv.DictReader(io.StringIO(decoded or "")))
+
+            source_count = 0
+            for item in rows:
                 ticker = str(item.get(fields["ticker"], "")).strip().upper()
                 price = safe_float(item.get(fields["price"]))
                 if not ticker or price <= 0:
@@ -1014,8 +1064,11 @@ def _fetch_tw_official_bulk() -> dict:
                     "volume": int(safe_float(item.get(fields["volume"]))),
                     "is_after_hours": True,
                     "quote_date": _parse_tw_market_date(item.get(fields["date"])),
-                    "quote_source": "tw_official_openapi",
+                    "quote_source": source_name,
                 }
+                source_count += 1
+            if source_count:
+                completed_groups.add(group)
         except Exception as e:
             logger.warning(f"TW official bulk source failed ({url}): {e}")
     return result
@@ -1075,12 +1128,13 @@ def _fetch_tw_official_month_quote(ticker: str) -> Optional[dict]:
 
 
 def _fetch_tw_realtime_bulk(tickers: list) -> dict:
-    """TWSE / TPEX 批量即時報價：一次 HTTP 請求取得所有台股 ETF 現價。
+    """TWSE / TPEX 批量即時報價。
 
     策略：
-      1. 先以 tse_ 前綴對全部 tickers 批量查詢（多數 ETF 在 TWSE 上市）
-      2. 首次無回應的 tickers 改用 otc_ 前綴再查一次（上櫃 ETF）
-      共 1-2 次 HTTP，取代原本每檔 2 次 × N 檔 = 2N 次的做法。
+      1. tse / otc MIS 以每批 100 檔並行查詢。
+      2. 官方全市場日報補齊 MIS 未提供的欄位。
+      3. 盤中全市場模式不啟動逐檔慢速備援，避免 30 秒任務
+         卡住數分鐘；單檔詳情頁與收盤後流程仍會完整補抓。
 
     回傳: {ticker: quote_dict}，只包含成功取得資料的標的。
     失敗標的不在回傳 dict 中，呼叫方以 .get(ticker) 安全存取。
@@ -1092,18 +1146,26 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
     def _batch_request(prefix: str, batch_tickers: list,
                        base_url: str, referer: str) -> dict:
         """向 TWSE/TPEX MIS API 批量查詢，回傳 {ticker: quote_dict}。"""
-        # 每批上限 100 檔，避免 URL 過長或 API 回拒
+        # 每批上限 100 檔，避免 URL 過長或 API 回拒。
+        # 各批互不依賴，並行請求可將最壞等待限制在單批逾時內。
+        import concurrent.futures
+
         chunk_size = 100
         batch_result: dict = {}
-        for i in range(0, len(batch_tickers), chunk_size):
-            chunk = batch_tickers[i:i + chunk_size]
+        chunks = [
+            batch_tickers[i:i + chunk_size]
+            for i in range(0, len(batch_tickers), chunk_size)
+        ]
+
+        def _request_chunk(chunk: list) -> dict:
+            chunk_result: dict = {}
             ex_ch = "|".join(f"{prefix}_{t}.tw" for t in chunk)
             url   = f"{base_url}?ex_ch={ex_ch}&json=1&delay=0"
             try:
                 s = _new_session(referer)
                 r = _get_with_retry(s, url, timeout=8, max_attempts=2)
                 if not r:
-                    continue
+                    return chunk_result
                 items = r.json().get("msgArray", [])
                 for d in items:
                     t = d.get("c", "")          # TWSE 回傳的股票代碼（純數字/英文）
@@ -1112,9 +1174,16 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
                     parsed = _parse_tw_mis_quote(d)
                     if not parsed or not _tw_quote_is_fresh(parsed, expected_day):
                         continue
-                    batch_result[t] = parsed
+                    chunk_result[t] = parsed
             except Exception as e:
                 logger.debug(f"TW bulk realtime {prefix}: {e}")
+            return chunk_result
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(4, len(chunks))
+        ) as pool:
+            for chunk_result in pool.map(_request_chunk, chunks):
+                batch_result.update(chunk_result)
         return batch_result
 
     # ─ Pass 1：TSE 前綴（TWSE 上市，含大多數 ETF）─
@@ -1129,8 +1198,8 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
     if missing:
         otc_result = _batch_request(
             "otc", missing,
-            "https://mis.tpex.org.tw/stock/api/getStockInfo.jsp",
-            "https://mis.tpex.org.tw/",
+            "https://mis.twse.com.tw/stock/api/getStockInfo.jsp",
+            "https://mis.twse.com.tw/",
         )
         result.update(otc_result)
 
@@ -1157,7 +1226,10 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
         ticker for ticker in tickers
         if ticker not in result or result[ticker].get("current_price", 0) <= 0
     ]
-    if remaining:
+    allow_slow_fallbacks = (
+        len(tickers) <= 80 or not _tw_market_session_open()
+    )
+    if remaining and allow_slow_fallbacks:
         # Railway 可能擋住 MIS，若逐檔串行抓 40 檔，最壞會卡 8 分鐘且
         # 整批結束前一筆都不會寫入。有限並發把收盤後修復壓到數十秒內。
         import concurrent.futures
@@ -1195,7 +1267,7 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
     # 先用 Yahoo v7 批量補齊（每檔同時帶 .TW / .TWO，由回應決定有效市場）。
     # 這條路徑在 Railway 可走選配代理，也可直連；成功時僅需 1-2 次請求，
     # 避免 MIS 暫時不可用時退化成數十檔逐筆請求。
-    if fallback_targets:
+    if fallback_targets and allow_slow_fallbacks:
         symbol_to_ticker = {}
         yahoo_symbols = []
         for ticker in fallback_targets:
@@ -1260,7 +1332,7 @@ def _fetch_tw_realtime_bulk(tickers: list) -> dict:
             )
         ]
 
-    if fallback_targets:
+    if fallback_targets and allow_slow_fallbacks:
         import concurrent.futures
 
         # 上游同時故障時設硬上限，避免 355 檔逐筆 timeout 讓整輪排程卡死。
@@ -1747,11 +1819,80 @@ def fetch_one_etf(ticker: str, market: str) -> Optional[dict]:
     return _fetch_us_etf(ticker)
 
 
+def _fetch_us_history_dividend(ticker: str, current_price: float) -> tuple:
+    """Fetch US monthly closes and trailing-12-month distributions in one call."""
+    history: list[float] = []
+    dividend_yield = 0.0
+    payout_freq = "不配息"
+    confirmed = False
+    try:
+        url = (
+            f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}"
+            "?range=5y&interval=1mo&events=dividends"
+        )
+        response = (
+            _cf_yahoo_get(url, timeout=15)
+            or _get_with_retry(
+                _new_session(f"https://finance.yahoo.com/quote/{ticker}"),
+                url,
+                timeout=6,
+            )
+        )
+        if response and response.status_code == 200:
+            result = response.json().get("chart", {}).get("result", [{}])[0]
+            history = [
+                safe_float(value)
+                for value in (
+                    result.get("indicators", {})
+                    .get("quote", [{}])[0]
+                    .get("close") or []
+                )
+                if value is not None
+            ]
+            events = result.get("events", {}).get("dividends", {})
+            confirmed = True
+            if events:
+                all_events = [
+                    (
+                        ticker,
+                        datetime.utcfromtimestamp(value["date"]).strftime("%Y-%m-%d"),
+                        safe_float(value.get("amount", 0)),
+                    )
+                    for value in events.values()
+                    if safe_float(value.get("amount", 0)) > 0
+                ]
+                _save_dividend_events(ticker, all_events)
+                cutoff = time.time() - 365 * 86400
+                recent = [
+                    value["amount"] for value in events.values()
+                    if value.get("date", 0) >= cutoff
+                    and safe_float(value.get("amount", 0)) > 0
+                ]
+                if recent and current_price > 0:
+                    dividend_yield = round(sum(recent) / current_price * 100, 4)
+                    payout_freq = _best_freq(len(recent), ticker)
+    except Exception as exc:
+        logger.debug("US history/dividend %s: %s", ticker, exc)
+
+    if payout_freq == "不配息" and ticker in KNOWN_PAYOUT_FREQ:
+        payout_freq = KNOWN_PAYOUT_FREQ[ticker]
+    if not confirmed and dividend_yield == 0.0:
+        dividend_yield = KNOWN_YIELD_US.get(ticker, 0.0)
+    return history, dividend_yield, payout_freq, confirmed
+
+
 def fetch_dividend_only(ticker: str, market: str, current_price: float) -> dict:
     """低頻補齊專用：只抓配息，避免為全市場重抓歷史與基金詳情。"""
-    if market != "TW" or current_price <= 0:
+    if current_price <= 0:
         return {"dividend_status": "unknown"}
-    value, frequency, confirmed = _fetch_tw_dividend(ticker, current_price)
+    if market == "TW":
+        value, frequency, confirmed = _fetch_tw_dividend(ticker, current_price)
+    elif market == "US":
+        _, value, frequency, confirmed = _fetch_us_history_dividend(
+            ticker, current_price
+        )
+    else:
+        return {"dividend_status": "unknown"}
     return {
         "dividend_yield": value if value > 0 else None,
         "payout_freq": frequency,
@@ -1869,38 +2010,9 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         return None
 
     price = quote["current_price"]
-    history, div_yield, payout_freq, div_confirmed = [], 0.0, "不配息", False
-    try:
-        url = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=5y&interval=1mo&events=dividends"
-        # CF Proxy 優先（Railway IP 被 Yahoo 封鎖）→ 直連 fallback（本機開發）
-        r = (_cf_yahoo_get(url, timeout=15)
-             or _get_with_retry(_new_session(f"https://finance.yahoo.com/quote/{ticker}"), url, timeout=6))
-        if r and r.status_code == 200:
-            res = r.json().get("chart", {}).get("result", [{}])[0]
-            history = [safe_float(c) for c in (res.get("indicators", {}).get("quote", [{}])[0].get("close") or []) if c is not None]
-            events  = res.get("events", {}).get("dividends", {})
-            div_confirmed = True  # Yahoo 成功回應，div_yield 值可信（即使為 0）
-            if events:
-                # 持久化全部 5 年配息事件到 etf_dividends（回測 DRIP 使用）
-                all_ev = [
-                    (ticker,
-                     datetime.utcfromtimestamp(v["date"]).strftime("%Y-%m-%d"),
-                     safe_float(v.get("amount", 0)))
-                    for v in events.values()
-                    if safe_float(v.get("amount", 0)) > 0
-                ]
-                _save_dividend_events(ticker, all_ev)
-
-                cutoff = time.time() - 365 * 86400
-                # amount > 0 過濾：與 TW 邏輯一致，排除零金額事件，防止膨脹頻率計數
-                recent = [v["amount"] for v in events.values()
-                          if v.get("date", 0) >= cutoff and safe_float(v.get("amount", 0)) > 0]
-                if recent:
-                    div_yield   = round(sum(recent) / price * 100, 4)
-                    # 取 Yahoo 事件數 與 靜態備援 兩者中頻率等級較高者
-                    payout_freq = _best_freq(len(recent), ticker)
-    except Exception as e:
-        logger.debug(f"US history/dividend {ticker}: {e}")
+    history, div_yield, payout_freq, div_confirmed = _fetch_us_history_dividend(
+        ticker, price
+    )
 
     # ── 終點修正 ──
     # Yahoo 月線最後一筆 = 上個月末收盤，本月至今的漲跌完全被漏掉。
@@ -1929,19 +2041,6 @@ def _fetch_us_etf(ticker: str) -> Optional[dict]:
         div_yield = round(yf_yield, 4)
         if div_yield > 0 and payout_freq == "不配息":
             payout_freq = KNOWN_PAYOUT_FREQ.get(ticker, "季配")
-    # 最終備援：若仍為「不配息」但靜態資料有記錄，以靜態資料為準
-    if payout_freq == "不配息" and ticker in KNOWN_PAYOUT_FREQ:
-        payout_freq = KNOWN_PAYOUT_FREQ[ticker]
-
-    # 靜態殖利率備援：Yahoo 完全失敗（div_confirmed=False）且 yield=0 時、
-    # 直接套用 KNOWN_YIELD_US 殖利率%，不依賴股價 → 股票分割/大漲後仍正確。
-    # div_yield > 0 → save_etf_data 正常寫 DB（不受 confirmed=False 阻擋）
-    if not div_confirmed and div_yield == 0.0 and ticker in KNOWN_YIELD_US:
-        static_dy = KNOWN_YIELD_US[ticker]
-        if static_dy > 0:
-            div_yield = static_dy
-            logger.debug(f"US 靜態殖利率備援 {ticker}: {div_yield:.2f}%")
-
     return {
         'ticker': ticker, 'current_price': price,
         'price_change': quote["price_change"],
