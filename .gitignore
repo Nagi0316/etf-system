@@ -25,6 +25,7 @@ static/uploads/
 # IDE
 .idea/
 .vscode/
+.claude/
 *.swp
 
 # macOS
@@ -33,4 +34,4 @@ static/uploads/
 # Log
 *.log
 logs/
-node_modules
+node_modules/

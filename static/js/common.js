@@ -236,7 +236,221 @@ function fmtMoney(n, currency = 'TWD') {
   return `$${v.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
 }
 
-// 初始化頁面（深色模式按鈕圖示；loadUserInfo 由 base.html 統一呼叫，不在此重複）
+// ══════════════════════════════════════════════
+//  殖利率與配息顯示（各頁共用單一規則）
+// ══════════════════════════════════════════════
+const DIVIDEND_FREQUENCY_CLASSES = Object.freeze({
+  '月配': 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+  '雙月配': 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
+  '季配': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+  '半年配': 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+  '年配': 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+  '不配息': 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400',
+});
+
+function getDividendDisplay(item = {}) {
+  const numericYield = Number(item.dividend_yield);
+  const hasYield = Number.isFinite(numericYield) && numericYield > 0;
+  const status = item.dividend_status || (hasYield ? 'confirmed' : 'unknown');
+  const frequency = status === 'unknown' ? '' : String(item.payout_freq || '');
+
+  let text = '待同步';
+  if (hasYield) {
+    text = `${numericYield.toFixed(2)}%${status === 'estimated' ? '（估）' : ''}`;
+  } else if (status === 'not_applicable') {
+    text = '不配息';
+  }
+
+  return { status, frequency, hasYield, value: hasYield ? numericYield : null, text };
+}
+
+function dividendFrequencyClass(frequency) {
+  return DIVIDEND_FREQUENCY_CLASSES[frequency]
+    || 'bg-slate-100 text-slate-400 dark:bg-slate-700 dark:text-slate-400';
+}
+
+function dividendFrequencyBadge(item, extraClass = 'ml-1') {
+  const display = getDividendDisplay(item);
+  const frequency = display.frequency;
+  if (!frequency || frequency === '未知' || frequency === '不配息') return '';
+  return `<span class="text-[11px] px-1.5 py-0.5 rounded font-medium ${dividendFrequencyClass(frequency)} ${extraClass}">${_escHtml(frequency)}</span>`;
+}
+
+// ══════════════════════════════════════════════
+//  導覽與全站搜尋
+// ══════════════════════════════════════════════
+function _initActiveNav() {
+  const path = window.location.pathname;
+  document.querySelectorAll('.nav-link, .bottom-nav a').forEach(link => {
+    const target = link.dataset.path;
+    if (!target || !(path === target || (target !== '/' && path.startsWith(target)))) return;
+
+    if (link.classList.contains('nav-link')) {
+      link.classList.add('bg-indigo-50', 'dark:bg-indigo-900/40', 'text-indigo-600', 'dark:text-indigo-400', 'font-medium');
+      link.classList.remove('text-slate-500', 'dark:text-slate-400');
+    } else {
+      link.classList.add('active');
+    }
+  });
+}
+
+function _setSearchOpen(inputEl, dropEl, isOpen) {
+  if (!inputEl || !dropEl) return;
+  dropEl.classList.toggle('hidden', !isOpen);
+  inputEl.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+}
+
+let _searchTimer;
+function _initSearch() {
+  const input = document.getElementById('search-input');
+  const btn = document.getElementById('search-btn');
+  const drop = document.getElementById('search-dropdown');
+  if (!input || !drop) return;
+
+  const fire = () => {
+    const query = input.value.trim();
+    if (!query) return _setSearchOpen(input, drop, false);
+    clearTimeout(_searchTimer);
+    _doSearch(query, drop);
+  };
+
+  input.addEventListener('input', () => {
+    const query = input.value.trim();
+    if (!query) return _setSearchOpen(input, drop, false);
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(() => _doSearch(query, drop), 220);
+  });
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); fire(); }
+    if (event.key === 'Escape') {
+      _setSearchOpen(input, drop, false);
+      input.blur();
+    }
+  });
+  btn?.addEventListener('click', fire);
+  document.addEventListener('click', event => {
+    if (!input.contains(event.target) && !btn?.contains(event.target) && !drop.contains(event.target)) {
+      _setSearchOpen(input, drop, false);
+    }
+  });
+}
+
+function _initMobileSearch() {
+  const button = document.getElementById('mobile-search-btn');
+  const bar = document.getElementById('mobile-search-bar');
+  const input = document.getElementById('mobile-search-input');
+  const drop = document.getElementById('mobile-search-dropdown');
+  if (!button || !bar || !input || !drop) return;
+
+  button.addEventListener('click', () => {
+    bar.classList.toggle('hidden');
+    if (!bar.classList.contains('hidden')) input.focus();
+  });
+
+  let timer;
+  input.addEventListener('input', () => {
+    const query = input.value.trim();
+    if (!query) return _setSearchOpen(input, drop, false);
+    clearTimeout(timer);
+    timer = setTimeout(() => _doSearch(query, drop), 220);
+  });
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); _doSearch(input.value.trim(), drop); }
+    if (event.key === 'Escape') {
+      _setSearchOpen(input, drop, false);
+      bar.classList.add('hidden');
+      button.focus();
+    }
+  });
+}
+
+let _etfIdxPromise = null;
+async function _ensureEtfIdx() {
+  if (Array.isArray(window._ETF_IDX)) return window._ETF_IDX;
+  if (_etfIdxPromise) return _etfIdxPromise;
+
+  _etfIdxPromise = fetch('/api/etf/index')
+    .then(response => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
+    .then(payload => {
+      window._ETF_IDX = Array.isArray(payload?.data) ? payload.data : [];
+      return window._ETF_IDX;
+    })
+    .catch(() => null)
+    .finally(() => { _etfIdxPromise = null; });
+  return _etfIdxPromise;
+}
+
+async function _doSearch(query, dropEl) {
+  if (!query || !dropEl) return;
+  const inputEl = dropEl.id === 'mobile-search-dropdown'
+    ? document.getElementById('mobile-search-input')
+    : document.getElementById('search-input');
+  _setSearchOpen(inputEl, dropEl, true);
+
+  const index = await _ensureEtfIdx();
+  if (!index?.length) return _doSearchApi(query, dropEl);
+
+  const upperQuery = query.toUpperCase();
+  const matched = index.filter(item => {
+    const ticker = String(item.ticker || '').toUpperCase();
+    return ticker.includes(upperQuery) || String(item.name || '').includes(query);
+  }).slice(0, 8);
+
+  if (matched.length) {
+    dropEl.innerHTML = matched.map(item => {
+      const ticker = String(item.ticker || '');
+      const marketBadge = item.market === 'US'
+        ? '<span class="text-[9px] px-1 rounded bg-blue-50 text-blue-400 dark:bg-blue-900/30 ml-1">US</span>'
+        : '';
+      return `<a href="/etf-detail/${encodeURIComponent(ticker)}"
+        class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-sm border-b border-slate-50 dark:border-slate-700/50 last:border-0 transition-colors">
+        <div class="min-w-0 flex-1">
+          <span class="font-bold text-slate-800 dark:text-white mr-1">${_escHtml(ticker)}</span>
+          ${marketBadge}
+          <span class="text-slate-400 text-xs ml-1">${_escHtml(item.name || '')}</span>
+        </div>
+        <i class="fas fa-chevron-right text-[10px] text-slate-300 ml-2 shrink-0"></i>
+      </a>`;
+    }).join('');
+    return;
+  }
+
+  if (!/[^\x00-\x7F]/.test(query) && query.length >= 2) {
+    await _doSearchApi(query, dropEl);
+  } else {
+    dropEl.innerHTML = `<div class="p-3 text-center text-slate-400 text-sm">找不到「${_escHtml(query)}」</div>`;
+  }
+}
+
+async function _doSearchApi(query, dropEl) {
+  dropEl.innerHTML = '<div class="p-3 text-center text-slate-400 text-sm"><span class="spinner"></span></div>';
+  try {
+    const response = await fetch(`/api/etf/search?q=${encodeURIComponent(query)}`);
+    const payload = response.ok ? await response.json() : null;
+    if (!payload?.data?.length) {
+      dropEl.innerHTML = `<div class="p-3 text-center text-slate-400 text-sm">找不到「${_escHtml(query)}」</div>`;
+      return;
+    }
+
+    dropEl.innerHTML = payload.data.slice(0, 8).map(item => {
+      const ticker = String(item.ticker || '');
+      const change = Number(item.price_change_percent) || 0;
+      const color = change >= 0 ? 'text-red-500' : 'text-green-500';
+      return `<a href="/etf-detail/${encodeURIComponent(ticker)}"
+        class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-sm border-b border-slate-50 dark:border-slate-700/50 last:border-0">
+        <div class="min-w-0">
+          <span class="font-bold text-slate-800 dark:text-white mr-2">${_escHtml(ticker)}</span>
+          <span class="text-slate-500 dark:text-slate-400 text-xs truncate">${_escHtml(item.name || '')}</span>
+        </div>
+        <span class="${color} text-xs font-medium ml-2 shrink-0">${change >= 0 ? '+' : ''}${change.toFixed(2)}%</span>
+      </a>`;
+    }).join('');
+  } catch {
+    dropEl.innerHTML = '<div class="p-3 text-center text-red-400 text-sm">搜尋失敗</div>';
+  }
+}
+
+// 共用頁面初始化；無導覽列的登入頁會安全跳過對應功能。
 document.addEventListener('DOMContentLoaded', () => {
   const btn = document.getElementById('dark-toggle');
   if (btn) {
@@ -244,4 +458,9 @@ document.addEventListener('DOMContentLoaded', () => {
       ? '<i class="fas fa-sun"></i>'
       : '<i class="fas fa-moon"></i>';
   }
+  loadUserInfo('user-info');
+  _initActiveNav();
+  _initSearch();
+  _initMobileSearch();
+  setTimeout(_ensureEtfIdx, 2000);
 });

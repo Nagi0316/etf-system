@@ -83,15 +83,6 @@
 <script>
 let currentMarket = 'all', watchlistData = [];
 
-const FREQ_BADGE = {
-  '月配':  'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
-  '雙月配':'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
-  '季配':  'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
-  '半年配':'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
-  '年配':  'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
-  '不配息':'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400',
-};
-
 async function loadWatchlist() {
   if (!Auth.isLoggedIn()) {
     document.getElementById('login-prompt').classList.remove('hidden');
@@ -138,31 +129,26 @@ function renderWatchlist() {
     const price  = item.current_price ? item.current_price.toFixed(2) : '-';
     const high   = item.day_high ? item.day_high.toFixed(2) : '-';
     const low    = item.day_low  ? item.day_low.toFixed(2)  : '-';
-    const yldValue = Number(item.dividend_yield) || 0;
-    const yld = yldValue > 0
-      ? yldValue.toFixed(2)+'%' + (item.dividend_status === 'estimated' ? '（估）' : '')
-      : item.dividend_status === 'not_applicable' ? '不配息' : '待同步';
-    const bCls   = FREQ_BADGE[item.payout_freq] || 'bg-slate-100 text-slate-400';
-    const freqTag = item.payout_freq && item.dividend_status !== 'unknown'
-      ? `<span class="text-[11px] px-1.5 py-0.5 rounded font-medium ${bCls} ml-1">${item.payout_freq}</span>` : '';
+    const dividend = getDividendDisplay(item);
+    const freqTag = dividendFrequencyBadge(item);
     return `
-    <tr class="table-row cursor-pointer animate-fade-in" onclick="location.href='/etf-detail/${item.ticker}'">
+    <tr class="table-row cursor-pointer animate-fade-in" onclick="location.href='/etf-detail/${encodeURIComponent(item.ticker)}'">
       <td class="px-4 py-3.5">
         <div class="flex items-center gap-1 flex-wrap">
-          <span class="font-bold text-indigo-600 dark:text-indigo-400">${item.ticker}</span>
+          <span class="font-bold text-indigo-600 dark:text-indigo-400">${_escHtml(item.ticker)}</span>
           ${freqTag}
           <span class="text-[11px] text-slate-400 dark:text-slate-500">${item.market==='TW'?'台股':'美股'}</span>
         </div>
-        <div class="text-xs text-slate-400 mt-0.5 truncate max-w-[180px]">${item.name||''}</div>
+        <div class="text-xs text-slate-400 mt-0.5 truncate max-w-[180px]">${_escHtml(item.name || '')}</div>
       </td>
       <td class="px-4 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-200 tabular-nums">${price}</td>
       <td class="px-4 py-3.5 text-right font-semibold tabular-nums ${chgCls}">${up?'+':''}${chg.toFixed(2)}%</td>
       <td class="px-4 py-3.5 text-right text-xs text-slate-500 dark:text-slate-400 hide-mobile tabular-nums">
         <span class="text-red-400">${high}</span> / <span class="text-green-500">${low}</span>
       </td>
-      <td class="px-4 py-3.5 text-right text-emerald-600 dark:text-emerald-400 hide-mobile tabular-nums">${yld}</td>
+      <td class="px-4 py-3.5 text-right text-emerald-600 dark:text-emerald-400 hide-mobile tabular-nums">${dividend.text}</td>
       <td class="px-4 py-3.5 text-center" onclick="event.stopPropagation()">
-        <button data-ticker="${item.ticker}" onclick="removeFromWatchlist(this.dataset.ticker)"
+        <button data-ticker="${_escHtml(item.ticker)}" onclick="removeFromWatchlist(this.dataset.ticker)"
           class="w-7 h-7 rounded-md text-slate-300 dark:text-slate-600 hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-400 transition-colors inline-flex items-center justify-center">
           <i class="fas fa-trash text-xs"></i>
         </button>

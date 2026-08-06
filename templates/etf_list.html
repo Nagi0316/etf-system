@@ -102,13 +102,6 @@ const TAB_HEADERS = {
   yield:'殖利率',
   return:'一年年化報酬',
 };
-const FREQ_BADGE  = {
-  '月配':  'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
-  '雙月配':'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
-  '季配':  'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
-  '半年配':'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
-  '年配':  'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
-};
 
 // ══════════════════════════════════════════════════════
 //  初始化
@@ -258,8 +251,7 @@ function renderRow(item, rank) {
   const chgCls = chg >= 0 ? 'text-red-500' : 'text-green-500';
   const price  = parseFloat(item.current_price) > 0
     ? parseFloat(item.current_price).toFixed(2) : '-';
-  const yld    = parseFloat(item.dividend_yield) || 0;
-  const dividendStatus = item.dividend_status || 'unknown';
+  const dividend = getDividendDisplay(item);
   const isBond = item.ticker.toUpperCase().endsWith('B');
 
   // ── 排名欄位值 ──────────────────────────
@@ -284,50 +276,45 @@ function renderRow(item, rank) {
       ? '<span class="text-slate-300 dark:text-slate-600">—</span>'
       : `<span class="${r>=0?'text-red-500':'text-green-500'} font-medium">${r>=0?'+':''}${r.toFixed(2)}%</span>`;
   } else if (currentTab === 'yield') {
-    rankVal = yld > 0
-      ? `<span class="text-emerald-600 dark:text-emerald-400 font-medium">${yld.toFixed(2)}%${dividendStatus==='estimated'?' <small>估</small>':''}</span>`
-      : dividendStatus === 'not_applicable'
+    rankVal = dividend.hasYield
+      ? `<span class="text-emerald-600 dark:text-emerald-400 font-medium">${dividend.text}</span>`
+      : dividend.status === 'not_applicable'
         ? '<span class="text-slate-400">不配息</span>'
         : '<span class="text-amber-500">待同步</span>';
   }
 
   // ── 配息頻率徽章 ───────────────────────
-  const freqBadge = (() => {
-    const f = item.payout_freq;
-    if (dividendStatus === 'unknown' || !f || f === '不配息' || f === '未知') return '';
-    const cls = FREQ_BADGE[f] || 'bg-slate-100 text-slate-400';
-    return `<span class="text-[11px] px-1.5 py-0.5 rounded font-medium ${cls} ml-1">${f}</span>`;
-  })();
+  const freqBadge = dividendFrequencyBadge(item);
 
   const bondBadge = isBond
     ? '<span class="text-[10px] px-1 py-0.5 rounded bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400 ml-1">債</span>'
     : '';
 
-  const yldCell = (yld > 0 && currentTab !== 'yield')
-    ? `<span class="text-emerald-600 dark:text-emerald-400">${yld.toFixed(2)}%${dividendStatus==='estimated'?' <small>估</small>':''}</span>`
-    : dividendStatus === 'not_applicable'
+  const yldCell = (dividend.hasYield && currentTab !== 'yield')
+    ? `<span class="text-emerald-600 dark:text-emerald-400">${dividend.text}</span>`
+    : dividend.status === 'not_applicable'
       ? '<span class="text-slate-400">不配息</span>'
       : '<span class="text-amber-500">待同步</span>';
 
   return `
   <tr class="border-b border-slate-50 dark:border-slate-700/50 last:border-0 cursor-pointer
              hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors"
-      onclick="location.href='/etf-detail/${item.ticker}'">
+      onclick="location.href='/etf-detail/${encodeURIComponent(item.ticker)}'">
     <td class="px-4 py-3.5"><div class="rank-badge ${bCls}">${rank}</div></td>
     <td class="px-4 py-3.5 max-w-0">
       <div class="flex items-center gap-0.5 flex-wrap">
-        <span class="font-bold text-indigo-600 dark:text-indigo-400 text-sm">${item.ticker}</span>
+        <span class="font-bold text-indigo-600 dark:text-indigo-400 text-sm">${_escHtml(item.ticker)}</span>
         ${bondBadge}${freqBadge}
       </div>
-      <div class="text-xs text-slate-400 mt-0.5 truncate max-w-[160px]">${item.name || ''}</div>
+      <div class="text-xs text-slate-400 mt-0.5 truncate max-w-[160px]">${_escHtml(item.name || '')}</div>
     </td>
     <td class="px-4 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-200 tabular-nums">${price}</td>
     <td class="px-4 py-3.5 text-right font-semibold tabular-nums ${chgCls}">${chg>=0?'+':''}${chg.toFixed(2)}%</td>
     <td class="px-4 py-3.5 text-right text-slate-600 dark:text-slate-300 tabular-nums">${rankVal}</td>
     <td class="px-4 py-3.5 text-right tabular-nums hide-mobile">${yldCell}</td>
     <td class="px-4 py-3.5 text-center hide-mobile" onclick="event.stopPropagation()">
-      <button data-ticker="${item.ticker}"
-              data-name="${(item.name||'').replace(/"/g,'&quot;')}"
+      <button data-ticker="${_escHtml(item.ticker)}"
+              data-name="${_escHtml(item.name || '')}"
               data-market="${item.market}"
         onclick="addWatchlist(this.dataset.ticker,this.dataset.name,this.dataset.market)"
         class="w-7 h-7 rounded-md text-slate-300 dark:text-slate-600 hover:bg-yellow-50

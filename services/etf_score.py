@@ -21,8 +21,11 @@ Grade（字母）：
   - 單檔評分快取 10 分鐘（CACHE_TTL_DETAIL）；批次評分快取 30 分鐘
 """
 from __future__ import annotations
+
 import logging
 from typing import Optional
+
+from db_queries import latest_daily_join
 
 logger = logging.getLogger(__name__)
 
@@ -62,17 +65,10 @@ def _fetch_peer_stats(cursor, market: str) -> dict:
     """取同市場熱門 ETF 的統計中位數，作為評分基準。
     使用中位數而非平均值，避免少數極端值（如槓桿 ETF）扭曲基準線。
     """
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT d.annual_return_1y, d.dividend_yield, d.expense_ratio
         FROM etf_master m
-        JOIN (
-            SELECT d1.ticker, d1.annual_return_1y, d1.dividend_yield, d1.expense_ratio
-            FROM etf_daily_data d1
-            INNER JOIN (
-                SELECT ticker, MAX(date) AS md FROM etf_daily_data
-                WHERE current_price > 0 GROUP BY ticker
-            ) d2 ON d1.ticker = d2.ticker AND d1.date = d2.md
-        ) d ON m.ticker = d.ticker
+        {latest_daily_join("m", "JOIN")}
         WHERE m.is_hot = 1 AND m.market = %s AND m.is_delisted = 0
     """, (market,))
     rows = cursor.fetchall()
@@ -110,19 +106,13 @@ def score_etf(ticker: str) -> Optional[dict]:
     try:
         with get_db() as (conn, cursor):
             # ── 取標的最新資料 ──────────────────────────
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT m.ticker, m.market,
                     d.current_price, d.annual_return_1y, d.dividend_yield,
                     d.expense_ratio, d.fifty_two_week_high, d.fifty_two_week_low,
                     d.price_change_percent
                 FROM etf_master m
-                JOIN (
-                    SELECT d1.* FROM etf_daily_data d1
-                    INNER JOIN (
-                        SELECT ticker, MAX(date) AS md FROM etf_daily_data
-                        WHERE current_price > 0 GROUP BY ticker
-                    ) d2 ON d1.ticker = d2.ticker AND d1.date = d2.md
-                ) d ON m.ticker = d.ticker
+                {latest_daily_join("m", "JOIN")}
                 WHERE m.ticker = %s
             """, (ticker,))
             row = cursor.fetchone()
@@ -258,13 +248,7 @@ def score_batch(tickers: list[str]) -> dict[str, dict]:
                     d.expense_ratio, d.fifty_two_week_high, d.fifty_two_week_low,
                     d.price_change_percent
                 FROM etf_master m
-                JOIN (
-                    SELECT d1.* FROM etf_daily_data d1
-                    INNER JOIN (
-                        SELECT ticker, MAX(date) AS md FROM etf_daily_data
-                        WHERE current_price > 0 GROUP BY ticker
-                    ) d2 ON d1.ticker = d2.ticker AND d1.date = d2.md
-                ) d ON m.ticker = d.ticker
+                {latest_daily_join("m", "JOIN")}
                 WHERE m.ticker IN ({fmt})
             """, tickers)
             rows = cursor.fetchall()

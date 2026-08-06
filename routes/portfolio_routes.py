@@ -21,25 +21,18 @@ from fastapi import APIRouter, Depends
 
 from auth import get_current_user
 from cache import cache
-from models import TransactionIn
 from database import get_db
-from utils import safe_json
+from db_queries import latest_daily_join
+from models import TransactionIn
 from services.exchange_rate import get_usd_twd
+from utils import safe_json
 
 _DEDUP_TTL = 5   # cache 冪等視窗（秒）
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-LATEST_DAILY_JOIN = """
-LEFT JOIN (
-    SELECT d1.* FROM etf_daily_data d1
-    INNER JOIN (
-        SELECT ticker, MAX(date) AS max_date FROM etf_daily_data
-        WHERE current_price > 0 GROUP BY ticker
-    ) d2 ON d1.ticker = d2.ticker AND d1.date = d2.max_date
-) d ON p.ticker = d.ticker
-"""
+LATEST_DAILY_JOIN = latest_daily_join("p")
 
 
 # ══════════════════════════════════════════════════════════

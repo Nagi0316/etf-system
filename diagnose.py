@@ -1,7 +1,11 @@
 """
-ETF 系統全欄位診斷腳本 v7
-對齊目前程式架構，完整偵測所有欄位與全部 8 個走勢圖期間：
-  1D / 5D / 1M / 6M / YTD / 1Y / 5Y / All
+ETF 系統全欄位診斷腳本 v8
+對齊目前程式架構，完整偵測所有欄位與全部 7 個走勢圖期間：
+  1D / 5D / 1M / 6M / 1Y / 5Y / All
+
+變更 (v8)：
+  - 移除前端已下線的 YTD 期間，總數改為動態計算
+  - 加入 --help，避免查看說明時誤觸外部診斷
 
 變更 (v7)：
   - expense_ratio 加入 KNOWN_EXPENSE_RATIO 靜態備援（Yahoo v10 對台股常失敗）
@@ -24,6 +28,10 @@ except ImportError as e:
 TW_TICKERS = ["0050", "00878"]
 US_TICKERS = ["VOO", "SCHD"]
 args = sys.argv[1:]
+if __name__ == "__main__" and any(arg in ("-h", "--help") for arg in args):
+    print(__doc__.strip())
+    sys.exit(0)
+
 i = 0
 while i < len(args):
     if args[i] == "--tw" and i + 1 < len(args):
@@ -232,7 +240,6 @@ CHART_PERIODS = [
     ("5D",  "5D",  "5d",   "15m",  True),   # 近 5 日 15 分鐘
     ("1M",  "1M",  "1mo",  "1d",   False),  # 近 1 個月日線
     ("6M",  "6M",  "6mo",  "1d",   False),  # 近 6 個月日線
-    ("YTD", "YTD", "ytd",  "1d",   False),  # 今年至今日線
     ("1Y",  "1Y",  "1y",   "1d",   False),  # 近 1 年日線
     ("5Y",  "5Y",  "5y",   "1wk",  False),  # 近 5 年週線
     ("ALL", "All", "max",  "1mo",  False),  # 全部歷史月線
@@ -490,8 +497,8 @@ def diagnose_tw(ticker):
         rec(ticker, "asset_size",    None, False)
         rec(ticker, "expense_ratio", fee_static, fee_static > 0)
 
-    # [E] 走勢圖 — 全部 8 個期間（對齊 etf_routes.py RANGE_MAP / INTERVAL_MAP）
-    sub("E. 價格走勢圖（全部 8 個期間 × Yahoo Finance v8 chart）")
+    # [E] 走勢圖（對齊詳情頁的期間選項）
+    sub(f"E. 價格走勢圖（全部 {len(CHART_PERIODS)} 個期間 × Yahoo Finance v8 chart）")
     yt_chart = primary   # 先用 .TW，若全失敗再 .TWO
     chart_pass = chart_fail = 0
     for pid, plabel, yf_range, yf_interval, intraday in CHART_PERIODS:
@@ -511,7 +518,7 @@ def diagnose_tw(ticker):
 
     summary_status = PASS if chart_fail == 0 else (WARN if chart_pass > 0 else FAIL)
     line(summary_status, "走勢圖總計",
-         f"{chart_pass}/8 期間通過" + ("" if chart_fail == 0 else f"，{chart_fail} 個失敗"))
+         f"{chart_pass}/{len(CHART_PERIODS)} 期間通過" + ("" if chart_fail == 0 else f"，{chart_fail} 個失敗"))
 
     print()
 
@@ -663,8 +670,8 @@ def diagnose_us(ticker):
         rec(ticker, "asset_size",    None, False)
         rec(ticker, "expense_ratio", fee_static, fee_static > 0)
 
-    # [D] 走勢圖 — 全部 8 個期間（對齊 etf_routes.py）
-    sub("D. 價格走勢圖（全部 8 個期間 × Yahoo Finance v8 chart）")
+    # [D] 走勢圖（對齊詳情頁的期間選項）
+    sub(f"D. 價格走勢圖（全部 {len(CHART_PERIODS)} 個期間 × Yahoo Finance v8 chart）")
     chart_pass = chart_fail = 0
     for pid, plabel, yf_range, yf_interval, intraday in CHART_PERIODS:
         ok, msg = check_chart_period(ticker, pid, plabel, yf_range, yf_interval,
@@ -677,7 +684,7 @@ def diagnose_us(ticker):
 
     summary_status = PASS if chart_fail == 0 else (WARN if chart_pass > 0 else FAIL)
     line(summary_status, "走勢圖總計",
-         f"{chart_pass}/8 期間通過" + ("" if chart_fail == 0 else f"，{chart_fail} 個失敗"))
+         f"{chart_pass}/{len(CHART_PERIODS)} 期間通過" + ("" if chart_fail == 0 else f"，{chart_fail} 個失敗"))
 
     print()
 
@@ -744,7 +751,7 @@ if __name__ == "__main__":
     import urllib3
     urllib3.disable_warnings()
 
-    print(f"\n🔍 ETF 系統診斷腳本 v6  —  {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"\n🔍 ETF 系統診斷腳本 v8  —  {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"   台股：{TW_TICKERS}    美股：{US_TICKERS}")
     print(f"   走勢圖期間：{[p[1] for p in CHART_PERIODS]}")
 

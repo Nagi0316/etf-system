@@ -26,7 +26,7 @@ templates: Jinja2Templates | None = None
 
 @router.get("/backtest")
 async def backtest_page(request: Request):
-    return templates.TemplateResponse("backtest.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="backtest.html")
 
 
 def _yahoo_ticker(ticker: str, market: str) -> str:

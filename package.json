@@ -1,4 +1,10 @@
 {
+  "scripts": {
+    "build": "npm run build:css && npm run vendor:chart",
+    "build:css": "tailwindcss -i ./static/css/tailwind-input.css -o ./static/css/tailwind.min.css --minify",
+    "check:js": "node --check ./static/js/common.js",
+    "vendor:chart": "cp ./node_modules/chart.js/dist/chart.umd.js ./static/js/vendor/chart.umd.js"
+  },
   "devDependencies": {
     "tailwindcss": "^3.4.19"
   },

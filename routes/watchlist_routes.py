@@ -5,22 +5,15 @@ import logging
 from fastapi import APIRouter, Depends
 
 from auth import get_current_user
-from models import WatchlistAddIn
 from database import get_db
+from db_queries import latest_daily_join
+from models import WatchlistAddIn
 from utils import safe_json
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-LATEST_DAILY_JOIN = """
-LEFT JOIN (
-    SELECT d1.* FROM etf_daily_data d1
-    INNER JOIN (
-        SELECT ticker, MAX(date) AS max_date FROM etf_daily_data
-        WHERE current_price > 0 GROUP BY ticker
-    ) d2 ON d1.ticker = d2.ticker AND d1.date = d2.max_date
-) d ON w.ticker = d.ticker
-"""
+LATEST_DAILY_JOIN = latest_daily_join("w")
 
 
 @router.get("/api/watchlist")

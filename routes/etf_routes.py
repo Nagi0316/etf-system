@@ -1,27 +1,30 @@
 """
 routes/etf_routes.py — ETF 清單、詳情、搜尋、排行榜、歷史
 """
-import asyncio, logging, time
-from datetime import datetime, timedelta, timezone, date
+import asyncio
+import logging
+import re
+import time
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
+
+import certifi as _certifi
 from fastapi import APIRouter, Request, Query
 from fastapi.templating import Jinja2Templates
-
-import yfinance as yf
 import pandas as pd
-
-from models import EtfAddIn
-from database import get_db
-from utils import safe_json, safe_float
-from cache import cache, CACHE_TTL_RANK, CACHE_TTL_DETAIL
 import requests as _req
-import certifi as _certifi
+import yfinance as yf
 
+from cache import cache, CACHE_TTL_RANK, CACHE_TTL_DETAIL
+from database import get_db
+from db_queries import latest_daily_join
 from etf_data import fetch_one_etf, save_etf_data, _yahoo_ticker, _new_session, _cf_yahoo_get
+from models import EtfAddIn
 from services.alerts import check_dip_alert
 from services.exchange_rate import get_usd_twd
 from services.price_adjustment import adjust_detected_splits
+from utils import safe_float, safe_json
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -47,17 +50,7 @@ def _check_demand_rate(client_ip: str) -> bool:
     cache.set(key, timestamps, _RATE_WINDOW)
     return False
 
-LATEST_DAILY_JOIN = """
-LEFT JOIN (
-    SELECT d1.* FROM etf_daily_data d1
-    INNER JOIN (
-        SELECT ticker, MAX(date) AS max_date
-        FROM etf_daily_data
-        WHERE current_price > 0
-        GROUP BY ticker
-    ) d2 ON d1.ticker = d2.ticker AND d1.date = d2.max_date
-) d ON m.ticker = d.ticker
-"""
+LATEST_DAILY_JOIN = latest_daily_join("m")
 
 _ETF_DETAIL_SELECT = """
     SELECT m.ticker, m.name, m.market,
@@ -98,31 +91,35 @@ def _fetch_etf_detail_row(cursor, ticker: str) -> Optional[dict]:
 
 @router.get("/")
 async def root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html")
 
 @router.get("/etf-list")
 async def etf_list_page(request: Request):
-    return templates.TemplateResponse("etf_list.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="etf_list.html")
 
 @router.get("/etf-detail/{ticker}")
 async def etf_detail_page(request: Request, ticker: str):
-    return templates.TemplateResponse("etf-detail.html", {"request": request, "ticker": ticker.upper()})
+    return templates.TemplateResponse(
+        request=request,
+        name="etf-detail.html",
+        context={"ticker": ticker.upper()},
+    )
 
 @router.get("/watchlist")
 async def watchlist_page(request: Request):
-    return templates.TemplateResponse("watchlist.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="watchlist.html")
 
 @router.get("/portfolio")
 async def portfolio_page(request: Request):
-    return templates.TemplateResponse("portfolio.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="portfolio.html")
 
 @router.get("/profile")
 async def profile_page(request: Request):
-    return templates.TemplateResponse("profile.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="profile.html")
 
 @router.get("/notifications")
 async def notifications_page(request: Request):
-    return templates.TemplateResponse("notifications.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="notifications.html")
 
 
 # ── 排行榜 ──
@@ -459,8 +456,7 @@ def _looks_like_ticker(s: str) -> bool:
     """判斷字串是否可能是代碼（非中文搜尋詞）"""
     if len(s) > 10 or len(s) < 2:
         return False
-    import re
-    return bool(re.match(r'^[A-Z0-9.]+$', s))
+    return bool(re.fullmatch(r"[A-Z0-9.]+", s))
 
 
 async def _on_demand_fetch(ticker: str, client_ip: str = "") -> Optional[dict]:

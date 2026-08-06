@@ -4,17 +4,12 @@ config.py — 全域設定，從 .env 載入
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).parent
 
 # ── 載入 .env ──
-_env = BASE_DIR / ".env"
-if _env.exists():
-    with open(_env, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
+load_dotenv(BASE_DIR / ".env", override=False)
 
 # ── 資料庫 ──
 DB_HOST     = os.getenv("DB_HOST", "")

@@ -75,12 +75,15 @@ def _clear_auth_cookies(response):
 @router.get("/login", response_class=HTMLResponse)
 async def auth_page(request: Request):
     next_path = safe_redirect_path(request.query_params.get("next", "/"))
-    return templates.TemplateResponse("auth.html", {
-        "request": request,
-        "google_enabled": bool(GOOGLE_CLIENT_ID),
-        "dev_auth_enabled": os.getenv("ENV", "production") == "development",
-        "next_path": next_path,
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="auth.html",
+        context={
+            "google_enabled": bool(GOOGLE_CLIENT_ID),
+            "dev_auth_enabled": os.getenv("ENV", "production") == "development",
+            "next_path": next_path,
+        },
+    )
 
 
 # ══════════════════════════════════════════════════════════
