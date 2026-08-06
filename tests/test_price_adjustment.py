@@ -1,6 +1,6 @@
 import unittest
 
-from services.price_adjustment import adjust_detected_splits
+from services.price_adjustment_service import adjust_detected_splits
 
 
 class PriceAdjustmentTest(unittest.TestCase):

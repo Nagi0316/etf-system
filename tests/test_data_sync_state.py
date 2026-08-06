@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import database
-import etf_data
+import etf_market_data
 from routes.etf_routes import _ranking_data_meta
 
 
@@ -27,7 +27,7 @@ class DataSyncStateTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_success_state_exposes_real_coverage_and_data_date(self):
-        etf_data.record_sync_state("quotes", "TW", 2, {
+        etf_market_data.record_sync_state("quotes", "TW", 2, {
             "0050": {"quote_date": date(2026, 8, 4)},
             "0056": {"quote_date": date(2026, 8, 4)},
         })
@@ -40,7 +40,7 @@ class DataSyncStateTest(unittest.TestCase):
         self.assertEqual(meta["coverage"]["percent"], 100.0)
 
     def test_failed_attempt_does_not_erase_last_success(self):
-        etf_data.record_sync_state("quotes", "TW", 1, {
+        etf_market_data.record_sync_state("quotes", "TW", 1, {
             "0050": {"quote_date": date(2026, 8, 4)},
         })
         with database.get_db() as (_, cursor):
@@ -50,7 +50,7 @@ class DataSyncStateTest(unittest.TestCase):
             )
             successful_at = cursor.fetchone()["last_success_at"]
 
-        etf_data.record_sync_state("quotes", "TW", 1, {})
+        etf_market_data.record_sync_state("quotes", "TW", 1, {})
 
         with database.get_db() as (_, cursor):
             cursor.execute(

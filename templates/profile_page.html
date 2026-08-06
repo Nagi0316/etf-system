@@ -1,0 +1,285 @@
+{% extends "base_layout.html" %}
+{% block title %}會員中心 — ETF 投資管理系統{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto px-4 py-6 space-y-4">
+
+  <!-- 未登入 -->
+  <div id="not-loggedin" class="card py-16 text-center">
+    <i class="fas fa-user-circle text-4xl text-slate-300 dark:text-slate-600 mb-3 block"></i>
+    <p class="font-medium text-slate-600 dark:text-slate-400 mb-1">尚未登入</p>
+    <p class="text-sm text-slate-400 mb-4">登入以查看會員資訊</p>
+    <a href="/auth?next=/profile" class="btn-primary inline-flex">前往登入</a>
+  </div>
+
+  <!-- 已登入 -->
+  <div id="loggedin" class="hidden space-y-4">
+
+    <!-- 個人資料卡 -->
+    <div class="card overflow-hidden">
+      <div class="h-20 bg-gradient-to-r from-indigo-500 to-purple-500"></div>
+      <div class="px-5 pb-5">
+        <div class="flex items-end justify-between -mt-8 mb-4">
+          <div class="relative group">
+            <div id="user-avatar"
+              class="w-16 h-16 bg-white dark:bg-slate-700 rounded-xl shadow border-2 border-white dark:border-slate-700 flex items-center justify-center text-2xl text-indigo-600 font-bold overflow-hidden">
+            </div>
+            <label id="avatar-label" class="hidden absolute -bottom-1 -right-1 bg-indigo-600 text-white w-5 h-5 rounded-full items-center justify-center cursor-pointer hover:bg-indigo-700">
+              <i class="fas fa-camera text-[9px]"></i>
+              <input type="file" id="avatar-input" class="hidden" accept="image/*" onchange="handleAvatarUpload(this)">
+            </label>
+          </div>
+          <button onclick="openEditModal()"
+            class="text-sm border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all">
+            編輯資料
+          </button>
+        </div>
+        <h2 id="user-name" class="font-bold text-slate-800 dark:text-white text-lg">-</h2>
+        <div class="flex items-center gap-2 mt-0.5 flex-wrap">
+          <span class="text-xs text-slate-400 flex items-center gap-1">
+            <i class="fas fa-crown text-amber-400"></i>一般會員
+          </span>
+          <span id="google-badge" class="hidden text-xs px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 font-medium">
+            <i class="fab fa-google mr-1"></i>Google 帳號
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 資訊格 -->
+    <div class="card divide-y divide-slate-50 dark:divide-slate-700">
+      <div class="flex items-center gap-3 px-5 py-3.5">
+        <i class="fas fa-envelope text-indigo-400 w-5 text-center"></i>
+        <div>
+          <p class="text-xs text-slate-400">電子信箱</p>
+          <p id="user-email" class="text-sm font-medium text-slate-700 dark:text-slate-300">-</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3 px-5 py-3.5">
+        <i class="fas fa-phone text-indigo-400 w-5 text-center"></i>
+        <div>
+          <p class="text-xs text-slate-400">手機號碼</p>
+          <p id="user-phone" class="text-sm font-medium text-slate-700 dark:text-slate-300">-</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3 px-5 py-3.5">
+        <i class="fas fa-wallet text-indigo-400 w-5 text-center"></i>
+        <div>
+          <p class="text-xs text-slate-400">每月定期定額預算</p>
+          <p id="user-budget" class="text-sm font-medium text-slate-700 dark:text-slate-300">未設定</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3 px-5 py-3.5">
+        <i class="fas fa-calendar text-indigo-400 w-5 text-center"></i>
+        <div>
+          <p class="text-xs text-slate-400">加入日期</p>
+          <p id="user-joined" class="text-sm font-medium text-slate-700 dark:text-slate-300">-</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3 px-5 py-3.5">
+        <i class="fas fa-chart-line text-indigo-400 w-5 text-center"></i>
+        <div>
+          <p class="text-xs text-slate-400">投資資產總值（TWD）</p>
+          <p id="user-assets" class="text-sm font-medium text-slate-700 dark:text-slate-300">NT$ 0</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 操作列 -->
+    <div class="card divide-y divide-slate-50 dark:divide-slate-700">
+      <a href="/notifications"
+        class="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all">
+        <div class="flex items-center gap-3">
+          <i class="fas fa-bell text-indigo-400 w-5 text-center"></i>
+          <span class="text-sm font-medium text-slate-700 dark:text-slate-300">通知中心</span>
+        </div>
+        <i class="fas fa-chevron-right text-xs text-slate-300 dark:text-slate-600"></i>
+      </a>
+      <button id="change-pw-btn" onclick="openSecurityModal()"
+        class="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all text-left">
+        <div class="flex items-center gap-3">
+          <i class="fas fa-lock text-indigo-400 w-5 text-center"></i>
+          <span class="text-sm font-medium text-slate-700 dark:text-slate-300">修改密碼</span>
+        </div>
+        <i class="fas fa-chevron-right text-xs text-slate-300 dark:text-slate-600"></i>
+      </button>
+      <button onclick="Auth.logout()"
+        class="w-full flex items-center gap-3 px-5 py-4 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all text-left">
+        <i class="fas fa-sign-out-alt text-red-400 w-5 text-center"></i>
+        <span class="text-sm font-medium text-red-500">登出系統</span>
+      </button>
+    </div>
+
+  </div><!-- /loggedin -->
+</div>
+
+<!-- 編輯 Modal -->
+<div id="editModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
+  <div class="card w-full max-w-sm p-6">
+    <div class="flex justify-between items-center mb-4">
+      <h3 class="font-bold text-slate-800 dark:text-white">編輯個人資料</h3>
+      <button onclick="closeEditModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="space-y-3">
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">使用者名稱</label>
+        <input id="edit-username" type="text" class="input">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">手機號碼</label>
+        <input id="edit-phone" type="tel" placeholder="0912345678" class="input">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">每月定期定額預算（TWD）</label>
+        <input id="edit-budget" type="number" placeholder="例：10000" min="0" step="1000" class="input">
+      </div>
+    </div>
+    <div class="flex gap-2 mt-4">
+      <button onclick="saveProfile()" class="btn-primary flex-1 justify-center">儲存</button>
+      <button onclick="closeEditModal()" class="flex-1 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 py-2 px-4 rounded-lg text-sm font-medium hover:bg-slate-200 dark:hover:bg-slate-600">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- 密碼 Modal -->
+<div id="securityModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
+  <div class="card w-full max-w-sm p-6">
+    <div class="flex justify-between items-center mb-4">
+      <h3 class="font-bold text-slate-800 dark:text-white">修改密碼</h3>
+      <button onclick="closeSecurityModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="space-y-3">
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">目前密碼</label>
+        <input id="current-password" type="password" class="input">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">新密碼（至少 8 字元）</label>
+        <input id="new-password" type="password" class="input">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">確認新密碼</label>
+        <input id="confirm-password" type="password" class="input">
+      </div>
+    </div>
+    <button onclick="changePassword()" class="btn-primary w-full justify-center mt-4">更新密碼</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let profileData = null;
+
+async function loadProfile() {
+  if (!Auth.isLoggedIn()) {
+    document.getElementById('not-loggedin').classList.remove('hidden');
+    return;
+  }
+  document.getElementById('not-loggedin').classList.add('hidden');
+  document.getElementById('loggedin').classList.remove('hidden');
+
+  const data = await Auth.fetchJson('/api/user/profile');
+  if (!data?.data) return;
+  profileData = data.data;
+  const u = profileData;
+
+  document.getElementById('user-name').textContent   = u.username || '-';
+  document.getElementById('user-email').textContent  = u.email    || '-';
+  document.getElementById('user-phone').textContent  = u.phone    || '未設定';
+  document.getElementById('user-joined').textContent = u.created_at ? u.created_at.split('T')[0] : '-';
+  document.getElementById('user-budget').textContent = u.monthly_budget
+    ? `NT$ ${Number(u.monthly_budget).toLocaleString()}` : '未設定';
+
+  const av = document.getElementById('user-avatar');
+  const avatar = u.display_avatar || u.google_picture || u.avatar;
+  if (avatar) {
+    av.innerHTML = `<img src="${avatar}" class="w-full h-full object-cover" referrerpolicy="no-referrer">`;
+  } else {
+    av.textContent = (u.username || '?')[0].toUpperCase();
+  }
+
+  if (u.auth_provider === 'google') {
+    document.getElementById('google-badge').classList.remove('hidden');
+    document.getElementById('change-pw-btn').classList.add('hidden');
+  } else {
+    document.getElementById('avatar-label').classList.remove('hidden');
+    document.getElementById('avatar-label').style.display = 'flex';
+  }
+  loadAssets();
+}
+
+async function loadAssets() {
+  const data = await Auth.fetchJson('/api/portfolio');
+  if (data?.summary?.total_value_twd) {
+    document.getElementById('user-assets').textContent = `NT$ ${Math.round(data.summary.total_value_twd).toLocaleString()}`;
+  } else if (data?.summary?.total_value) {
+    document.getElementById('user-assets').textContent = `NT$ ${Math.round(data.summary.total_value).toLocaleString()}`;
+  }
+}
+
+function openEditModal() {
+  if (!profileData) return;
+  document.getElementById('edit-username').value = profileData.username || '';
+  document.getElementById('edit-phone').value    = profileData.phone    || '';
+  document.getElementById('edit-budget').value   = profileData.monthly_budget || '';
+  document.getElementById('editModal').style.display = 'flex';
+}
+function closeEditModal() { document.getElementById('editModal').style.display = 'none'; }
+
+async function saveProfile() {
+  const username       = document.getElementById('edit-username').value.trim();
+  const phone          = document.getElementById('edit-phone').value.trim();
+  const monthly_budget = parseFloat(document.getElementById('edit-budget').value) || null;
+  if (!username) { showToast('請填寫使用者名稱', false); return; }
+  const data = await Auth.fetchJson('/api/user/profile', {
+    method: 'PUT',
+    body: JSON.stringify({ username, phone, monthly_budget })
+  });
+  if (data?.status === 'success') { showToast('已更新'); closeEditModal(); loadProfile(); }
+  else showToast(data?.message || '更新失敗', false);
+}
+
+function openSecurityModal() { document.getElementById('securityModal').style.display = 'flex'; }
+function closeSecurityModal() { document.getElementById('securityModal').style.display = 'none'; }
+
+async function changePassword() {
+  const curr = document.getElementById('current-password').value;
+  const newp = document.getElementById('new-password').value;
+  const conf = document.getElementById('confirm-password').value;
+  if (!curr) { showToast('請輸入目前密碼', false); return; }
+  if (!newp || newp.length < 8) { showToast('新密碼至少 8 字元', false); return; }
+  if (newp !== conf) { showToast('兩次密碼不一致', false); return; }
+  const data = await Auth.fetchJson('/api/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: curr, new_password: newp })
+  });
+  if (data?.status === 'success') { showToast('密碼已更新'); closeSecurityModal(); }
+  else showToast(data?.message || '變更失敗', false);
+}
+
+async function handleAvatarUpload(input) {
+  if (!input.files?.[0]) return;
+  const file = input.files[0];
+  if (!file.type.startsWith('image/')) { showToast('請上傳圖片', false); return; }
+  if (file.size > 5 * 1024 * 1024) { showToast('圖片不能超過 5MB', false); return; }
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch('/api/user/avatar', { method:'POST', credentials:'include', body:fd });
+  const data = await res.json();
+  if (data?.status === 'success') {
+    showToast('頭貼已更新');
+    document.getElementById('user-avatar').innerHTML = `<img src="${data.avatar_url}?t=${Date.now()}" class="w-full h-full object-cover">`;
+  } else showToast(data?.message || '上傳失敗', false);
+}
+
+['editModal','securityModal'].forEach(id => {
+  document.getElementById(id)?.addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.style.display='none'; });
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') ['editModal','securityModal'].forEach(id => { const m = document.getElementById(id); if (m) m.style.display='none'; });
+});
+
+document.addEventListener('DOMContentLoaded', loadProfile);
+</script>
+{% endblock %}

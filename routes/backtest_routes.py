@@ -6,7 +6,8 @@ routes/backtest_routes.py — 存股回測 API（含 DRIP、低檔加碼、Bench
   2. CF Proxy — Cloudflare Worker 代理 Yahoo Finance v8 chart API（繞過 Railway IP 封鎖）
   3. Direct Yahoo — CF Proxy 未設定或失敗時直連（本地開發 / 備援）
 """
-import asyncio, logging
+import asyncio
+import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request
 from fastapi.templating import Jinja2Templates
@@ -14,10 +15,10 @@ from fastapi.templating import Jinja2Templates
 import yfinance as yf
 import pandas as pd
 
-from models import BacktestIn, BacktestCompareIn
-from utils import safe_json
+from request_models import BacktestIn, BacktestCompareIn
+from serialization_utils import safe_json
 from services.backtest_engine import run_accumulate, run_benchmark
-from etf_data import _cf_yahoo_get, _new_session
+from etf_market_data import _cf_yahoo_get, _new_session
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -25,8 +26,8 @@ templates: Jinja2Templates | None = None
 
 
 @router.get("/backtest")
-async def backtest_page(request: Request):
-    return templates.TemplateResponse(request=request, name="backtest.html")
+def backtest_page(request: Request):
+    return templates.TemplateResponse(request=request, name="backtest_page.html")
 
 
 def _yahoo_ticker(ticker: str, market: str) -> str:

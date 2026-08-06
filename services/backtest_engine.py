@@ -48,7 +48,7 @@ def run_accumulate(
     """
     定期定額 + 選配低檔加碼 + 選配 DRIP
     """
-    from services.alerts import pyramid_extra_amount
+    from services.price_alert_service import pyramid_extra_amount
 
     transactions = []
     total_invested = 0.0

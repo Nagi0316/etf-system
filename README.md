@@ -5,17 +5,28 @@
 ## 專案結構
 
 ```text
-routes/                 HTTP 頁面與 API 路由
-services/               回測、評分、匯率、歷史價與通知邏輯
-static/                 編譯後 CSS、共用 JavaScript 與 Chart.js
-templates/              Jinja2 頁面模板
-tests/                  單元、資料流程與頁面完整性測試
-database.py             Schema、migration 與連線管理
-db_queries.py           跨功能共用的查詢片段
-etf_data.py             ETF 目錄、報價與配息資料整合
-scheduler.py            定時同步與修復作業
-main.py                 FastAPI 應用、啟動週期與健康檢查
+main.py                         FastAPI 進入點、啟動週期與健康檢查
+application_config.py           環境變數、路徑與應用程式設定
+authentication.py               JWT、Google OAuth 與密碼驗證
+database.py                     Schema、migration 與資料庫連線管理
+database_queries.py             跨功能共用的查詢片段
+etf_market_data.py              ETF 商品清單、行情與配息來源整合
+market_data_scheduler.py        行情同步、缺口修復與定時工作
+memory_cache.py                 執行緒安全的應用程式快取
+request_models.py               API 的 Pydantic 請求模型
+serialization_utils.py          型別轉換與 JSON 回應工具
+routes/                         HTTP 頁面與 API 路由
+services/                       回測、評分、匯率、歷史價與通知服務
+templates/                      依用途命名的 Jinja2 頁面與共用版型
+static/                         CSS、全站 JavaScript、圖示與第三方前端資產
+scripts/                        本機啟動及資料來源診斷工具
+deployment/                     Cloudflare 等外部部署資產
+tests/                          單元、資料流程與頁面完整性測試
 ```
+
+專案內自訂檔名統一使用小寫 `snake_case`；頁面模板以 `_page.html` 結尾，
+共用版型以 `_layout.html` 結尾。框架或套件要求的標準檔名（例如
+`package.json`、`Procfile`、`.env.example`）則維持原名，避免破壞工具鏈。
 
 ## 本機啟動
 
@@ -34,7 +45,8 @@ main.py                 FastAPI 應用、啟動週期與健康檢查
    python3 -m uvicorn main:app --reload
    ```
 
-Windows 也可執行 `啟動ETF系統.bat`。未設定 TiDB 時會自動使用本機 SQLite。
+Windows 也可執行 `scripts/start_windows.bat`。腳本會先切換到專案根目錄；
+未設定 TiDB 時會自動使用本機 SQLite。
 
 ## 前端建置
 
@@ -42,7 +54,7 @@ Windows 也可執行 `啟動ETF系統.bat`。未設定 TiDB 時會自動使用�
 
 ```bash
 npm run build
-npm run check:js
+npm run check
 ```
 
 ## 測試與診斷
@@ -50,10 +62,11 @@ npm run check:js
 ```bash
 python3 -m unittest discover -s tests -v
 python3 -m compileall -q . -x '(^|/)(node_modules|\.git)/'
-python3 diagnose.py
+python3 scripts/data_source_diagnostics.py
 ```
 
 測試範圍包含報價來源、價格歷史、分割還原、資料同步狀態、快取、公開頁面渲染與靜態資產完整性。
+GitHub Actions 會在每次推送與 Pull Request 自動重跑 Python 測試、前端建置及語法檢查。
 
 ## 資料正確性原則
 

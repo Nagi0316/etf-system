@@ -1,0 +1,370 @@
+{% extends "base_layout.html" %}
+{% block title %}ETF 精選 — ETF 投資管理系統{% endblock %}
+
+{% block extra_head %}
+<style>
+  .rank-1    { background:linear-gradient(135deg,#FFD700,#FDB931); color:#1a1a1a; }
+  .rank-2    { background:linear-gradient(135deg,#C0C0C0,#E8E8E8); color:#1a1a1a; }
+  .rank-3    { background:linear-gradient(135deg,#CD7F32,#B87333); color:#fff; }
+  .rank-other{ background:#f1f5f9; color:#64748b; }
+  .dark .rank-other { background:#334155; color:#94a3b8; }
+  .rank-badge{ width:26px; height:26px; display:flex; align-items:center; justify-content:center; border-radius:50%; font-weight:700; font-size:.75rem; flex-shrink:0; }
+  .mkt-on   { background:white; color:#1e293b; box-shadow:0 1px 3px rgba(0,0,0,.1); }
+  .dark .mkt-on { background:#475569; color:#f1f5f9; }
+  .mkt-off  { color:#94a3b8; }
+  .tab-on   { color:#4f46e5; border-bottom:2px solid #4f46e5; }
+  .dark .tab-on { color:#a5b4fc; border-bottom-color:#818cf8; }
+  .tab-off  { color:#94a3b8; border-bottom:2px solid transparent; }
+  .tab-off:hover { color:#64748b; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6 space-y-4">
+
+  <!-- ── Header ── -->
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="text-xl font-bold text-slate-800 dark:text-white">ETF 排行榜</h1>
+      <p id="update-time" class="text-xs text-slate-400 mt-0.5">資料載入中…</p>
+    </div>
+    <div class="flex items-center gap-3 flex-wrap">
+      <!-- 市場切換 -->
+      <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5">
+        <button id="btn-TW" onclick="switchMarket('TW')"
+          class="mkt-btn px-5 py-1.5 rounded-md text-sm font-semibold mkt-on transition-all">台股</button>
+        <button id="btn-US" onclick="switchMarket('US')"
+          class="mkt-btn px-5 py-1.5 rounded-md text-sm font-semibold mkt-off transition-all">美股</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 排行榜卡片 ── -->
+  <div class="card overflow-hidden">
+    <!-- Tabs -->
+    <div class="flex border-b border-slate-200 dark:border-slate-700 overflow-x-auto">
+      <button id="tab-hot" onclick="switchTab('hot')"
+        class="rank-tab tab-on px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">今日熱門</button>
+      <button id="tab-asset" onclick="switchTab('asset')"
+        class="rank-tab tab-off px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">資產規模</button>
+      <button id="tab-holders" onclick="switchTab('holders')"
+        class="rank-tab tab-off px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">持股人數</button>
+      <button id="tab-yield" onclick="switchTab('yield')"
+        class="rank-tab tab-off px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">殖利率</button>
+      <button id="tab-return" onclick="switchTab('return')"
+        class="rank-tab tab-off px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors">年化報酬</button>
+    </div>
+    <div id="rank-source-note"
+      class="px-4 py-2 text-[11px] text-slate-400 bg-slate-50/70 dark:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700">
+      今日熱門依當日成交額排序（現價 × 成交量）
+    </div>
+    <!-- 表格 -->
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-slate-100 dark:border-slate-700 text-xs font-medium text-slate-400 uppercase tracking-wide">
+            <th class="px-4 py-3 text-left w-10">#</th>
+            <th class="px-4 py-3 text-left">ETF</th>
+            <th class="px-4 py-3 text-right">現價</th>
+            <th class="px-4 py-3 text-right">今日漲跌</th>
+            <th class="px-4 py-3 text-right" id="rank-col-header">今日成交額</th>
+            <th class="px-4 py-3 text-right hide-mobile">殖利率</th>
+            <th class="px-4 py-3 w-10 hide-mobile"></th>
+          </tr>
+        </thead>
+        <tbody id="ranking-body">
+          <tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">
+            <span class="spinner mr-2"></span>資料載入中…
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ══════════════════════════════════════════════════════
+//  狀態
+// ══════════════════════════════════════════════════════
+let rankData      = { TW: null, US: null };  // combined ranking payload
+let currentMarket = 'TW';
+let currentTab    = 'hot';
+let rankLoaded    = false;   // 是否已完成至少一次載入嘗試（成功或失敗）
+
+const TAB_HEADERS = {
+  hot:'今日成交額',
+  asset:'資產規模',
+  holders:'持股人數',
+  yield:'殖利率',
+  return:'一年年化報酬',
+};
+
+// ══════════════════════════════════════════════════════
+//  初始化
+// ══════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', async () => {
+  // 並行抓取雙市場排行 + ETF 搜尋索引（索引供 navbar 搜尋共用）
+  await Promise.all([
+    loadCombinedRankings(),
+    loadEtfIndex(),
+  ]);
+
+  // 每 5 分鐘自動刷新排行
+  setInterval(loadCombinedRankings, 5 * 60 * 1000);
+});
+
+// ══════════════════════════════════════════════════════
+//  資料載入
+// ══════════════════════════════════════════════════════
+async function loadCombinedRankings() {
+  // 12 秒逾時，避免 DB 連線慢時前端無限等待
+  const ctrl = new AbortController();
+  const tid  = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const [tw, us] = await Promise.all([
+      fetch('/api/etf/rankings/combined?market=TW', { signal: ctrl.signal })
+        .then(r => r.json()).catch(() => null),
+      fetch('/api/etf/rankings/combined?market=US', { signal: ctrl.signal })
+        .then(r => r.json()).catch(() => null),
+    ]);
+    if (tw?.status === 'success') rankData.TW = tw;
+    if (us?.status === 'success') rankData.US = us;
+  } catch (_) {
+    // AbortError（逾時）或其他網路錯誤，rankData 維持 null → 顯示錯誤提示
+  } finally {
+    clearTimeout(tid);
+    rankLoaded = true;   // 無論成功或失敗，標記「已嘗試過」
+  }
+  renderRanking();
+}
+
+async function loadEtfIndex() {
+  // 只為 navbar 搜尋預載入索引，本頁不使用搜尋 UI
+  const ctrl = new AbortController();
+  const tid  = setTimeout(() => ctrl.abort(), 10000);
+  try {
+    const d = await fetch('/api/etf/index', { signal: ctrl.signal }).then(r => r.json());
+    window._ETF_IDX = d.data || [];   // 供 navbar 搜尋共用
+  } catch { window._ETF_IDX = []; }
+  finally { clearTimeout(tid); }
+}
+
+async function retryLoad() {
+  rankLoaded = false;
+  renderRanking();           // 重新顯示轉圈
+  await loadCombinedRankings();
+}
+
+// ══════════════════════════════════════════════════════
+//  排行榜渲染
+// ══════════════════════════════════════════════════════
+function renderRanking() {
+  const d    = rankData[currentMarket];
+  const body = document.getElementById('ranking-body');
+
+  if (!d) {
+    if (!rankLoaded) {
+      // 首次載入中：顯示轉圈
+      body.innerHTML = `<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">
+        <span class="spinner mr-2"></span>排行榜載入中，請稍候…</td></tr>`;
+    } else {
+      // 載入完成但失敗：顯示錯誤＋重試按鈕
+      body.innerHTML = `<tr><td colspan="7" class="px-4 py-14 text-center text-slate-400 text-sm">
+        <i class="fas fa-exclamation-circle mr-2 text-amber-400 text-base"></i>
+        資料暫時無法載入（伺服器可能剛啟動）
+        <button onclick="retryLoad()"
+          class="ml-3 px-3 py-1 rounded-md bg-indigo-50 dark:bg-indigo-900/30
+                 text-indigo-600 dark:text-indigo-400 text-xs hover:bg-indigo-100
+                 dark:hover:bg-indigo-900/50 transition-colors">
+          <i class="fas fa-redo mr-1 text-[10px]"></i>重試
+        </button>
+      </td></tr>`;
+      document.getElementById('update-time').textContent = '載入失敗，請按重試';
+    }
+    return;
+  }
+
+  // 更新時間
+  const ts = d.updated_at || '';
+  const dataDate = d.data_date || '';
+  const coverage = d.coverage || {};
+  const coverageText = coverage.expected
+    ? ` · 本輪即時成交 ${coverage.received}/${coverage.expected}（其餘沿用最近交易日）`
+    : '';
+  document.getElementById('update-time').textContent = ts
+    ? `資料日 ${dataDate || '—'} · 同步於 ${ts}${coverageText}`
+    : '';
+  document.getElementById('rank-col-header').textContent = TAB_HEADERS[currentTab] || '';
+
+  const rows = (d[currentTab] || []).slice(0, 10);
+  const sourceNote = document.getElementById('rank-source-note');
+  if (currentTab === 'hot') {
+    sourceNote.textContent = '今日熱門依當日成交額排序（現價 × 成交量），台股與美股分市場比較';
+  } else if (currentTab === 'asset') {
+    sourceNote.textContent = currentMarket === 'TW'
+      ? '台股資產規模來自臺灣證券交易所 ETF 投資篩選器；缺值時才以發行單位數 × 現價估算'
+      : '美股資產規模來自基金行情資料；僅列出具有有效規模資料的 ETF';
+  } else if (currentTab === 'holders') {
+    sourceNote.textContent = currentMarket === 'TW'
+      ? '持股人數採證交所公布的受益人次（資料來源：集保結算所）'
+      : '美股目前沒有與臺灣集保受益人次可直接比較的官方公開欄位';
+  } else if (currentTab === 'yield') {
+    sourceNote.textContent = '殖利率依最近一年已確認配息與最新價格計算；資料不足者不參與排名';
+  } else {
+    sourceNote.textContent = '一年年化報酬以有效歷史價格計算；資料不足者不參與排名';
+  }
+
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="7" class="px-4 py-12 text-center text-slate-400 text-sm">
+      <i class="fas fa-database mr-2 text-slate-300"></i>${
+        currentTab === 'holders' && currentMarket === 'US'
+          ? '美股沒有可與臺灣受益人次直接比較的官方資料'
+          : '目前沒有符合此排名條件的有效資料'
+      }
+    </td></tr>`;
+    return;
+  }
+
+  body.innerHTML = rows.map((item, i) => renderRow(item, i + 1)).join('');
+}
+
+function formatMarketMoney(value, market) {
+  const amount = Number(value) || 0;
+  if (amount <= 0) return '—';
+  if (market === 'TW') {
+    if (amount >= 1e8) return `NT$ ${(amount / 1e8).toLocaleString(undefined, {maximumFractionDigits:1})} 億`;
+    if (amount >= 1e4) return `NT$ ${(amount / 1e4).toFixed(1)} 萬`;
+    return `NT$ ${Math.round(amount).toLocaleString()}`;
+  }
+  if (amount >= 1e9) return `US$ ${(amount / 1e9).toFixed(2)}B`;
+  if (amount >= 1e6) return `US$ ${(amount / 1e6).toFixed(1)}M`;
+  return `US$ ${Math.round(amount).toLocaleString()}`;
+}
+
+function renderRow(item, rank) {
+  const bCls   = rank===1?'rank-1':rank===2?'rank-2':rank===3?'rank-3':'rank-other';
+  const chg    = parseFloat(item.price_change_percent) || 0;
+  const chgCls = chg >= 0 ? 'text-red-500' : 'text-green-500';
+  const price  = parseFloat(item.current_price) > 0
+    ? parseFloat(item.current_price).toFixed(2) : '-';
+  const dividend = getDividendDisplay(item);
+  const isBond = item.ticker.toUpperCase().endsWith('B');
+
+  // ── 排名欄位值 ──────────────────────────
+  let rankVal = '-';
+  if (currentTab === 'hot') {
+    rankVal = formatMarketMoney(item.turnover, item.market);
+  } else if (currentTab === 'asset') {
+    const estimated = Number(item.asset_size_estimated) === 1;
+    rankVal = `<span class="font-medium">${formatMarketMoney(item.asset_size, item.market)}</span>${
+      estimated
+        ? '<span class="ml-1 text-[10px] text-amber-500" title="依發行單位數與現價估算">估</span>'
+        : ''
+    }`;
+  } else if (currentTab === 'holders') {
+    const holders = Number(item.holder_count) || 0;
+    rankVal = holders > 0
+      ? `<span class="font-medium">${Math.round(holders).toLocaleString()} 人</span>`
+      : '<span class="text-slate-300 dark:text-slate-600">—</span>';
+  } else if (currentTab === 'return') {
+    const r = parseFloat(item.annual_return_1y);
+    rankVal = (isNaN(r) || item.annual_return_1y == null)
+      ? '<span class="text-slate-300 dark:text-slate-600">—</span>'
+      : `<span class="${r>=0?'text-red-500':'text-green-500'} font-medium">${r>=0?'+':''}${r.toFixed(2)}%</span>`;
+  } else if (currentTab === 'yield') {
+    rankVal = dividend.hasYield
+      ? `<span class="text-emerald-600 dark:text-emerald-400 font-medium">${dividend.text}</span>`
+      : dividend.status === 'not_applicable'
+        ? '<span class="text-slate-400">不配息</span>'
+        : '<span class="text-amber-500">待同步</span>';
+  }
+
+  // ── 配息頻率徽章 ───────────────────────
+  const freqBadge = dividendFrequencyBadge(item);
+
+  const bondBadge = isBond
+    ? '<span class="text-[10px] px-1 py-0.5 rounded bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400 ml-1">債</span>'
+    : '';
+
+  const yldCell = (dividend.hasYield && currentTab !== 'yield')
+    ? `<span class="text-emerald-600 dark:text-emerald-400">${dividend.text}</span>`
+    : dividend.status === 'not_applicable'
+      ? '<span class="text-slate-400">不配息</span>'
+      : '<span class="text-amber-500">待同步</span>';
+
+  return `
+  <tr class="border-b border-slate-50 dark:border-slate-700/50 last:border-0 cursor-pointer
+             hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors"
+      onclick="location.href='/etf-detail/${encodeURIComponent(item.ticker)}'">
+    <td class="px-4 py-3.5"><div class="rank-badge ${bCls}">${rank}</div></td>
+    <td class="px-4 py-3.5 max-w-0">
+      <div class="flex items-center gap-0.5 flex-wrap">
+        <span class="font-bold text-indigo-600 dark:text-indigo-400 text-sm">${_escHtml(item.ticker)}</span>
+        ${bondBadge}${freqBadge}
+      </div>
+      <div class="text-xs text-slate-400 mt-0.5 truncate max-w-[160px]">${_escHtml(item.name || '')}</div>
+    </td>
+    <td class="px-4 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-200 tabular-nums">${price}</td>
+    <td class="px-4 py-3.5 text-right font-semibold tabular-nums ${chgCls}">${chg>=0?'+':''}${chg.toFixed(2)}%</td>
+    <td class="px-4 py-3.5 text-right text-slate-600 dark:text-slate-300 tabular-nums">${rankVal}</td>
+    <td class="px-4 py-3.5 text-right tabular-nums hide-mobile">${yldCell}</td>
+    <td class="px-4 py-3.5 text-center hide-mobile" onclick="event.stopPropagation()">
+      <button data-ticker="${_escHtml(item.ticker)}"
+              data-name="${_escHtml(item.name || '')}"
+              data-market="${item.market}"
+        onclick="addWatchlist(this.dataset.ticker,this.dataset.name,this.dataset.market)"
+        class="w-7 h-7 rounded-md text-slate-300 dark:text-slate-600 hover:bg-yellow-50
+               dark:hover:bg-yellow-900/30 hover:text-yellow-500 transition-colors
+               inline-flex items-center justify-center" title="加入自選">
+        <i class="fas fa-star text-xs"></i>
+      </button>
+    </td>
+  </tr>`;
+}
+
+// ══════════════════════════════════════════════════════
+//  切換（即時，不打 API）
+// ══════════════════════════════════════════════════════
+function switchMarket(m) {
+  currentMarket = m;
+  document.getElementById('btn-TW').className =
+    `mkt-btn px-5 py-1.5 rounded-md text-sm font-semibold transition-all ${m==='TW'?'mkt-on':'mkt-off'}`;
+  document.getElementById('btn-US').className =
+    `mkt-btn px-5 py-1.5 rounded-md text-sm font-semibold transition-all ${m==='US'?'mkt-on':'mkt-off'}`;
+  renderRanking();
+}
+
+function switchTab(type) {
+  currentTab = type;
+  document.querySelectorAll('.rank-tab').forEach(t => {
+    const active = t.id === 'tab-' + type;
+    t.className = `rank-tab px-4 py-2.5 text-sm font-medium -mb-px whitespace-nowrap transition-colors ${
+      active ? 'tab-on' : 'tab-off'}`;
+  });
+  renderRanking();
+}
+
+// ══════════════════════════════════════════════════════
+//  加入自選
+// ══════════════════════════════════════════════════════
+async function addWatchlist(ticker, name, market) {
+  if (!Auth.isLoggedIn()) {
+    showToast('請先登入', false);
+    setTimeout(() => Auth.redirectToLogin('/etf-list'), 1000);
+    return;
+  }
+  const data = await Auth.fetchJson('/api/watchlist/add', {
+    method: 'POST',
+    body: JSON.stringify({ ticker, name, market })
+  });
+  showToast(
+    data?.status === 'success' ? `已加入 ${ticker}` : (data?.message || '加入失敗'),
+    data?.status === 'success'
+  );
+}
+</script>
+{% endblock %}

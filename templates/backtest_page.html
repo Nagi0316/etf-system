@@ -1,0 +1,590 @@
+{% extends "base_layout.html" %}
+{% block title %}存股回測 — ETF 投資管理系統{% endblock %}
+
+{% block extra_head %}
+<script defer src="/static/js/vendor/chart.umd.js?v=4.4.9"></script>
+<style>
+.toggle-btn.active { background:#4f46e5 !important; }
+.toggle-btn.active::after { transform:translateX(20px) !important; }
+.toggle-btn::after { content:''; position:absolute; top:2px; left:2px; width:16px; height:16px; background:#fff; border-radius:50%; transition:transform .2s; }
+.toggle-btn { position:relative; }
+.quick-btn { transition: all .15s; }
+.quick-btn:hover { background:#c7d2fe; }
+.btn-outline { display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:10px; font-weight:600; border:2px solid #4f46e5; color:#4f46e5; transition:all .15s; cursor:pointer; }
+.btn-outline:hover { background:#eef2ff; }
+.dark .btn-outline { border-color:#6366f1; color:#818cf8; }
+.dark .btn-outline:hover { background:#1e293b; }
+.tab-btn { transition: all .15s; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+  <!-- ── 左側：參數設定 ── -->
+  <div class="lg:col-span-1 space-y-4">
+    <div class="card p-5">
+      <h2 class="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+        <i class="fas fa-sliders-h text-indigo-500"></i>回測設定
+      </h2>
+
+      <!-- 代碼 -->
+      <div class="mb-3">
+        <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">ETF 代碼</label>
+        <div class="flex gap-2 flex-wrap">
+          <input type="text" id="bt-ticker" value="0050" class="input text-sm flex-1 min-w-0" placeholder="如 0050 / SPY">
+          <div class="flex gap-1">
+            <button onclick="setTicker('0050')"  class="quick-btn text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-700 hover:bg-indigo-100">0050</button>
+            <button onclick="setTicker('00878')" class="quick-btn text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-700 hover:bg-indigo-100">00878</button>
+            <button onclick="setTicker('SPY')"   class="quick-btn text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-700 hover:bg-indigo-100">SPY</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 年月 -->
+      <div class="grid grid-cols-2 gap-2 mb-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">開始年月</label>
+          <input type="month" id="bt-start" value="2015-01" class="input text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">結束年月</label>
+          <input type="month" id="bt-end" value="2024-12" class="input text-sm">
+        </div>
+      </div>
+
+      <!-- 投入金額 -->
+      <div class="space-y-3 mb-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">期初單筆投入 (元)</label>
+          <input type="number" id="bt-initial" value="0" min="0" step="10000" class="input text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">每月定期定額 (元)</label>
+          <div class="flex gap-1 mb-1">
+            <button onclick="setMonthly(5000)"  class="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-700 hover:bg-indigo-100">$5K</button>
+            <button onclick="setMonthly(10000)" class="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-700 hover:bg-indigo-100">$10K</button>
+            <button onclick="setMonthly(30000)" class="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-700 hover:bg-indigo-100">$30K</button>
+          </div>
+          <input type="number" id="bt-monthly" value="10000" min="1000" step="1000" class="input text-sm">
+        </div>
+      </div>
+
+      <!-- 買入時機 -->
+      <div class="mb-3">
+        <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">買入時機（單策略）</label>
+        <select id="bt-price-mode" class="input text-sm">
+          <option value="open">月初買進（實際可行）</option>
+          <option value="low">每月最低點買進（樂觀情境）</option>
+          <option value="high">每月最高點買進（悲觀情境）</option>
+        </select>
+      </div>
+
+      <!-- 進階策略 -->
+      <div class="border border-dashed border-slate-200 dark:border-slate-700 rounded-lg p-3 mb-3 space-y-3">
+        <p class="text-xs font-bold text-slate-600 dark:text-slate-400 flex items-center gap-1"><i class="fas fa-rocket text-purple-500"></i>進階策略</p>
+
+        <label class="flex items-center justify-between cursor-pointer">
+          <div>
+            <div class="text-xs font-medium text-slate-700 dark:text-slate-200">股息再投入 (DRIP)</div>
+            <div class="text-xs text-slate-400">配息自動買回股份，複利加速</div>
+          </div>
+          <div class="relative">
+            <input type="checkbox" id="bt-drip" class="sr-only">
+            <div onclick="toggleDrip()" id="drip-toggle" class="toggle-btn w-10 h-5 bg-slate-200 dark:bg-slate-600 rounded-full cursor-pointer transition-colors"></div>
+          </div>
+        </label>
+
+        <label class="flex items-center justify-between cursor-pointer">
+          <div>
+            <div class="text-xs font-medium text-slate-700 dark:text-slate-200">低檔加碼 (金字塔)（單策略）</div>
+            <div class="text-xs text-slate-400">大跌時自動額外加碼</div>
+          </div>
+          <div class="relative">
+            <input type="checkbox" id="bt-dip" class="sr-only">
+            <div onclick="toggleDip()" id="dip-toggle" class="toggle-btn w-10 h-5 bg-slate-200 dark:bg-slate-600 rounded-full cursor-pointer transition-colors"></div>
+          </div>
+        </label>
+
+        <div id="dip-details" class="hidden space-y-2 pl-2 border-l-2 border-indigo-300">
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-xs text-slate-500 mb-0.5 block">20日跌幅觸發 (%)</label>
+              <input type="number" id="bt-dip-20" value="10" min="5" max="30" class="input text-xs py-1">
+            </div>
+            <div>
+              <label class="text-xs text-slate-500 mb-0.5 block">60日跌幅觸發 (%)</label>
+              <input type="number" id="bt-dip-60" value="15" min="5" max="40" class="input text-xs py-1">
+            </div>
+          </div>
+          <div>
+            <label class="text-xs text-slate-500 mb-0.5 block">基礎加碼比例 (%)</label>
+            <input type="number" id="bt-dip-pct" value="50" min="10" max="200" class="input text-xs py-1">
+          </div>
+        </div>
+      </div>
+
+      <!-- Benchmark -->
+      <div class="mb-4">
+        <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+          Benchmark 對比 <span class="text-slate-400 font-normal">(選填，單策略用)</span>
+        </label>
+        <input type="text" id="bt-benchmark" placeholder="如 SPY / 0050" class="input text-sm" style="text-transform:uppercase">
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="runBacktest()" id="run-btn" class="btn-primary justify-center text-sm">
+          <i class="fas fa-play"></i> 單策略回測
+        </button>
+        <button onclick="runCompare()" id="cmp-btn" class="btn-outline justify-center text-sm">
+          <i class="fas fa-layer-group"></i> 比較4策略
+        </button>
+      </div>
+    </div>
+
+    <!-- 策略說明 -->
+    <div class="strategy-box">
+      <h3 class="font-bold text-slate-800 dark:text-white text-sm mb-2 flex items-center gap-2">
+        <i class="fas fa-lightbulb text-yellow-500"></i>策略說明
+      </h3>
+      <div class="text-xs text-slate-600 dark:text-slate-300 space-y-1.5">
+        <div><span class="font-bold text-indigo-500">月初定投</span>：每月第一個交易日買進</div>
+        <div><span class="font-bold text-green-500">月最低點</span>：以月內最低價買進（理想情況）</div>
+        <div><span class="font-bold text-orange-500">月最高點</span>：以月內最高價買進（最保守估算）</div>
+        <div><span class="font-bold text-purple-500">月初+低檔加碼</span>：月初定投 + 大跌時金字塔加碼</div>
+      </div>
+      <p class="text-xs text-slate-400 mt-2">長期報酬率差距可達 <strong class="text-indigo-500">20%～60%</strong></p>
+    </div>
+  </div>
+
+  <!-- ── 右側：結果 ── -->
+  <div class="lg:col-span-2 space-y-4">
+
+    <div id="result-tabs" class="hidden flex gap-2 mb-2">
+      <button onclick="showTab('single')" id="tab-single" class="tab-btn px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white font-medium">單策略</button>
+      <button onclick="showTab('compare')" id="tab-compare" class="tab-btn px-4 py-1.5 text-sm rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">策略比較</button>
+    </div>
+
+    <!-- 單策略結果 -->
+    <div id="single-panel">
+      <div id="result-summary" class="hidden space-y-4">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3" id="kpi-cards"></div>
+
+        <!-- 風險指標卡片 -->
+        <div id="risk-section" class="hidden card p-4">
+          <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3 flex items-center gap-2">
+            <i class="fas fa-shield-alt text-purple-500"></i>風險分析指標
+            <span class="text-[10px] normal-case font-normal text-slate-400 ml-1">（基於歷史日收益計算，無風險利率 2%）</span>
+          </h4>
+          <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3" id="risk-cards"></div>
+        </div>
+
+        <div id="strategy-note-box" class="hidden strategy-box">
+          <h4 class="font-bold text-slate-800 dark:text-white text-sm mb-2" id="strategy-note-title"></h4>
+          <p class="text-xs text-slate-600 dark:text-slate-300 mb-1" id="strategy-note-desc"></p>
+          <div class="text-xs text-indigo-600 dark:text-indigo-400 font-medium" id="strategy-note-boost"></div>
+          <div class="text-xs text-slate-500 dark:text-slate-400 mt-1" id="strategy-note-example"></div>
+        </div>
+
+        <div id="benchmark-box" class="hidden card p-4">
+          <h4 class="font-bold text-slate-800 dark:text-white text-sm mb-3 flex items-center gap-2">
+            <i class="fas fa-balance-scale text-blue-500"></i>Benchmark 對比
+          </h4>
+          <div class="grid grid-cols-2 gap-3" id="benchmark-compare"></div>
+        </div>
+
+        <div class="card p-4">
+          <canvas id="bt-chart" height="180"></canvas>
+        </div>
+
+        <div class="card overflow-hidden">
+          <div class="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-700">
+            <h4 class="font-bold text-slate-800 dark:text-white text-sm">交易記錄</h4>
+            <span id="tx-count" class="text-xs text-slate-400"></span>
+          </div>
+          <div class="overflow-x-auto max-h-72 overflow-y-auto">
+            <table class="w-full text-xs">
+              <thead class="sticky top-0 bg-slate-50 dark:bg-slate-800">
+                <tr class="text-slate-500 dark:text-slate-400">
+                  <th class="text-left px-3 py-2">日期</th>
+                  <th class="text-left px-3 py-2">類型</th>
+                  <th class="text-right px-3 py-2">金額</th>
+                  <th class="text-right px-3 py-2">價格</th>
+                  <th class="text-right px-3 py-2">持股</th>
+                  <th class="text-right px-3 py-2">市值</th>
+                </tr>
+              </thead>
+              <tbody id="tx-table"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="result-placeholder" class="card p-12 text-center text-slate-400">
+        <i class="fas fa-flask text-4xl mb-3 text-indigo-300"></i>
+        <p class="font-medium mb-1 text-slate-600 dark:text-slate-400">設定好參數後點擊「單策略回測」或「比較4策略」</p>
+        <p class="text-sm">支援 DRIP 股息再投入 · 低檔加碼 · Benchmark 對比 · 4策略同時比較</p>
+      </div>
+    </div>
+
+    <!-- 策略比較結果 -->
+    <div id="compare-panel" class="hidden space-y-4">
+      <div class="card overflow-hidden">
+        <div class="p-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+          <h4 class="font-bold text-slate-800 dark:text-white text-sm flex items-center gap-2">
+            <i class="fas fa-layer-group text-indigo-500"></i>4策略績效比較
+          </h4>
+          <span id="cmp-ticker-label" class="text-xs text-slate-400"></span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead class="bg-slate-50 dark:bg-slate-800">
+              <tr class="text-slate-500 dark:text-slate-400">
+                <th class="text-left px-4 py-3">策略</th>
+                <th class="text-right px-4 py-3">總投入</th>
+                <th class="text-right px-4 py-3">最終市值</th>
+                <th class="text-right px-4 py-3">總損益</th>
+                <th class="text-right px-4 py-3">總報酬率</th>
+                <th class="text-right px-4 py-3">年化報酬率</th>
+              </tr>
+            </thead>
+            <tbody id="cmp-table"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card p-4">
+        <h4 class="font-bold text-slate-800 dark:text-white text-sm mb-3">年化報酬率比較</h4>
+        <canvas id="cmp-chart" height="160"></canvas>
+      </div>
+
+      <div class="card p-4">
+        <h4 class="font-bold text-slate-800 dark:text-white text-sm mb-3">最終市值比較</h4>
+        <canvas id="cmp-value-chart" height="160"></canvas>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let btChart = null, cmpChart = null, cmpValueChart = null;
+let dripOn = false, dipOn = false;
+
+function setTicker(t) { document.getElementById('bt-ticker').value = t; }
+function setMonthly(v) { document.getElementById('bt-monthly').value = v; }
+
+function toggleDrip() {
+  dripOn = !dripOn;
+  document.getElementById('bt-drip').checked = dripOn;
+  document.getElementById('drip-toggle').classList.toggle('active', dripOn);
+}
+
+function toggleDip() {
+  dipOn = !dipOn;
+  document.getElementById('bt-dip').checked = dipOn;
+  document.getElementById('dip-toggle').classList.toggle('active', dipOn);
+  document.getElementById('dip-details').classList.toggle('hidden', !dipOn);
+}
+
+function showTab(tab) {
+  document.getElementById('single-panel').classList.toggle('hidden', tab !== 'single');
+  document.getElementById('compare-panel').classList.toggle('hidden', tab !== 'compare');
+  document.getElementById('tab-single').className  = `tab-btn px-4 py-1.5 text-sm rounded-lg font-medium transition ${tab === 'single' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`;
+  document.getElementById('tab-compare').className = `tab-btn px-4 py-1.5 text-sm rounded-lg font-medium transition ${tab === 'compare' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`;
+}
+
+function _ymToStartDate(ym) { return ym + '-01'; }
+function _ymToEndDate(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  const last = new Date(y, m, 0).getDate();
+  return `${y}-${String(m).padStart(2,'0')}-${last}`;
+}
+function _buildCommonBody() {
+  const startYm = document.getElementById('bt-start').value;
+  const endYm   = document.getElementById('bt-end').value;
+  return {
+    ticker:        document.getElementById('bt-ticker').value.trim().toUpperCase(),
+    start_date:    _ymToStartDate(startYm),
+    end_date:      _ymToEndDate(endYm),
+    initial_amount: parseFloat(document.getElementById('bt-initial').value || 0),
+    monthly_amount: parseFloat(document.getElementById('bt-monthly').value || 10000),
+    enable_drip:    dripOn,
+    dip_threshold_20d: parseFloat(document.getElementById('bt-dip-20')?.value || 10),
+    dip_threshold_60d: parseFloat(document.getElementById('bt-dip-60')?.value || 15),
+    dip_extra_pct:     parseFloat(document.getElementById('bt-dip-pct')?.value || 50),
+  };
+}
+
+async function runBacktest() {
+  const ticker = document.getElementById('bt-ticker').value.trim().toUpperCase();
+  if (!ticker) return showToast('請輸入 ETF 代碼', false);
+  const btn = document.getElementById('run-btn');
+  btn.innerHTML = '<span class="spinner"></span> 計算中…';
+  btn.disabled = true;
+  const body = {
+    ..._buildCommonBody(),
+    price_mode: document.getElementById('bt-price-mode').value,
+    enable_dip:  dipOn,
+    benchmark_ticker: document.getElementById('bt-benchmark').value.trim().toUpperCase() || null,
+  };
+  try {
+    const resp = await Auth.fetchJson('/api/backtest', { method:'POST', body: JSON.stringify(body) });
+    if (!resp || resp.status !== 'success') throw new Error(resp?.message || 'API error');
+    renderSingleResult(resp.data, ticker);
+    document.getElementById('result-placeholder').classList.add('hidden');
+    document.getElementById('result-summary').classList.remove('hidden');
+    document.getElementById('result-tabs').classList.remove('hidden');
+    showTab('single');
+  } catch(e) {
+    showToast(`回測失敗：${e.message}`, false);
+  } finally {
+    btn.innerHTML = '<i class="fas fa-play"></i> 單策略回測';
+    btn.disabled = false;
+  }
+}
+
+async function runCompare() {
+  const ticker = document.getElementById('bt-ticker').value.trim().toUpperCase();
+  if (!ticker) return showToast('請輸入 ETF 代碼', false);
+  const btn = document.getElementById('cmp-btn');
+  btn.innerHTML = '<span class="spinner"></span> 比較中…';
+  btn.disabled = true;
+  try {
+    const resp = await Auth.fetchJson('/api/backtest/compare', { method:'POST', body: JSON.stringify(_buildCommonBody()) });
+    if (!resp || resp.status !== 'success') throw new Error(resp?.message || 'API error');
+    renderCompareResult(resp.data, ticker);
+    document.getElementById('result-placeholder').classList.add('hidden');
+    document.getElementById('result-tabs').classList.remove('hidden');
+    showTab('compare');
+  } catch(e) {
+    showToast(`策略比較失敗：${e.message}`, false);
+  } finally {
+    btn.innerHTML = '<i class="fas fa-layer-group"></i> 比較4策略';
+    btn.disabled = false;
+  }
+}
+
+function renderRiskMetrics(d) {
+  const section = document.getElementById('risk-section');
+  if (!section) return;
+
+  const metrics = [
+    {
+      label: '最大回撤',
+      val:   d.max_drawdown,
+      fmt:   v => v.toFixed(2) + '%',
+      color: v => v < -20 ? 'text-red-600' : v < -10 ? 'text-orange-500' : 'text-yellow-600',
+      icon:  'fa-arrow-down',
+      tip:   '歷史上從最高點到最低點的最大跌幅，越小越穩健',
+    },
+    {
+      label: '年化波動率',
+      val:   d.volatility,
+      fmt:   v => v.toFixed(2) + '%',
+      color: v => v > 30 ? 'text-red-600' : v > 18 ? 'text-orange-500' : 'text-green-600',
+      icon:  'fa-wave-square',
+      tip:   '每日報酬率的標準差年化後的結果，越低越穩定',
+    },
+    {
+      label: '夏普比率',
+      val:   d.sharpe_ratio,
+      fmt:   v => v.toFixed(2),
+      color: v => v >= 1 ? 'text-green-600' : v >= 0.5 ? 'text-blue-500' : 'text-orange-500',
+      icon:  'fa-balance-scale',
+      tip:   '每單位風險獲得的超額報酬，> 1 為優秀，> 0.5 可接受',
+    },
+    {
+      label: '索提諾比率',
+      val:   d.sortino_ratio,
+      fmt:   v => v.toFixed(2),
+      color: v => v >= 1.5 ? 'text-green-600' : v >= 0.8 ? 'text-blue-500' : 'text-orange-500',
+      icon:  'fa-chart-bar',
+      tip:   '只考量下行風險的夏普，> 1.5 為優秀',
+    },
+    {
+      label: '卡瑪比率',
+      val:   d.calmar_ratio,
+      fmt:   v => v.toFixed(2),
+      color: v => v >= 0.5 ? 'text-green-600' : v >= 0.2 ? 'text-blue-500' : 'text-orange-500',
+      icon:  'fa-tachometer-alt',
+      tip:   '年化報酬 / |最大回撤|，越高代表風險收益比越好',
+    },
+    {
+      label: '月勝率',
+      val:   d.win_rate_monthly,
+      fmt:   v => v.toFixed(1) + '%',
+      color: v => v >= 60 ? 'text-green-600' : v >= 50 ? 'text-blue-500' : 'text-orange-500',
+      icon:  'fa-trophy',
+      tip:   '每月收盤價高於上月的比例，> 60% 為優秀',
+    },
+  ];
+
+  const hasAny = metrics.some(m => m.val != null);
+  if (!hasAny) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+
+  document.getElementById('risk-cards').innerHTML = metrics.map(m => {
+    if (m.val == null) return `
+      <div class="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 text-center">
+        <div class="flex items-center justify-center gap-1 mb-1">
+          <i class="fas ${m.icon} text-slate-300 text-xs"></i>
+          <span class="text-[11px] text-slate-400">${m.label}</span>
+        </div>
+        <div class="text-base font-bold text-slate-300">—</div>
+      </div>`;
+    const colorCls = m.color(m.val);
+    return `
+      <div class="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 text-center" title="${m.tip}">
+        <div class="flex items-center justify-center gap-1 mb-1">
+          <i class="fas ${m.icon} ${colorCls} text-xs"></i>
+          <span class="text-[11px] text-slate-500 dark:text-slate-400">${m.label}</span>
+        </div>
+        <div class="text-base font-bold ${colorCls}">${m.fmt(m.val)}</div>
+        <div class="text-[9px] text-slate-400 mt-0.5 leading-tight">${m.tip.split('，')[0]}</div>
+      </div>`;
+  }).join('');
+}
+
+function renderSingleResult(d, ticker) {
+  const kpis = [
+    { label:'總投入', value: fmtMoney(d.total_invested), icon:'fa-coins', color:'text-blue-500' },
+    { label:'最終市值', value: fmtMoney(d.final_value), icon:'fa-chart-line', color:'text-indigo-500' },
+    { label:'總損益', value: fmtMoney(d.total_profit), icon:'fa-dollar-sign', color: d.total_profit >= 0 ? 'text-green-500' : 'text-red-500' },
+    { label:'年化報酬率', value: fmtPct(d.annual_return), icon:'fa-percentage', color: d.annual_return >= 0 ? 'text-green-500' : 'text-red-500' },
+  ];
+  document.getElementById('kpi-cards').innerHTML = kpis.map(k => `
+    <div class="card p-4">
+      <div class="flex items-center gap-2 mb-1">
+        <i class="fas ${k.icon} ${k.color} text-sm"></i>
+        <span class="text-xs text-slate-500 dark:text-slate-400">${k.label}</span>
+      </div>
+      <div class="text-lg font-bold text-slate-800 dark:text-white">${k.value}</div>
+    </div>`).join('');
+
+  renderRiskMetrics(d);
+
+  const noteBox = document.getElementById('strategy-note-box');
+  if (d.strategy_note) {
+    noteBox.classList.remove('hidden');
+    document.getElementById('strategy-note-title').textContent = d.strategy_note.title;
+    document.getElementById('strategy-note-desc').textContent  = d.strategy_note.description;
+    const b = d.strategy_note.boost;
+    document.getElementById('strategy-note-boost').textContent = b != null
+      ? `📊 年化提升 ${b >= 0 ? '+' : ''}${b.toFixed(1)}%（基準：${d.strategy_note.baseline_annual?.toFixed(1)}%  →  策略：${d.strategy_note.strategy_annual?.toFixed(1)}%）`
+      : '';
+    document.getElementById('strategy-note-example').textContent = '💡 ' + d.strategy_note.example;
+  } else { noteBox.classList.add('hidden'); }
+
+  const bmBox = document.getElementById('benchmark-box');
+  if (d.benchmark) {
+    bmBox.classList.remove('hidden');
+    const bm = d.benchmark;
+    document.getElementById('benchmark-compare').innerHTML = `
+      <div class="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-3">
+        <div class="text-xs text-slate-500 mb-1">${ticker} (主策略)</div>
+        <div class="font-bold text-indigo-600 dark:text-indigo-400">${fmtPct(d.annual_return)} 年化</div>
+        <div class="text-xs text-slate-500">${fmtMoney(d.final_value)}</div>
+      </div>
+      <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3">
+        <div class="text-xs text-slate-500 mb-1">${bm.ticker} (Benchmark)</div>
+        <div class="font-bold text-slate-600 dark:text-slate-300">${fmtPct(bm.annual_return)} 年化</div>
+        <div class="text-xs text-slate-500">${fmtMoney(bm.final_value)}</div>
+      </div>`;
+  } else { bmBox.classList.add('hidden'); }
+
+  const txs = d.transactions || [];
+  const labels = txs.map(t => t.date);
+  const values = txs.map(t => t.market_value);
+  let total = 0;
+  const invested = txs.map(t => { total += (t.amount || 0); return total; });
+
+  if (btChart) btChart.destroy();
+  const dark = document.documentElement.classList.contains('dark');
+  const gc = dark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
+  btChart = new Chart(document.getElementById('bt-chart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label:'市值', data:values, borderColor:'#4f46e5', backgroundColor:'rgba(79,70,229,0.1)', fill:true, tension:0.3, pointRadius:0 },
+        { label:'累積投入', data:invested, borderColor:'#94a3b8', borderDash:[4,4], fill:false, tension:0.3, pointRadius:0 },
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:true,
+      plugins:{ legend:{ labels:{ color: dark?'#cbd5e1':'#475569', boxWidth:12 } } },
+      scales:{
+        x:{ ticks:{ maxTicksLimit:8, color: dark?'#94a3b8':'#64748b', font:{size:10} }, grid:{color:gc} },
+        y:{ ticks:{ color: dark?'#94a3b8':'#64748b', font:{size:10}, callback: v=>`$${(v/10000).toFixed(0)}萬` }, grid:{color:gc} },
+      }
+    }
+  });
+
+  document.getElementById('tx-count').textContent = `共 ${txs.length} 筆`;
+  const typeColor = {'定期定額':'text-slate-500','低檔加碼':'text-orange-500 font-bold','DRIP配息再投入':'text-green-500','期初單筆':'text-blue-500'};
+  document.getElementById('tx-table').innerHTML = txs.map(t => `
+    <tr class="table-row border-b border-slate-50 dark:border-slate-800">
+      <td class="px-3 py-2 text-slate-500">${t.date}</td>
+      <td class="px-3 py-2 ${typeColor[t.type]||'text-slate-600'}">${t.type}</td>
+      <td class="px-3 py-2 text-right font-mono">${fmtMoney(t.amount)}</td>
+      <td class="px-3 py-2 text-right font-mono">${fmt(t.price)}</td>
+      <td class="px-3 py-2 text-right font-mono">${fmt(t.total_shares,2)}</td>
+      <td class="px-3 py-2 text-right font-mono">${fmtMoney(t.market_value)}</td>
+    </tr>`).join('');
+}
+
+function renderCompareResult(data, ticker) {
+  const stratLabels = { open:'月初定投', low:'月最低點', high:'月最高點', dip:'月初+低檔加碼' };
+  const stratColors = { open:'#4f46e5', low:'#10b981', high:'#f59e0b', dip:'#8b5cf6' };
+  const stratBg    = { open:'rgba(79,70,229,0.7)', low:'rgba(16,185,129,0.7)', high:'rgba(245,158,11,0.7)', dip:'rgba(139,92,246,0.7)' };
+  document.getElementById('cmp-ticker-label').textContent = ticker;
+  const annuals = Object.values(data).map(r => r.annual_return || 0);
+  const maxAnn = Math.max(...annuals);
+  const rows = Object.entries(data).map(([key, r]) => {
+    const isBest = (r.annual_return || 0) === maxAnn;
+    return `<tr class="table-row border-b border-slate-50 dark:border-slate-800 ${isBest ? 'bg-indigo-50 dark:bg-indigo-900/10' : ''}">
+      <td class="px-4 py-3 font-medium" style="color:${stratColors[key]}">${isBest ? '🏆 ' : ''}${stratLabels[key]}</td>
+      <td class="px-4 py-3 text-right font-mono text-slate-600 dark:text-slate-300">${fmtMoney(r.total_invested)}</td>
+      <td class="px-4 py-3 text-right font-mono font-bold text-slate-800 dark:text-white">${fmtMoney(r.final_value)}</td>
+      <td class="px-4 py-3 text-right font-mono ${(r.total_profit||0)>=0?'text-green-600 dark:text-green-400':'text-red-500'}">${fmtMoney(r.total_profit)}</td>
+      <td class="px-4 py-3 text-right ${(r.total_return||0)>=0?'text-green-600 dark:text-green-400':'text-red-500'} font-bold">${fmtPct(r.total_return)}</td>
+      <td class="px-4 py-3 text-right ${(r.annual_return||0)>=0?'text-green-600 dark:text-green-400':'text-red-500'} font-bold">${fmtPct(r.annual_return)}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('cmp-table').innerHTML = rows;
+
+  const dark = document.documentElement.classList.contains('dark');
+  const gc = dark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
+  const labelColor = dark ? '#94a3b8' : '#64748b';
+  const keys = ['open','low','high','dip'];
+  const labels = keys.map(k => stratLabels[k]);
+
+  if (cmpChart) cmpChart.destroy();
+  cmpChart = new Chart(document.getElementById('cmp-chart'), {
+    type:'bar',
+    data:{ labels, datasets:[{ label:'年化報酬率 (%)', data:keys.map(k=>data[k]?.annual_return||0),
+      backgroundColor:keys.map(k=>stratBg[k]), borderColor:keys.map(k=>stratColors[k]), borderWidth:2, borderRadius:6 }] },
+    options:{ responsive:true, maintainAspectRatio:true,
+      plugins:{ legend:{ display:false } },
+      scales:{ x:{ ticks:{ color:labelColor, font:{size:11} }, grid:{color:gc} },
+               y:{ ticks:{ color:labelColor, font:{size:10}, callback:v=>v+'%' }, grid:{color:gc} } } }
+  });
+
+  if (cmpValueChart) cmpValueChart.destroy();
+  cmpValueChart = new Chart(document.getElementById('cmp-value-chart'), {
+    type:'bar',
+    data:{ labels, datasets:[{ label:'最終市值', data:keys.map(k=>data[k]?.final_value||0),
+      backgroundColor:keys.map(k=>stratBg[k]), borderColor:keys.map(k=>stratColors[k]), borderWidth:2, borderRadius:6 }] },
+    options:{ responsive:true, maintainAspectRatio:true,
+      plugins:{ legend:{ display:false } },
+      scales:{ x:{ ticks:{ color:labelColor, font:{size:11} }, grid:{color:gc} },
+               y:{ ticks:{ color:labelColor, font:{size:10}, callback:v=>`$${(v/10000).toFixed(0)}萬` }, grid:{color:gc} } } }
+  });
+
+  document.getElementById('compare-panel').classList.remove('hidden');
+}
+</script>
+{% endblock %}

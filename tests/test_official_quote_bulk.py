@@ -3,7 +3,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 from unittest.mock import Mock, patch
 
-from etf_data import (
+from etf_market_data import (
     _fetch_tw_official_bulk,
     _fetch_tw_official_month_quote,
     _fetch_us_nasdaq_quote,
@@ -61,7 +61,7 @@ class OfficialQuoteBulkTest(unittest.TestCase):
             "季配",
         )
 
-    @patch("etf_data.time.sleep")
+    @patch("etf_market_data.time.sleep")
     def test_final_rate_limit_attempt_returns_without_extra_wait(self, sleep):
         session = Mock()
         response = Mock(status_code=429)
@@ -118,7 +118,7 @@ class OfficialQuoteBulkTest(unittest.TestCase):
     def test_parses_roc_market_date(self):
         self.assertEqual(_parse_tw_market_date("1150727"), date(2026, 7, 27))
 
-    @patch("etf_data.req_lib.get")
+    @patch("etf_market_data.req_lib.get")
     def test_merges_twse_and_tpex_quotes(self, get):
         twse = Mock()
         twse.raise_for_status.return_value = None
@@ -151,7 +151,7 @@ class OfficialQuoteBulkTest(unittest.TestCase):
         self.assertEqual(result["0050"]["quote_date"], date(2026, 7, 24))
         self.assertAlmostEqual(result["00679B"]["price_change_percent"], 0.9006)
 
-    @patch("etf_data.req_lib.get")
+    @patch("etf_market_data.req_lib.get")
     def test_uses_official_csv_when_twse_openapi_resets(self, get):
         csv_response = Mock()
         csv_response.raise_for_status.return_value = None
@@ -171,7 +171,7 @@ class OfficialQuoteBulkTest(unittest.TestCase):
         self.assertEqual(result["0050"]["quote_source"], "tw_official_csv")
         self.assertEqual(result["0050"]["quote_date"], date(2026, 8, 5))
 
-    @patch("etf_data.req_lib.get")
+    @patch("etf_market_data.req_lib.get")
     def test_reads_special_etf_from_monthly_official_source(self, get):
         response = Mock()
         response.raise_for_status.return_value = None
@@ -190,7 +190,7 @@ class OfficialQuoteBulkTest(unittest.TestCase):
         self.assertEqual(result["current_price"], 32.2)
         self.assertAlmostEqual(result["price_change_percent"], 0.625)
 
-    @patch("etf_data.req_lib.get")
+    @patch("etf_market_data.req_lib.get")
     def test_reads_us_quote_from_nasdaq(self, get):
         response = Mock()
         response.raise_for_status.return_value = None
