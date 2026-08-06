@@ -1,15 +1,17 @@
 """
 routes/user_routes.py — 使用者個人資料、大頭照上傳
 """
-import os, time, logging
+import logging
+import os
+import time
 from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.templating import Jinja2Templates
 
-from auth import get_current_user
-from models import UpdateProfileIn
+from authentication import get_current_user
+from request_models import UpdateProfileIn
 from database import get_db
-from utils import safe_json
-from config import AVATAR_DIR
+from serialization_utils import safe_json
+from application_config import AVATAR_DIR
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -17,7 +19,7 @@ templates: Jinja2Templates | None = None
 
 
 @router.get("/api/user/profile")
-async def get_profile(current_user: dict = Depends(get_current_user)):
+def get_profile(current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
     with get_db() as (conn, cursor):
         cursor.execute(
@@ -34,7 +36,7 @@ async def get_profile(current_user: dict = Depends(get_current_user)):
 
 
 @router.put("/api/user/profile")
-async def update_profile(body: UpdateProfileIn, current_user: dict = Depends(get_current_user)):
+def update_profile(body: UpdateProfileIn, current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
     with get_db() as (conn, cursor):
         fields, vals = [], []

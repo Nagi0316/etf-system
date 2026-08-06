@@ -3,14 +3,16 @@ database.py — 資料庫連線管理、初始化、Schema Migration
 支援 TiDB Cloud (MySQL 8) 及本地 SQLite 自動切換
 
 連線策略：
-  MySQL/TiDB — 每次請求建立新連線（TiDB Serverless SSL ~150ms，但穩定無池耗盡風險）
-  SQLite     — 每次建立新連線（WAL 模式支援並發讀取）
+  MySQL/TiDB — 優先重用小型連線池，池異常時退回直接連線
+  SQLite     — 每次建立短連線，使用 WAL 支援並發讀取
 """
-import time, logging, threading
+import logging
+import threading
+import time
 from datetime import date, datetime, timedelta
 from contextlib import contextmanager
 from typing import Optional
-from config import (
+from application_config import (
     DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME,
     SQLITE_PATH, USE_MYSQL
 )
@@ -644,7 +646,7 @@ def _repair_non_trading_daily_rows():
 
     if repaired:
         try:
-            from cache import cache
+            from memory_cache import cache
             cache.delete_prefix("detail:")
             cache.delete_prefix("rank:")
         except Exception as e:

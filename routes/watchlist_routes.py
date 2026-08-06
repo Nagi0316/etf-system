@@ -4,11 +4,11 @@ routes/watchlist_routes.py — ETF 自選清單
 import logging
 from fastapi import APIRouter, Depends
 
-from auth import get_current_user
+from authentication import get_current_user
 from database import get_db
-from db_queries import latest_daily_join
-from models import WatchlistAddIn
-from utils import safe_json
+from database_queries import latest_daily_join
+from request_models import WatchlistAddIn
+from serialization_utils import safe_json
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -17,7 +17,7 @@ LATEST_DAILY_JOIN = latest_daily_join("w")
 
 
 @router.get("/api/watchlist")
-async def get_watchlist(current_user: dict = Depends(get_current_user)):
+def get_watchlist(current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
     with get_db() as (conn, cursor):
         cursor.execute(f"""
@@ -44,7 +44,7 @@ async def get_watchlist(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/api/watchlist/add")
-async def add_watchlist(body: WatchlistAddIn, current_user: dict = Depends(get_current_user)):
+def add_watchlist(body: WatchlistAddIn, current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
     ticker = body.ticker
     market = body.market or ("TW" if ticker[:4].isdigit() else "US")
@@ -73,7 +73,7 @@ async def add_watchlist(body: WatchlistAddIn, current_user: dict = Depends(get_c
 
 
 @router.get("/api/watchlist/check/{ticker}")
-async def check_watchlist(ticker: str, current_user: dict = Depends(get_current_user)):
+def check_watchlist(ticker: str, current_user: dict = Depends(get_current_user)):
     """輕量查詢：單一 ticker 是否在自選清單中。"""
     uid = current_user["id"]
     with get_db() as (conn, cursor):
@@ -86,7 +86,7 @@ async def check_watchlist(ticker: str, current_user: dict = Depends(get_current_
 
 
 @router.delete("/api/watchlist/remove/{ticker}")
-async def remove_watchlist(ticker: str, current_user: dict = Depends(get_current_user)):
+def remove_watchlist(ticker: str, current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
     with get_db() as (conn, cursor):
         cursor.execute("DELETE FROM user_watchlist WHERE user_id=%s AND ticker=%s", (uid, ticker.upper()))

@@ -1,0 +1,4 @@
+/* Tailwind 編譯來源；壓縮輸出檔為 tailwind.min.css。 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

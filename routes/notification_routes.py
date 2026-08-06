@@ -1,13 +1,14 @@
 """
 routes/notification_routes.py — 通知中心 & 到價提醒管理
 """
-import json, logging
+import json
+import logging
 from fastapi import APIRouter, Depends
 
-from auth import get_current_user
-from models import PriceAlertIn
+from authentication import get_current_user
+from request_models import PriceAlertIn
 from database import get_db
-from utils import safe_json
+from serialization_utils import safe_json
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -18,7 +19,7 @@ router = APIRouter()
 # ══════════════════════════════════════════════════════════
 
 @router.get("/api/notifications")
-async def get_notifications(
+def get_notifications(
     unread_only: bool = False,
     page: int = 1,
     current_user: dict = Depends(get_current_user),
@@ -51,7 +52,7 @@ async def get_notifications(
 
 
 @router.post("/api/notifications/{nid}/read")
-async def mark_read(nid: int, current_user: dict = Depends(get_current_user)):
+def mark_read(nid: int, current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
     with get_db() as (conn, cursor):
         cursor.execute("UPDATE notifications SET is_read=1 WHERE id=%s AND user_id=%s", (nid, uid))
@@ -60,7 +61,7 @@ async def mark_read(nid: int, current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/api/notifications/read-all")
-async def mark_all_read(current_user: dict = Depends(get_current_user)):
+def mark_all_read(current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
     with get_db() as (conn, cursor):
         cursor.execute("UPDATE notifications SET is_read=1 WHERE user_id=%s", (uid,))
@@ -69,7 +70,7 @@ async def mark_all_read(current_user: dict = Depends(get_current_user)):
 
 
 @router.delete("/api/notifications/{nid}")
-async def delete_notification(nid: int, current_user: dict = Depends(get_current_user)):
+def delete_notification(nid: int, current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
     with get_db() as (conn, cursor):
         cursor.execute("DELETE FROM notifications WHERE id=%s AND user_id=%s", (nid, uid))
@@ -82,7 +83,7 @@ async def delete_notification(nid: int, current_user: dict = Depends(get_current
 # ══════════════════════════════════════════════════════════
 
 @router.get("/api/price-alerts")
-async def get_price_alerts(current_user: dict = Depends(get_current_user)):
+def get_price_alerts(current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
     with get_db() as (conn, cursor):
         cursor.execute(
@@ -96,7 +97,7 @@ async def get_price_alerts(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/api/price-alerts")
-async def create_price_alert(body: PriceAlertIn, current_user: dict = Depends(get_current_user)):
+def create_price_alert(body: PriceAlertIn, current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
     _MAX_ALERTS = 50
     with get_db() as (conn, cursor):
@@ -118,7 +119,7 @@ async def create_price_alert(body: PriceAlertIn, current_user: dict = Depends(ge
 
 
 @router.delete("/api/price-alerts/{aid}")
-async def delete_price_alert(aid: int, current_user: dict = Depends(get_current_user)):
+def delete_price_alert(aid: int, current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
     with get_db() as (conn, cursor):
         cursor.execute("UPDATE price_alerts SET is_active=0 WHERE id=%s AND user_id=%s", (aid, uid))

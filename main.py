@@ -2,7 +2,9 @@
 ETF 投資管理系統 v2.0
 完整重構版：JWT 驗證 + Google OAuth + bcrypt + 低檔加碼 + DRIP + 即時匯率
 """
-import asyncio, logging, time
+import asyncio
+import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Callable
 
@@ -12,13 +14,13 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from config import TEMPLATES_DIR, STATIC_DIR, APP_URL
+from application_config import ASSET_VERSION, TEMPLATES_DIR, STATIC_DIR, APP_URL
 from database import init_db, get_db
-from etf_data import seed_etf_master
-import scheduler as sched
+from etf_market_data import seed_etf_master
+import market_data_scheduler as sched
 
 # ── 路由模組 ──
-from routes import auth_routes, etf_routes, portfolio_routes, watchlist_routes
+from routes import authentication_routes, etf_routes, portfolio_routes, watchlist_routes
 from routes import user_routes, backtest_routes, notification_routes
 
 logging.basicConfig(
@@ -62,23 +64,23 @@ async def _startup_sequence():
 
     # 匯率與行情互不依賴；平行預熱，避免部署後健康檢查短暫誤報
     #「匯率從未取得」，也不延後主要行情同步。
-    from services.exchange_rate import get_usd_twd
+    from services.exchange_rate_service import get_usd_twd
     fx_task = asyncio.create_task(asyncio.to_thread(get_usd_twd))
 
     # Step 0: 先修復所有有效 ETF 行情。商品名錄與歷史清理可能耗時數分鐘，
     # 不應阻擋使用者最先看到的價格、漲跌與成交量。
-    from scheduler import _fast_price_tick
+    from market_data_scheduler import _fast_price_tick
     logger.info("▶ 優先同步全部 ETF 最新行情...")
     await _fast_price_tick(force_all_markets=True)
     await asyncio.gather(fx_task, return_exceptions=True)
 
     # 配息是低頻資料，獨立分批補齊，不阻塞行情與頁面啟動。
-    from scheduler import _update_dividend_gaps
+    from market_data_scheduler import _update_dividend_gaps
     asyncio.create_task(_update_dividend_gaps())
 
     # Step 1: 同步官方 ETF 商品範圍、資產規模與受益人數。
     try:
-        from services.twse_sync import sync_tw_etfs
+        from services.taiwan_catalog_sync_service import sync_tw_etfs
         synced = await asyncio.to_thread(sync_tw_etfs)
         logger.info(f"▶ 啟動 ETF 商品同步完成：新增 {synced} 檔")
     except Exception as e:
@@ -111,10 +113,14 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[APP_URL, "http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_origins=list(dict.fromkeys([
+        APP_URL,
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ])),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # ── 安全 HTTP 標頭（防 Clickjacking / MIME-sniffing / 資訊洩漏）──
@@ -124,19 +130,23 @@ async def add_security_headers(request: Request, call_next: Callable) -> Respons
     response.headers["X-Frame-Options"]           = "DENY"
     response.headers["X-Content-Type-Options"]    = "nosniff"
     response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
-    response.headers["X-XSS-Protection"]          = "1; mode=block"
+    response.headers["X-XSS-Protection"]          = "0"
     response.headers["Permissions-Policy"]        = "geolocation=(), microphone=(), camera=()"
-    # CSP：允許已知 CDN（Chart.js/FontAwesome）與 Google OAuth；
+    if APP_URL.startswith("https://"):
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    # CSP：僅允許本機腳本與 Font Awesome 樣式／字型 CDN；
     # 因模板使用大量 inline script/style，需保留 unsafe-inline，
     # 但仍透過限制 connect-src / img-src / object-src 縮小攻擊面。
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
-            "https://cdn.jsdelivr.net; "
+        "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
         "font-src 'self' https://cdnjs.cloudflare.com; "
         "img-src 'self' data: https://lh3.googleusercontent.com; "
         "connect-src 'self'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'; "
         "frame-src 'none'; "
         "object-src 'none';"
     )
@@ -151,15 +161,16 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # ── 模板 ──
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+templates.env.globals["asset_version"] = ASSET_VERSION
 
 # 注入 templates 到各路由模組
-for mod in [auth_routes, etf_routes, portfolio_routes, watchlist_routes,
+for mod in [authentication_routes, etf_routes, portfolio_routes, watchlist_routes,
             user_routes, backtest_routes, notification_routes]:
     if hasattr(mod, "templates"):
         mod.templates = templates
 
 # ── 路由注冊 ──
-app.include_router(auth_routes.router,         tags=["Auth"])
+app.include_router(authentication_routes.router, tags=["Auth"])
 app.include_router(etf_routes.router,          tags=["ETF"])
 app.include_router(portfolio_routes.router,    tags=["Portfolio"])
 app.include_router(watchlist_routes.router,    tags=["Watchlist"])
@@ -170,21 +181,22 @@ app.include_router(notification_routes.router, tags=["Notifications"])
 
 # ── 健康檢查（供 Load Balancer / 監控使用）──
 @app.get("/health")
-async def health_check():
+def health_check():
     """回傳系統健康狀態，包含資料庫連線與快取狀態。"""
-    from utils import safe_json
+    from serialization_utils import safe_json
     checks: dict = {"status": "ok", "db": "ok", "timestamp": int(time.time())}
     try:
         with get_db() as (conn, cursor):
             cursor.execute("SELECT 1")
-    except Exception as e:
-        checks["db"] = f"error: {e}"
+    except Exception:
+        logger.exception("Basic health check database query failed")
+        checks["db"] = "error"
         checks["status"] = "degraded"
     return safe_json(checks)
 
 
 @app.get("/health/detail")
-async def health_detail():
+def health_detail():
     """詳細健康狀態：顯示活躍 ETF 的資料新鮮度，方便發現「悄悄壞掉」的問題。快取 60 秒。
 
     staleness 分級：
@@ -199,8 +211,8 @@ async def health_detail():
       degraded — 有 critical 或 DB 異常
     """
     from datetime import date as _date
-    from utils import safe_json
-    from cache import cache as _cache
+    from serialization_utils import safe_json
+    from memory_cache import cache as _cache
 
     _hd_cached = _cache.get("health:detail")
     if _hd_cached:
@@ -247,11 +259,12 @@ async def health_detail():
             )
             date_map = {r["ticker"]: r["last_date"] for r in cursor.fetchall()}
 
-    except Exception as e:
+    except Exception:
+        logger.exception("Detailed health check database query failed")
         return safe_json({
             "status": "degraded",
             "checked_at": today.isoformat(),
-            "db": f"error: {e}",
+            "db": "error",
             "etfs": [],
         }, 500)
 
@@ -326,7 +339,7 @@ async def health_detail():
 
 
 @app.get("/api/health/data")
-async def health_data():
+def health_data():
     """資料完整性健康檢查（快取 5 分鐘，避免監控頻繁輪詢打爆 DB）。
 
     檢查項目：
@@ -339,8 +352,8 @@ async def health_data():
     7. 配息事件   — etf_dividends 中有真實事件的 ETF 數量（回測品質指標）
     """
     from datetime import date as _date, timedelta as _td
-    from utils import safe_json
-    from cache import cache
+    from serialization_utils import safe_json
+    from memory_cache import cache
 
     # ── 5 分鐘快取：完整稽核很重；即時存活狀態另由 /health 提供 ──
     _cached = cache.get("health:data")
@@ -713,8 +726,9 @@ async def health_data():
             hot_cnt = (cursor.fetchone() or {}).get("cnt", 0)
             summary["hot_etfs_total"] = hot_cnt
 
-    except Exception as e:
-        return safe_json({"status": "error", "detail": str(e)}, 500)
+    except Exception:
+        logger.exception("Full data health audit failed")
+        return safe_json({"status": "error", "detail": "資料健康檢查暫時無法完成"}, 500)
 
     # 快取狀態（不需 DB）
     cache_status = {
@@ -726,7 +740,7 @@ async def health_data():
 
     # FX 匯率新鮮度
     try:
-        from services.exchange_rate import get_fx_age_seconds
+        from services.exchange_rate_service import get_fx_age_seconds
         fx_age = get_fx_age_seconds()
         if fx_age is None:
             fx_status = "never_fetched"

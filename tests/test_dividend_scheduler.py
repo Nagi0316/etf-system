@@ -4,8 +4,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import database
-import etf_data
-import scheduler
+import etf_market_data
+import market_data_scheduler
 
 
 class DividendGapSchedulerTest(unittest.IsolatedAsyncioTestCase):
@@ -61,11 +61,11 @@ class DividendGapSchedulerTest(unittest.IsolatedAsyncioTestCase):
             return {"dividend_status": "unknown"}
 
         with (
-            patch.object(etf_data, "fetch_dividend_only", side_effect=fetch),
-            patch.object(etf_data, "save_dividend_snapshot", return_value=False),
-            patch.object(scheduler.asyncio, "sleep", new=AsyncMock()),
+            patch.object(etf_market_data, "fetch_dividend_only", side_effect=fetch),
+            patch.object(etf_market_data, "save_dividend_snapshot", return_value=False),
+            patch.object(market_data_scheduler.asyncio, "sleep", new=AsyncMock()),
         ):
-            await scheduler._update_dividend_gaps(limit=2)
+            await market_data_scheduler._update_dividend_gaps(limit=2)
 
         self.assertEqual(seen, ["0056", "00878"])
         with database.get_db() as (_, cursor):
@@ -79,11 +79,11 @@ class DividendGapSchedulerTest(unittest.IsolatedAsyncioTestCase):
 class DividendOnlyFetchTest(unittest.TestCase):
     def test_us_dividend_gap_uses_us_pipeline(self):
         with patch.object(
-            etf_data,
+            etf_market_data,
             "_fetch_us_history_dividend",
             return_value=([], 1.25, "季配", True),
         ):
-            result = etf_data.fetch_dividend_only("SPY", "US", 700)
+            result = etf_market_data.fetch_dividend_only("SPY", "US", 700)
 
         self.assertEqual(result["dividend_yield"], 1.25)
         self.assertEqual(result["dividend_status"], "confirmed")

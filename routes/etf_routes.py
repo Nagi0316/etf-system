@@ -16,15 +16,15 @@ import pandas as pd
 import requests as _req
 import yfinance as yf
 
-from cache import cache, CACHE_TTL_RANK, CACHE_TTL_DETAIL
+from memory_cache import cache, CACHE_TTL_RANK, CACHE_TTL_DETAIL
 from database import get_db
-from db_queries import latest_daily_join
-from etf_data import fetch_one_etf, save_etf_data, _yahoo_ticker, _new_session, _cf_yahoo_get
-from models import EtfAddIn
-from services.alerts import check_dip_alert
-from services.exchange_rate import get_usd_twd
-from services.price_adjustment import adjust_detected_splits
-from utils import safe_float, safe_json
+from database_queries import latest_daily_join
+from etf_market_data import fetch_one_etf, save_etf_data, _yahoo_ticker, _new_session, _cf_yahoo_get
+from request_models import EtfAddIn
+from services.price_alert_service import check_dip_alert
+from services.exchange_rate_service import get_usd_twd
+from services.price_adjustment_service import adjust_detected_splits
+from serialization_utils import safe_float, safe_json
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -41,7 +41,7 @@ def _check_demand_rate(client_ip: str) -> bool:
         return False
     key = f"rate:demand:{client_ip}"
     timestamps: list = cache.get(key) or []
-    now = time.time()
+    now = time.monotonic()
     timestamps = [t for t in timestamps if now - t < _RATE_WINDOW]
     if len(timestamps) >= _RATE_MAX:
         cache.set(key, timestamps, _RATE_WINDOW)
@@ -87,39 +87,45 @@ def _fetch_etf_detail_row(cursor, ticker: str) -> Optional[dict]:
     return cursor.fetchone()
 
 
+def _load_etf_detail_row(ticker: str) -> Optional[dict]:
+    """Open a short-lived DB session for use from FastAPI's worker pool."""
+    with get_db() as (conn, cursor):
+        return _fetch_etf_detail_row(cursor, ticker)
+
+
 # ── 頁面 ──
 
 @router.get("/")
-async def root(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html")
+def root(request: Request):
+    return templates.TemplateResponse(request=request, name="home_page.html")
 
 @router.get("/etf-list")
-async def etf_list_page(request: Request):
-    return templates.TemplateResponse(request=request, name="etf_list.html")
+def etf_list_page(request: Request):
+    return templates.TemplateResponse(request=request, name="etf_rankings_page.html")
 
 @router.get("/etf-detail/{ticker}")
-async def etf_detail_page(request: Request, ticker: str):
+def etf_detail_page(request: Request, ticker: str):
     return templates.TemplateResponse(
         request=request,
-        name="etf-detail.html",
+        name="etf_detail_page.html",
         context={"ticker": ticker.upper()},
     )
 
 @router.get("/watchlist")
-async def watchlist_page(request: Request):
-    return templates.TemplateResponse(request=request, name="watchlist.html")
+def watchlist_page(request: Request):
+    return templates.TemplateResponse(request=request, name="watchlist_page.html")
 
 @router.get("/portfolio")
-async def portfolio_page(request: Request):
-    return templates.TemplateResponse(request=request, name="portfolio.html")
+def portfolio_page(request: Request):
+    return templates.TemplateResponse(request=request, name="portfolio_page.html")
 
 @router.get("/profile")
-async def profile_page(request: Request):
-    return templates.TemplateResponse(request=request, name="profile.html")
+def profile_page(request: Request):
+    return templates.TemplateResponse(request=request, name="profile_page.html")
 
 @router.get("/notifications")
-async def notifications_page(request: Request):
-    return templates.TemplateResponse(request=request, name="notifications.html")
+def notifications_page(request: Request):
+    return templates.TemplateResponse(request=request, name="notifications_page.html")
 
 
 # ── 排行榜 ──
@@ -400,7 +406,7 @@ def _build_etf_index_stats(rows: list[dict]) -> dict:
 # ── 搜尋 ──
 
 @router.get("/api/etf/search")
-async def search_etf(request: Request, q: str = Query(..., min_length=1)):
+def search_etf(request: Request, q: str = Query(..., min_length=1)):
     q_up = q.upper().strip()
     cache_key = f"search:{q_up}"
     cached = cache.get(cache_key)
@@ -506,8 +512,8 @@ async def _on_demand_fetch(ticker: str, client_ip: str = "") -> Optional[dict]:
 
 
 @router.get("/api/etf/search/dynamic")
-async def dynamic_search(request: Request, q: str = Query(..., min_length=1)):
-    return await search_etf(request, q)
+def dynamic_search(request: Request, q: str = Query(..., min_length=1)):
+    return search_etf(request, q)
 
 
 # ── ETF 詳情 ──
@@ -522,8 +528,7 @@ async def get_etf_detail(ticker: str):
 
     # ── 1. 先查 DB（不在此處呼叫 FX，避免 TW ETF 白跑一次同步 HTTP）──
     try:
-        with get_db() as (conn, cursor):
-            row = _fetch_etf_detail_row(cursor, ticker)
+        row = await asyncio.to_thread(_load_etf_detail_row, ticker)
     except Exception as e:
         logger.error(f"etf detail DB error ({ticker}): {e}", exc_info=True)
         return safe_json({"status": "error", "message": "資料庫暫時無法連線，請稍後再試"}, 503)
@@ -535,8 +540,7 @@ async def get_etf_detail(ticker: str):
         if not discovered:
             return safe_json({"status": "error", "message": f"找不到 ETF {ticker}，請確認代碼是否正確"}, 404)
         # 爬取後重查 DB（共用相同 SQL 函數）
-        with get_db() as (conn, cursor):
-            row = _fetch_etf_detail_row(cursor, ticker)
+        row = await asyncio.to_thread(_load_etf_detail_row, ticker)
         if not row:
             return safe_json({"status": "error", "message": f"找不到 ETF {ticker}"}, 404)
 
@@ -1273,7 +1277,7 @@ async def get_etf_history(ticker: str = "", period: str = "1mo"):
 # ── 低檔加碼提醒查詢 ──
 
 @router.get("/api/etf/dip-alert/{ticker}")
-async def get_dip_alert(ticker: str, days_20_threshold: float = 10.0, days_60_threshold: float = 15.0):
+def get_dip_alert(ticker: str, days_20_threshold: float = 10.0, days_60_threshold: float = 15.0):
     ticker = ticker.upper()
     with get_db() as (conn, cursor):
         cursor.execute(
@@ -1337,7 +1341,7 @@ async def get_dividends(ticker: str):
 @router.get("/api/fx/usdtwd")
 async def get_usdtwd_rate():
     """公開匯率端點（無需登入），供首頁 / 公開頁面顯示 USD/TWD。"""
-    from services.exchange_rate import get_usd_twd, get_fx_age_seconds
+    from services.exchange_rate_service import get_usd_twd, get_fx_age_seconds
     try:
         rate = await asyncio.to_thread(get_usd_twd)
         age  = get_fx_age_seconds()
@@ -1346,8 +1350,9 @@ async def get_usdtwd_rate():
             "rate":        round(float(rate), 4),
             "age_seconds": round(age, 0) if age is not None else None,
         })
-    except Exception as e:
-        return safe_json({"status": "error", "message": str(e)}, 500)
+    except Exception:
+        logger.exception("USD/TWD endpoint failed")
+        return safe_json({"status": "error", "message": "匯率服務暫時無法使用"}, 500)
 
 
 # ── ETF 評分 ──
@@ -1358,7 +1363,7 @@ async def get_etf_score(ticker: str):
     評分維度：報酬力 / 配息力 / 成本效率 / 穩定性 / 動能（同市場相互比較）。
     """
     ticker = ticker.upper().strip()
-    from services.etf_score import score_etf
+    from services.etf_scoring_service import score_etf
     result = await asyncio.to_thread(score_etf, ticker)
     if not result:
         return safe_json({"status": "error", "message": f"無法計算 {ticker} 評分（可能尚無資料）"}, 404)
@@ -1376,29 +1381,39 @@ async def get_top_scores(market: str = "TW", limit: int = 10):
         return safe_json({"status": "success", "data": cached})
 
     try:
-        with get_db() as (conn, cursor):
-            cursor.execute("""
-                SELECT m.ticker
-                FROM etf_master m
-                WHERE m.is_hot=1 AND m.market=%s AND m.is_delisted=0
-            """, (market,))
-            tickers = [r["ticker"] for r in cursor.fetchall()]
-
-        from services.etf_score import score_batch
-        scores = await asyncio.to_thread(score_batch, tickers)
-        ranked = sorted(scores.values(), key=lambda x: x["score"], reverse=True)[:limit]
+        ranked = await asyncio.to_thread(_calculate_top_scores, market, limit)
         cache.set(cache_key, ranked, 1800)
         return safe_json({"status": "success", "data": ranked})
-    except Exception as e:
-        logger.error(f"get_top_scores error: {e}", exc_info=True)
-        return safe_json({"status": "error", "message": str(e)}, 500)
+    except Exception:
+        logger.exception("Top ETF score calculation failed for market %s", market)
+        return safe_json({"status": "error", "message": "ETF 評分暫時無法完成"}, 500)
+
+
+def _calculate_top_scores(market: str, limit: int) -> list[dict]:
+    """Run the score query and CPU work together outside the event loop."""
+    with get_db() as (conn, cursor):
+        cursor.execute("""
+            SELECT m.ticker
+            FROM etf_master m
+            WHERE m.is_hot=1 AND m.market=%s AND m.is_delisted=0
+        """, (market,))
+        tickers = [row["ticker"] for row in cursor.fetchall()]
+
+    from services.etf_scoring_service import score_batch
+
+    scores = score_batch(tickers)
+    return sorted(
+        scores.values(),
+        key=lambda item: item["score"],
+        reverse=True,
+    )[:limit]
 
 
 # ── 新增 ETF ──
 
 @router.post("/api/etf/add-to-master")
-async def add_etf_to_master(body: EtfAddIn, request: Request):
-    from auth import get_current_user
+def add_etf_to_master(body: EtfAddIn, request: Request):
+    from authentication import get_current_user
     from fastapi import HTTPException
     try:
         get_current_user(request, credentials=None)

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}ETF 投資管理系統{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <!-- 在 CSS 前套用深色模式，避免頁面閃爍。 -->
+  <script>(function(){var t=localStorage.getItem('theme');var p=window.matchMedia('(prefers-color-scheme:dark)').matches;if(t==='dark'||(t===null&&p))document.documentElement.classList.add('dark');}());</script>
+  <link rel="stylesheet" href="/static/css/tailwind.min.css?v={{ asset_version }}">
+  <!-- Font Awesome 非阻塞載入，維持首屏速度。 -->
+  <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+        as="style" onload="this.rel='stylesheet'">
+  <noscript>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  </noscript>
+  <link href="/static/css/site_components.css?v={{ asset_version }}" rel="stylesheet">
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="bg-slate-50 dark:bg-slate-900 pb-mobile">
+
+<!-- 桌面主導覽 -->
+<nav class="navbar">
+  <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
+    <div class="flex items-center gap-6">
+      <a href="/" class="flex items-center gap-2 font-bold text-indigo-600 dark:text-indigo-400 text-base shrink-0">
+        <i class="fas fa-chart-line"></i><span class="hide-mobile">ETF投資系統</span>
+      </a>
+      <div class="hidden md:flex gap-1">
+        <a href="/etf-list" class="nav-link px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-path="/etf-list">ETF精選</a>
+        <a href="/watchlist" class="nav-link px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-path="/watchlist">自選股</a>
+        <a href="/backtest" class="nav-link px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-path="/backtest">回測</a>
+        <a href="/portfolio" class="nav-link px-3 py-1.5 text-sm rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-path="/portfolio">庫存</a>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <div class="global-search relative hidden md:block">
+        <input type="search" id="search-input" placeholder="搜尋 ETF 代碼或名稱" autocomplete="off"
+          class="input search-input text-sm" aria-label="搜尋 ETF 代碼或名稱"
+          aria-controls="search-dropdown" aria-expanded="false">
+        <button id="search-btn" type="button" class="search-icon-button" aria-label="送出搜尋">
+          <i class="fas fa-search" aria-hidden="true"></i>
+        </button>
+        <div id="search-dropdown"
+          class="search-dropdown hidden absolute top-full right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 max-h-72 overflow-y-auto"
+          role="listbox"></div>
+      </div>
+      <button id="mobile-search-btn" class="md:hidden p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700" aria-label="開啟搜尋">
+        <i class="fas fa-search text-sm"></i>
+      </button>
+      <button onclick="toggleDarkMode()" id="dark-toggle"
+        class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700" aria-label="切換深色模式">
+        <i class="fas fa-moon"></i>
+      </button>
+      <div id="user-info"></div>
+    </div>
+  </div>
+  <div id="mobile-search-bar" class="hidden md:hidden border-t border-slate-200 dark:border-slate-700 px-4 py-2">
+    <div class="global-search global-search-mobile relative">
+      <input type="search" id="mobile-search-input" placeholder="搜尋 ETF 代碼或名稱" autocomplete="off"
+        class="input search-input text-sm" aria-label="搜尋 ETF 代碼或名稱"
+        aria-controls="mobile-search-dropdown" aria-expanded="false">
+      <span class="search-icon-button search-icon-static" aria-hidden="true"><i class="fas fa-search"></i></span>
+      <div id="mobile-search-dropdown"
+        class="search-dropdown search-dropdown-mobile hidden absolute top-full left-0 right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 max-h-60 overflow-y-auto"
+        role="listbox"></div>
+    </div>
+  </div>
+</nav>
+
+{% block content %}{% endblock %}
+
+<!-- 手機底部導覽 -->
+<nav class="bottom-nav">
+  <a href="/" data-path="/"><i class="fas fa-home"></i>首頁</a>
+  <a href="/etf-list" data-path="/etf-list"><i class="fas fa-chart-bar"></i>ETF</a>
+  <a href="/watchlist" data-path="/watchlist"><i class="fas fa-star"></i>自選</a>
+  <a href="/backtest" data-path="/backtest"><i class="fas fa-flask"></i>回測</a>
+  <a href="/portfolio" data-path="/portfolio"><i class="fas fa-briefcase"></i>庫存</a>
+</nav>
+
+<script src="/static/js/site_common.js?v={{ asset_version }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

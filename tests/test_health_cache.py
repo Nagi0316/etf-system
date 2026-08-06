@@ -1,4 +1,3 @@
-import asyncio
 import json
 import tempfile
 import unittest
@@ -7,7 +6,7 @@ from unittest.mock import patch
 
 import database
 import main
-from cache import cache
+from memory_cache import cache
 
 
 class HealthCacheTest(unittest.TestCase):
@@ -17,9 +16,9 @@ class HealthCacheTest(unittest.TestCase):
             "summary": {"missing_etfs": 0},
             "issues": [],
         }
-        with patch("cache.cache.get", return_value=cached):
-            first = asyncio.run(main.health_data())
-            second = asyncio.run(main.health_data())
+        with patch("memory_cache.cache.get", return_value=cached):
+            first = main.health_data()
+            second = main.health_data()
 
         self.assertEqual(json.loads(first.body), cached)
         self.assertEqual(json.loads(second.body), cached)
@@ -27,9 +26,9 @@ class HealthCacheTest(unittest.TestCase):
 
     def test_detail_health_cache_returns_fresh_response_body(self):
         cached = {"status": "ok", "summary": {"fresh": 89}, "etfs": []}
-        with patch("cache.cache.get", return_value=cached):
-            first = asyncio.run(main.health_detail())
-            second = asyncio.run(main.health_detail())
+        with patch("memory_cache.cache.get", return_value=cached):
+            first = main.health_detail()
+            second = main.health_detail()
 
         self.assertEqual(json.loads(first.body), cached)
         self.assertEqual(json.loads(second.body), cached)
@@ -59,7 +58,7 @@ class HealthSqliteCompatibilityTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_full_data_health_audit_runs_on_sqlite(self):
-        response = asyncio.run(main.health_data())
+        response = main.health_data()
         body = json.loads(response.body)
 
         self.assertEqual(response.status_code, 200)

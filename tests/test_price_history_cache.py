@@ -4,7 +4,7 @@ import unittest
 from contextlib import contextmanager
 from unittest.mock import patch
 
-from cache import cache
+from memory_cache import cache
 from routes.etf_routes import get_price_history
 
 

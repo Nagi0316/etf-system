@@ -19,13 +19,13 @@ import hashlib
 import logging
 from fastapi import APIRouter, Depends
 
-from auth import get_current_user
-from cache import cache
+from authentication import get_current_user
+from memory_cache import cache
 from database import get_db
-from db_queries import latest_daily_join
-from models import TransactionIn
-from services.exchange_rate import get_usd_twd
-from utils import safe_json
+from database_queries import latest_daily_join
+from request_models import TransactionIn
+from services.exchange_rate_service import get_usd_twd
+from serialization_utils import safe_json
 
 _DEDUP_TTL = 5   # cache 冪等視窗（秒）
 
@@ -40,12 +40,11 @@ LATEST_DAILY_JOIN = latest_daily_join("p")
 # ══════════════════════════════════════════════════════════
 
 @router.get("/api/portfolio")
-async def get_portfolio(current_user: dict = Depends(get_current_user)):
-    import asyncio as _asyncio
+def get_portfolio(current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
-    # 用 to_thread 避免 FX cache miss 時（每 5 分鐘）阻塞 event loop 最多 24 秒
+    # 此同步端點由 FastAPI thread pool 執行，匯率與 DB I/O 不會占住事件迴圈。
     try:
-        usd_twd = await _asyncio.to_thread(get_usd_twd)
+        usd_twd = get_usd_twd()
     except Exception:
         usd_twd = 32.0
 
@@ -132,7 +131,7 @@ async def get_portfolio(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/api/portfolio/transaction")
-async def add_transaction(body: TransactionIn, current_user: dict = Depends(get_current_user)):
+def add_transaction(body: TransactionIn, current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
 
     # ── 第一層：cache 冪等（5s，攔截雙擊 / 網路重傳）──
@@ -148,19 +147,19 @@ async def add_transaction(body: TransactionIn, current_user: dict = Depends(get_
     idem_key = body.idempotency_key or dedup_sig  # 前端送 UUID；未送則用 hash
 
     try:
-        _insert_transaction(uid, body.dict(), idem_key)
+        _insert_transaction(uid, body.model_dump(), idem_key)
         return safe_json({"status": "success", "message": "交易已新增"})
     except ValueError as e:
         cache.delete(dedup_key)   # 業務錯誤（庫存不足等）解除 cache 鎖，讓使用者更正後重送
         return safe_json({"status": "error", "message": str(e)}, 400)
-    except Exception as ex:
+    except Exception:
         cache.delete(dedup_key)
-        logger.error(f"add_transaction uid={uid}: {ex}", exc_info=True)
-        return safe_json({"status": "error", "message": str(ex)}, 500)
+        logger.exception("Transaction creation failed for user %s", uid)
+        return safe_json({"status": "error", "message": "交易暫時無法新增，請稍後再試"}, 500)
 
 
 @router.get("/api/portfolio/transactions")
-async def get_transactions(
+def get_transactions(
     ticker: str = None,
     limit: int = 100,
     offset: int = 0,
@@ -191,7 +190,7 @@ async def get_transactions(
 
 
 @router.delete("/api/portfolio/transaction/{tid}")
-async def delete_transaction(tid: int, current_user: dict = Depends(get_current_user)):
+def delete_transaction(tid: int, current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
     with get_db() as (conn, cursor):
         cursor.execute(
