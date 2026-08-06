@@ -480,6 +480,7 @@ async def _update_dividend_gaps(limit: int = 40):
     每次嘗試都持久化，並優先處理「從未嘗試／最久未嘗試」的標的；
     避免上游暫時失敗時，永遠反覆卡在同一批代碼。
     """
+    from cache import cache
     from database import get_db
     from etf_data import fetch_dividend_only, save_dividend_snapshot
 
@@ -550,6 +551,7 @@ async def _update_dividend_gaps(limit: int = 40):
                       last_status=VALUES(last_status)
                 """, attempts)
                 conn.commit()
+            cache.delete("health:data")
 
         try:
             await asyncio.to_thread(_record_attempts)
