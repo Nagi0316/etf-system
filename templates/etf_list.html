@@ -193,7 +193,7 @@ function renderRanking() {
   const dataDate = d.data_date || '';
   const coverage = d.coverage || {};
   const coverageText = coverage.expected
-    ? ` · 覆蓋 ${coverage.received}/${coverage.expected}`
+    ? ` · 本輪即時成交 ${coverage.received}/${coverage.expected}（其餘沿用最近交易日）`
     : '';
   document.getElementById('update-time').textContent = ts
     ? `資料日 ${dataDate || '—'} · 同步於 ${ts}${coverageText}`

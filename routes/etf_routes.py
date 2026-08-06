@@ -205,7 +205,7 @@ def _ranking_updated_at(value=None) -> str:
 
 
 def _ranking_data_meta(cursor, market: str) -> dict:
-    """回傳排行所依據的資料日、同步時間與實際覆蓋率。"""
+    """回傳排行資料日，以及本輪取得可驗證即時成交價的檔數。"""
     cursor.execute("""
         SELECT expected_count, received_count, data_date, status,
                last_attempt_at, last_success_at
