@@ -97,6 +97,17 @@ class ProjectIntegrityTest(unittest.TestCase):
         missing = [path for path in sorted(references) if not (PROJECT_ROOT / path.lstrip("/")).is_file()]
         self.assertEqual([], missing)
 
+    def test_user_facing_assets_hide_internal_estimate_marker(self):
+        """Internal data-quality states must not leak into customer-facing copy."""
+        files = list((PROJECT_ROOT / "templates").glob("*.html"))
+        files.append(PROJECT_ROOT / "static" / "js" / "site_common.js")
+        leaked = [
+            str(path.relative_to(PROJECT_ROOT))
+            for path in files
+            if "（估）" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual([], leaked)
+
     def test_custom_file_names_follow_ascii_snake_case(self):
         """Prevent ambiguous, encoded, or punctuation-heavy names from returning."""
         invalid = []
