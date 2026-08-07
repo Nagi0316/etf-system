@@ -30,7 +30,7 @@ tests/                          單元、資料流程與頁面完整性測試
 
 ## 本機啟動
 
-1. 安裝 Python 3.12 以上版本與 Node.js。
+1. 安裝 Python 3.12 以上版本與 Node.js 24 LTS。
 2. 建立虛擬環境後安裝依賴：
 
    ```bash
@@ -65,7 +65,7 @@ python3 -m compileall -q . -x '(^|/)(node_modules|\.git)/'
 python3 scripts/data_source_diagnostics.py
 ```
 
-測試範圍包含報價來源、價格歷史、分割還原、資料同步狀態、快取、公開頁面渲染與靜態資產完整性。
+測試範圍包含報價來源、價格歷史、分割還原、資料同步狀態、快取、前端格式化行為、公開頁面渲染與靜態資產完整性。
 GitHub Actions 會在每次推送與 Pull Request 自動重跑 Python 測試、前端建置及語法檢查。
 
 ## 資料正確性原則

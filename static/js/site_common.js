@@ -218,20 +218,26 @@ function showToast(msg, isSuccess = true, duration = 3000) {
 // ══════════════════════════════════════════════════════
 //  數字格式化
 // ══════════════════════════════════════════════════════
+function _asFiniteNumber(value) {
+  if (value == null || (typeof value === 'string' && !value.trim())) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 function fmt(n, d = 2) {
-  if (n == null) return '—';
-  return parseFloat(n).toFixed(d);
+  const value = _asFiniteNumber(n);
+  return value == null ? '—' : value.toFixed(d);
 }
 
 function fmtPct(n, d = 2) {
-  if (n == null) return '—';
-  const v = parseFloat(n);
+  const v = _asFiniteNumber(n);
+  if (v == null) return '—';
   return (v >= 0 ? '+' : '') + v.toFixed(d) + '%';
 }
 
 function fmtMoney(n, currency = 'TWD') {
-  const v = parseFloat(n);
-  if (n == null || isNaN(v)) return '—';
+  const v = _asFiniteNumber(n);
+  if (v == null) return '—';
   if (currency === 'TWD') return `NT$${Math.round(v).toLocaleString()}`;
   return `$${v.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
 }
@@ -249,14 +255,15 @@ const DIVIDEND_FREQUENCY_CLASSES = Object.freeze({
 });
 
 function getDividendDisplay(item = {}) {
-  const numericYield = Number(item.dividend_yield);
-  const hasYield = Number.isFinite(numericYield) && numericYield > 0;
+  const numericYield = _asFiniteNumber(item.dividend_yield);
+  const hasYield = numericYield != null && numericYield > 0;
   const status = item.dividend_status || (hasYield ? 'confirmed' : 'unknown');
   const frequency = status === 'unknown' ? '' : String(item.payout_freq || '');
 
   let text = '待同步';
   if (hasYield) {
-    text = `${numericYield.toFixed(2)}%${status === 'estimated' ? '（估）' : ''}`;
+    // estimated 僅供內部資料品質判斷，前端維持一致的殖利率格式。
+    text = `${numericYield.toFixed(2)}%`;
   } else if (status === 'not_applicable') {
     text = '不配息';
   }
@@ -309,20 +316,27 @@ function _initSearch() {
 
   const fire = () => {
     const query = input.value.trim();
-    if (!query) return _setSearchOpen(input, drop, false);
+    if (!query) {
+      _cancelSearch(drop);
+      return _setSearchOpen(input, drop, false);
+    }
     clearTimeout(_searchTimer);
     _doSearch(query, drop);
   };
 
   input.addEventListener('input', () => {
     const query = input.value.trim();
-    if (!query) return _setSearchOpen(input, drop, false);
+    if (!query) {
+      _cancelSearch(drop);
+      return _setSearchOpen(input, drop, false);
+    }
     clearTimeout(_searchTimer);
     _searchTimer = setTimeout(() => _doSearch(query, drop), 220);
   });
   input.addEventListener('keydown', event => {
     if (event.key === 'Enter') { event.preventDefault(); fire(); }
     if (event.key === 'Escape') {
+      _cancelSearch(drop);
       _setSearchOpen(input, drop, false);
       input.blur();
     }
@@ -330,6 +344,7 @@ function _initSearch() {
   btn?.addEventListener('click', fire);
   document.addEventListener('click', event => {
     if (!input.contains(event.target) && !btn?.contains(event.target) && !drop.contains(event.target)) {
+      _cancelSearch(drop);
       _setSearchOpen(input, drop, false);
     }
   });
@@ -345,18 +360,23 @@ function _initMobileSearch() {
   button.addEventListener('click', () => {
     bar.classList.toggle('hidden');
     if (!bar.classList.contains('hidden')) input.focus();
+    else _cancelSearch(drop);
   });
 
   let timer;
   input.addEventListener('input', () => {
     const query = input.value.trim();
-    if (!query) return _setSearchOpen(input, drop, false);
+    if (!query) {
+      _cancelSearch(drop);
+      return _setSearchOpen(input, drop, false);
+    }
     clearTimeout(timer);
     timer = setTimeout(() => _doSearch(query, drop), 220);
   });
   input.addEventListener('keydown', event => {
     if (event.key === 'Enter') { event.preventDefault(); _doSearch(input.value.trim(), drop); }
     if (event.key === 'Escape') {
+      _cancelSearch(drop);
       _setSearchOpen(input, drop, false);
       bar.classList.add('hidden');
       button.focus();
@@ -369,26 +389,51 @@ async function _ensureEtfIdx() {
   if (Array.isArray(window._ETF_IDX)) return window._ETF_IDX;
   if (_etfIdxPromise) return _etfIdxPromise;
 
-  _etfIdxPromise = fetch('/api/etf/index')
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  _etfIdxPromise = fetch('/api/etf/index', { signal: controller.signal })
     .then(response => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
     .then(payload => {
       window._ETF_IDX = Array.isArray(payload?.data) ? payload.data : [];
       return window._ETF_IDX;
     })
     .catch(() => null)
-    .finally(() => { _etfIdxPromise = null; });
+    .finally(() => {
+      clearTimeout(timeout);
+      _etfIdxPromise = null;
+    });
   return _etfIdxPromise;
+}
+
+const _searchRequests = new WeakMap();
+
+function _startSearch(dropEl) {
+  _searchRequests.get(dropEl)?.controller.abort();
+  const request = { controller: new AbortController() };
+  _searchRequests.set(dropEl, request);
+  return request;
+}
+
+function _cancelSearch(dropEl) {
+  _searchRequests.get(dropEl)?.controller.abort();
+  _searchRequests.delete(dropEl);
+}
+
+function _isCurrentSearch(dropEl, request) {
+  return _searchRequests.get(dropEl) === request;
 }
 
 async function _doSearch(query, dropEl) {
   if (!query || !dropEl) return;
+  const request = _startSearch(dropEl);
   const inputEl = dropEl.id === 'mobile-search-dropdown'
     ? document.getElementById('mobile-search-input')
     : document.getElementById('search-input');
   _setSearchOpen(inputEl, dropEl, true);
 
   const index = await _ensureEtfIdx();
-  if (!index?.length) return _doSearchApi(query, dropEl);
+  if (!_isCurrentSearch(dropEl, request)) return;
+  if (!index?.length) return _doSearchApi(query, dropEl, request);
 
   const upperQuery = query.toUpperCase();
   const matched = index.filter(item => {
@@ -416,17 +461,22 @@ async function _doSearch(query, dropEl) {
   }
 
   if (!/[^\x00-\x7F]/.test(query) && query.length >= 2) {
-    await _doSearchApi(query, dropEl);
+    await _doSearchApi(query, dropEl, request);
   } else {
     dropEl.innerHTML = `<div class="p-3 text-center text-slate-400 text-sm">找不到「${_escHtml(query)}」</div>`;
   }
 }
 
-async function _doSearchApi(query, dropEl) {
+async function _doSearchApi(query, dropEl, request = _startSearch(dropEl)) {
   dropEl.innerHTML = '<div class="p-3 text-center text-slate-400 text-sm"><span class="spinner"></span></div>';
+  const timeout = setTimeout(() => request.controller.abort(), 8000);
   try {
-    const response = await fetch(`/api/etf/search?q=${encodeURIComponent(query)}`);
+    const response = await fetch(
+      `/api/etf/search?q=${encodeURIComponent(query)}`,
+      { signal: request.controller.signal },
+    );
     const payload = response.ok ? await response.json() : null;
+    if (!_isCurrentSearch(dropEl, request)) return;
     if (!payload?.data?.length) {
       dropEl.innerHTML = `<div class="p-3 text-center text-slate-400 text-sm">找不到「${_escHtml(query)}」</div>`;
       return;
@@ -445,8 +495,11 @@ async function _doSearchApi(query, dropEl) {
         <span class="${color} text-xs font-medium ml-2 shrink-0">${change >= 0 ? '+' : ''}${change.toFixed(2)}%</span>
       </a>`;
     }).join('');
-  } catch {
+  } catch (error) {
+    if (error.name === 'AbortError' && !_isCurrentSearch(dropEl, request)) return;
     dropEl.innerHTML = '<div class="p-3 text-center text-red-400 text-sm">搜尋失敗</div>';
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -464,3 +517,8 @@ document.addEventListener('DOMContentLoaded', () => {
   _initMobileSearch();
   setTimeout(_ensureEtfIdx, 2000);
 });
+
+// 供 Node.js 行為測試使用；瀏覽器環境不會進入此分支。
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { fmt, fmtPct, fmtMoney, getDividendDisplay };
+}

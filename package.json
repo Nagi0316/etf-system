@@ -4,7 +4,8 @@
     "build:css": "tailwindcss -i ./static/css/tailwind_source.css -o ./static/css/tailwind.min.css --minify",
     "check:js": "node --check ./static/js/site_common.js",
     "check:worker": "node --check ./deployment/cloudflare_yahoo_proxy.mjs",
-    "check": "npm run check:js && npm run check:worker",
+    "test:js": "node --test ./tests/site_common.test.cjs",
+    "check": "npm run check:js && npm run check:worker && npm run test:js",
     "vendor:chart": "cp ./node_modules/chart.js/dist/chart.umd.js ./static/js/vendor/chart.umd.js"
   },
   "devDependencies": {
