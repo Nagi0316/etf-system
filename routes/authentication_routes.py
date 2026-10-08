@@ -109,8 +109,8 @@ async def google_callback(code: str = "", state: str = "", error: str = ""):
         name       = user_info.get("name", email)
         picture    = user_info.get("picture", "")
 
-        if not email:
-            return RedirectResponse("/auth?error=no_email")
+        if not email or not google_id or user_info.get("email_verified") is not True:
+            return RedirectResponse("/auth?error=unverified_email")
 
         # 查詢或建立使用者
         with get_db() as (conn, cursor):

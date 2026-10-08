@@ -83,7 +83,7 @@ async def upload_avatar(
     if file.size and file.size > _MAX_SIZE:
         return safe_json({"status": "error", "message": "圖片大小不能超過 5MB"}, 400)
 
-    content = await file.read()
+    content = await file.read(_MAX_SIZE + 1)
 
     # file.size 在 streaming 上傳時可能為 None/0，讀取後再確認一次
     if len(content) > _MAX_SIZE:

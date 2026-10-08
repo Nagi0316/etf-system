@@ -124,6 +124,8 @@ def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 無效或已過期")
     # 檢查是否被撤銷（JTI 驗證加快取，避免每次 API 都打 DB）
     jti = payload.get("jti")
+    if not jti:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 缺少有效登入紀錄")
     if jti:
         from memory_cache import cache
         cache_key         = f"jti:ok:{jti}"
@@ -144,7 +146,7 @@ def get_current_user(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="認證服務暫時不可用，請稍後再試",
                 )
-            if row and row["is_revoked"]:
+            if not row or row["is_revoked"]:
                 cache.set(revoked_cache_key, 1, 60)  # 負快取 60s，減少 DB 查詢
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 已失效，請重新登入")
             if row:

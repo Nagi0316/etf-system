@@ -17,7 +17,8 @@ import pandas as pd
 
 from request_models import BacktestIn, BacktestCompareIn
 from serialization_utils import safe_json
-from services.backtest_engine import run_accumulate, run_benchmark
+from services.backtest_engine import run_accumulate, COMMISSION_RATE, MIN_COMMISSION
+from services.price_adjustment_service import adjust_detected_splits
 from etf_market_data import _cf_yahoo_get, _new_session
 
 logger = logging.getLogger(__name__)
@@ -70,12 +71,13 @@ def _download_hist_from_db(ticker: str, start: str, end: str) -> pd.DataFrame:
         dates = pd.to_datetime([r["date"] for r in rows])
         closes = [float(r["close_price"]) for r in rows]
         df = pd.DataFrame({
-            "Open":  closes,   # DB 無開盤價欄位，以收盤價代入（誤差通常 < 0.5%）
+            "Open":  closes,   # DB 無開盤價欄位；以收盤價代入，未宣稱誤差界限
             "Close": closes,
             "High":  [float(r["high_price"])  for r in rows],
             "Low":   [float(r["low_price"])   for r in rows],
         }, index=dates)
         df.index.name = "Date"
+        df.attrs["open_proxy"] = True
         logger.info(f"DB hist for {ticker}: {len(df)} rows ({start} → {end})")
         return df
     except Exception as e:
@@ -89,7 +91,7 @@ def _get_dividends_from_db(ticker: str, start: str, end: str) -> pd.Series:
 
     優先策略（依順序）：
     1. etf_dividends 表中的真實歷史配息事件（累積自 Yahoo Finance 抓取）
-    2. 合成回退：以最新殖利率 × 配息頻率估算（近似值，Yahoo 未取得真實事件時使用）
+    缺少事件時回傳空值，不推估歷史股息。
     """
     from database import get_db
 
@@ -112,37 +114,8 @@ def _get_dividends_from_db(ticker: str, start: str, end: str) -> pd.Series:
     except Exception as e:
         logger.warning(f"etf_dividends query error for {ticker}: {e}")
 
-    # ── 2. 合成回退（近似值）──────────────────────────────
-    try:
-        with get_db() as (conn, cursor):
-            cursor.execute("""
-                SELECT dividend_yield, payout_freq FROM etf_daily_data
-                WHERE ticker=%s AND dividend_yield IS NOT NULL AND dividend_yield > 0
-                ORDER BY date DESC LIMIT 1
-            """, (ticker,))
-            row = cursor.fetchone()
-        if not row or not row.get("dividend_yield"):
-            return pd.Series(dtype=float)
-
-        annual_yield = float(row["dividend_yield"]) / 100  # DB 存百分比，轉小數
-        freq_map = {"月配": 12, "雙月配": 6, "季配": 4, "半年配": 2, "年配": 1}
-        payments_per_year = freq_map.get(row.get("payout_freq") or "", 4)
-
-        df = _download_hist_from_db(ticker, start, end)
-        if df.empty:
-            return pd.Series(dtype=float)
-
-        period_str_map = {12: "MS", 6: "2MS", 4: "QS", 2: "6MS", 1: "YS"}
-        freq_str = period_str_map.get(payments_per_year, "QS")
-        monthly_avg = df["Close"].resample(freq_str).mean()
-        dividends = (monthly_avg * (annual_yield / payments_per_year)).dropna()
-        dividends.name = "Dividends"
-        logger.info(f"Synthesized {len(dividends)} dividend events for {ticker} "
-                    f"({payments_per_year}x/year, fallback mode)")
-        return dividends
-    except Exception as e:
-        logger.warning(f"Dividend synthesis error for {ticker}: {e}")
-        return pd.Series(dtype=float)
+    # 缺少真實事件時不以今天的殖利率回填歷史，避免前視偏誤。
+    return pd.Series(dtype=float)
 
 
 # ── Yahoo Finance v8 chart API（CF Proxy → 直連 fallback）─────────────────
@@ -242,7 +215,7 @@ def _get_dividends_via_cf(symbol: str, start: str, end: str) -> pd.Series:
 def _yf_download_safe(symbol: str, start: str, end: str) -> pd.DataFrame:
     """yfinance 單一 symbol 下載，失敗回傳空 DataFrame。"""
     try:
-        df = yf.download(symbol, start=start, end=end, progress=False, auto_adjust=True)
+        df = yf.download(symbol, start=start, end=end, progress=False, auto_adjust=False)
         if df.empty:
             return pd.DataFrame()
         if isinstance(df.columns, pd.MultiIndex):
@@ -299,7 +272,7 @@ def _get_dividends(yt: str, raw_ticker: str = "", market: str = "",
     取得股息 Series（三層容錯）：
       Layer 1: CF Proxy Yahoo v8 events=dividends（US/TW 皆適用，繞過 IP 封鎖）
       Layer 2: yfinance 直連（本地開發 / CF 代理未設定）
-      Layer 3: DB 真實配息事件 → DB 合成（TW ETF 專用）
+      Layer 3: DB 真實配息事件（TW ETF 專用）
     """
     # Layer 1: CF Proxy（先試 yt，TW 再補試 .TWO）
     if start and end:
@@ -321,7 +294,7 @@ def _get_dividends(yt: str, raw_ticker: str = "", market: str = "",
     except Exception:
         pass
 
-    # Layer 3: TW ETF DB（真實配息事件 → 合成）
+    # Layer 3: TW ETF DB（真實配息事件）
     if market == "TW" and raw_ticker and start and end:
         return _get_dividends_from_db(raw_ticker, start, end)
 
@@ -362,6 +335,35 @@ def _summary_slim(r: dict) -> dict:
     return {k: v for k, v in r.items() if k != "transactions"}
 
 
+class BacktestDataError(ValueError):
+    pass
+
+
+def _validate_backtest_history(hist: pd.DataFrame):
+    if hist.index.has_duplicates or not hist.index.is_monotonic_increasing:
+        raise BacktestDataError("歷史價格日期重複或未排序，請先修復資料")
+    _, events = adjust_detected_splits(hist.index.strftime("%Y-%m-%d"), hist["Close"])
+    if events:
+        raise BacktestDataError("歷史價格含疑似分割或反分割斷點；需核實價格、股數與配息基準後才能回測")
+
+
+def _trading_costs(market: str, body: BacktestIn) -> dict:
+    # US 預設採零佣金情境；實際費率可由 API 指定，不套用台股的 20 元低消。
+    return {
+        "commission_rate": body.commission_rate if body.commission_rate is not None else (COMMISSION_RATE if market == "TW" else 0.0),
+        "min_commission": body.min_commission if body.min_commission is not None else (MIN_COMMISSION if market == "TW" else 0.0),
+    }
+
+
+def _exit_tax_rate(ticker: str, market: str, end_date) -> float:
+    """台灣 B 類債券 ETF 於法定期間免徵；以實際回測清算日判斷。"""
+    if market != "TW":
+        return 0.0
+    if ticker.upper().endswith("B") and pd.Timestamp("2017-01-01") <= pd.Timestamp(end_date) <= pd.Timestamp("2026-12-31"):
+        return 0.0
+    return 0.001
+
+
 # ── API 端點 ─────────────────────────────────────────────────────────────────
 
 @router.post("/api/backtest")
@@ -379,16 +381,15 @@ async def run_backtest(body: BacktestIn):
                 "message": "無法取得歷史數據，請確認代碼與日期範圍（TW ETF 需先在 ETF 詳情頁更新資料）"
             }, 400)
 
-        dividends = None
-        if body.enable_drip:
-            dividends = await asyncio.to_thread(
-                _get_dividends, yt, body.ticker, market, body.start_date, body.end_date
-            )
+        _validate_backtest_history(hist)
+        dividends = await asyncio.to_thread(
+            _get_dividends, yt, body.ticker, market, body.start_date, body.end_date
+        )
 
         data_warning = _check_data_availability(hist, body.start_date)
 
-        exit_tax_rate = 0.001 if market == "TW" else 0.0
-        result = run_accumulate(
+        exit_tax_rate = _exit_tax_rate(body.ticker, market, hist.index[-1])
+        result = await asyncio.to_thread(run_accumulate,
             hist,
             initial_amount=body.initial_amount,
             monthly_amount=body.monthly_amount,
@@ -400,7 +401,13 @@ async def run_backtest(body: BacktestIn):
             dip_extra_pct=body.dip_extra_pct,
             dividend_series=dividends,
             exit_tax_rate=exit_tax_rate,
+            **_trading_costs(market, body),
         )
+
+        if result.get("error"):
+            raise BacktestDataError(result["error"])
+        if hist.attrs.get("open_proxy"):
+            result["assumptions"].append("資料庫無開盤價，月初買入以首個交易日收盤價代替。")
 
         # Benchmark 對比
         benchmark_result = None
@@ -411,9 +418,18 @@ async def run_backtest(body: BacktestIn):
                 _download_hist, byt, body.start_date, body.end_date, body.benchmark_ticker, bm_market
             )
             if not bhist.empty:
-                bm_exit_tax = 0.001 if bm_market == "TW" else 0.0
+                _validate_backtest_history(bhist)
+                bm_exit_tax = _exit_tax_rate(body.benchmark_ticker, bm_market, bhist.index[-1])
                 benchmark_result = _summary_slim(
-                    run_benchmark(bhist, body.monthly_amount, body.price_mode, bm_exit_tax)
+                    await asyncio.to_thread(run_accumulate,
+                        bhist, body.initial_amount, body.monthly_amount, body.price_mode,
+                        body.enable_drip, False, 10, 15, 50,
+                        dividend_series=await asyncio.to_thread(
+                            _get_dividends, byt, body.benchmark_ticker, bm_market,
+                            body.start_date, body.end_date),
+                        exit_tax_rate=bm_exit_tax,
+                        **_trading_costs(bm_market, body),
+                    )
                 )
                 benchmark_result["ticker"] = body.benchmark_ticker
 
@@ -425,34 +441,32 @@ async def run_backtest(body: BacktestIn):
                 enhancements.append("低檔加碼")
             if body.enable_drip:
                 enhancements.append("股息再投入 (DRIP)")
-            # 用相同 hist 跑純定期定額基準（月初買、無加碼、無 DRIP），也扣 STT 使比較公平
-            baseline = run_accumulate(
+            # 用相同價格模式、期初金額與配息事件比較，不把未再投入的配息丟掉
+            baseline = await asyncio.to_thread(run_accumulate,
                 hist,
                 initial_amount=body.initial_amount,
                 monthly_amount=body.monthly_amount,
-                price_mode="open",
+                price_mode=body.price_mode,
                 enable_drip=False,
                 enable_dip=False,
                 dip_threshold_20d=10,
                 dip_threshold_60d=15,
                 dip_extra_pct=50,
-                dividend_series=None,
+                dividend_series=dividends,
                 exit_tax_rate=exit_tax_rate,
+                **_trading_costs(market, body),
             )
-            base_ann     = baseline.get("annual_return", 0)
-            strategy_ann = result.get("annual_return", 0)
-            boost        = round(strategy_ann - base_ann, 2)
+            base_ann     = baseline.get("annual_return")
+            strategy_ann = result.get("annual_return")
+            boost        = round(strategy_ann - base_ann, 2) if base_ann is not None and strategy_ann is not None else None
             strategy_note = {
                 "title": f"定期定額 + {'＋'.join(enhancements)} 策略",
-                "description": "當市場大跌時進行額外加碼，搭配長期持有與股息再投入，可提升長期複利效果。",
-                "baseline_annual":  round(base_ann,     2),
-                "strategy_annual":  round(strategy_ann, 2),
+                "description": "使用相同價格情境比較策略；加碼與再投入不保證提升報酬。",
+                "baseline_annual":  round(base_ann, 2) if base_ann is not None else None,
+                "strategy_annual":  round(strategy_ann, 2) if strategy_ann is not None else None,
                 "boost":            boost,
-                "example": (
-                    f"純定期定額年化：{base_ann:.1f}%  →  "
-                    f"搭配策略後：{strategy_ann:.1f}% "
-                    f"（{'+'  if boost >= 0 else ''}{boost:.1f}%）"
-                ),
+                "example": (f"年化差異：{boost:+.1f} 個百分點" if boost is not None
+                            else "持有期間不足，無法計算年化差異"),
             }
 
         return safe_json({
@@ -469,9 +483,11 @@ async def run_backtest(body: BacktestIn):
                 }
             }
         })
+    except BacktestDataError as ex:
+        return safe_json({"status": "error", "message": str(ex)}, 400)
     except Exception as ex:
         logger.error(f"backtest error: {ex}", exc_info=True)
-        return safe_json({"status": "error", "message": f"回測失敗: {ex}"}, 500)
+        return safe_json({"status": "error", "message": "回測服務暫時不可用，請稍後重試"}, 500)
 
 
 @router.post("/api/backtest/compare")
@@ -490,13 +506,12 @@ async def compare_strategies(body: BacktestCompareIn):
                 "message": "無法取得歷史數據，請確認代碼與日期範圍（TW ETF 需先在 ETF 詳情頁更新資料）"
             }, 400)
 
-        dividends = None
-        if body.enable_drip:
-            dividends = await asyncio.to_thread(
-                _get_dividends, yt, body.ticker, market, body.start_date, body.end_date
-            )
+        _validate_backtest_history(hist)
+        dividends = await asyncio.to_thread(
+            _get_dividends, yt, body.ticker, market, body.start_date, body.end_date
+        )
 
-        cmp_exit_tax = 0.001 if market == "TW" else 0.0
+        cmp_exit_tax = _exit_tax_rate(body.ticker, market, hist.index[-1])
         common = dict(
             hist=hist,
             initial_amount=body.initial_amount,
@@ -508,19 +523,24 @@ async def compare_strategies(body: BacktestCompareIn):
             dip_extra_pct=body.dip_extra_pct,
             dividend_series=dividends,
             exit_tax_rate=cmp_exit_tax,
+            **_trading_costs(market, body),
         )
 
         strategies = {
-            "open": run_accumulate(**{**common, "price_mode": "open"}),
-            "low":  run_accumulate(**{**common, "price_mode": "low"}),
-            "high": run_accumulate(**{**common, "price_mode": "high"}),
-            "dip":  run_accumulate(**{**common, "price_mode": "open", "enable_dip": True}),
+            "open": await asyncio.to_thread(run_accumulate, **{**common, "price_mode": "open"}),
+            "low": await asyncio.to_thread(run_accumulate, **{**common, "price_mode": "low"}),
+            "high": await asyncio.to_thread(run_accumulate, **{**common, "price_mode": "high"}),
+            "dip": await asyncio.to_thread(run_accumulate, **{**common, "price_mode": "open", "enable_dip": True}),
         }
 
+        if any(v.get("error") for v in strategies.values()):
+            raise BacktestDataError("投入金額不足以支付模型手續費")
         return safe_json({
             "status": "success",
             "data": {k: _summary_slim(v) for k, v in strategies.items()},
         })
+    except BacktestDataError as ex:
+        return safe_json({"status": "error", "message": str(ex)}, 400)
     except Exception as ex:
         logger.error(f"compare error: {ex}", exc_info=True)
-        return safe_json({"status": "error", "message": f"策略比較失敗: {ex}"}, 500)
+        return safe_json({"status": "error", "message": "策略比較服務暫時不可用，請稍後重試"}, 500)

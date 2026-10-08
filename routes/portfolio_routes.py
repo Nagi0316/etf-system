@@ -3,7 +3,7 @@ routes/portfolio_routes.py — 庫存 / 交易記錄
 
 冪等防護（雙層縱深）：
   1. Cache 層（5s TTL）：攔截雙擊 / 網路重傳
-  2. DB 層（idempotency_key UNIQUE）：即使 cache miss 也能防住
+  2. DB 層（會員鎖內檢查 idempotency_key）：即使 cache miss 也能防住
 
 均價計算原則：
   · 買入均價 = Σ(股數×股價 + 手續費) / 總股數       ← 含買入手續費
@@ -46,7 +46,7 @@ def get_portfolio(current_user: dict = Depends(get_current_user)):
     try:
         usd_twd = get_usd_twd()
     except Exception:
-        usd_twd = 32.0
+        return safe_json({"status": "error", "message": "匯率暫時無法取得，無法計算可信的台幣資產總值"}, 503)
 
     with get_db() as (conn, cursor):
         # 持倉中部位（shares > 0）
@@ -143,7 +143,7 @@ def add_transaction(body: TransactionIn, current_user: dict = Depends(get_curren
         return safe_json({"status": "error", "message": "重複提交：相同交易已在 5 秒內新增，請勿重複送出"}, 429)
     cache.set(dedup_key, 1, _DEDUP_TTL)
 
-    # ── 第二層：DB 冪等（idempotency_key UNIQUE，跨重啟永久有效）──
+    # ── 第二層：DB 冪等（會員鎖內驗證，跨重啟有效）──
     idem_key = body.idempotency_key or dedup_sig  # 前端送 UUID；未送則用 hash
 
     try:
@@ -193,6 +193,7 @@ def get_transactions(
 def delete_transaction(tid: int, current_user: dict = Depends(get_current_user)):
     uid = current_user["id"]
     with get_db() as (conn, cursor):
+        _lock_user_transactions(uid, cursor)
         cursor.execute(
             "SELECT ticker, transaction_type FROM user_transactions WHERE id=%s AND user_id=%s",
             (tid, uid)
@@ -267,6 +268,8 @@ def _recalc_portfolio_cursor(uid: int, ticker: str, cursor):
             total_shares += s
 
         elif t["transaction_type"] == "sell":
+            if s > total_shares + 1e-6:
+                raise ValueError("交易日期的庫存不足：賣出不可早於足夠的買入紀錄")
             if total_shares > 0:
                 avg_at_sell    = total_cost / total_shares
                 # 已實現損益 = 價差 × 股數 − 賣出手續費
@@ -291,11 +294,20 @@ def _recalc_portfolio_cursor(uid: int, ticker: str, cursor):
     )
 
 
+def _lock_user_transactions(uid: int, cursor):
+    """新增與刪除共用同一把會員鎖，避免重算持倉互相覆蓋。"""
+    from database import USE_MYSQL
+    if USE_MYSQL:
+        cursor.execute("SELECT id FROM users WHERE id=%s FOR UPDATE", (uid,))
+        cursor.fetchone()
+    else:
+        cursor.execute("BEGIN IMMEDIATE")
+
+
 def _insert_transaction(uid: int, data: dict, idem_key: str):
     """新增交易並在同一 DB transaction 內重算持倉。
 
-    idem_key: 冪等鍵，存入 idempotency_key 欄位（UNIQUE）。
-    若相同 key 已存在，DB 拋 Duplicate Entry → 上層回傳 429。
+    idem_key: 冪等鍵，在會員列鎖內檢查是否已存在。
     """
     ticker  = data["ticker"].upper()
     tx_type = data["transaction_type"]
@@ -306,6 +318,13 @@ def _insert_transaction(uid: int, data: dict, idem_key: str):
     note    = data.get("note") or ""
 
     with get_db() as (conn, cursor):
+        # 先鎖會員列，序列化同一會員的買賣，包含尚無持倉列的首次買入。
+        _lock_user_transactions(uid, cursor)
+        # 鎖內檢查冪等鍵，舊資料庫即使只有普通索引也不會重複寫入。
+        cursor.execute("SELECT id FROM user_transactions WHERE user_id=%s AND idempotency_key=%s",
+                       (uid, idem_key))
+        if cursor.fetchone():
+            raise ValueError("此交易已存在，請勿重複送出")
         # 確保 ETF master 存在（自動探索模式）
         cursor.execute("SELECT ticker FROM etf_master WHERE ticker=%s", (ticker,))
         if not cursor.fetchone():
@@ -316,28 +335,8 @@ def _insert_transaction(uid: int, data: dict, idem_key: str):
                 (ticker, ticker, market)
             )
 
-        # 賣出前檢查庫存（浮點容差 1e-6）
-        # MySQL/TiDB：使用 SELECT ... FOR UPDATE 鎖定該列，防止並發請求同時讀到相同持股數後各自賣出（超賣 race condition）
-        # SQLite：WAL 模式下寫操作本身是 serial 的，FOR UPDATE 語法不支援但效果等同
-        if tx_type == "sell":
-            try:
-                cursor.execute(
-                    "SELECT shares FROM user_portfolio WHERE user_id=%s AND ticker=%s FOR UPDATE",
-                    (uid, ticker)
-                )
-            except Exception:
-                # SQLite 不支援 FOR UPDATE，退回一般 SELECT（WAL 模式下仍安全）
-                cursor.execute(
-                    "SELECT shares FROM user_portfolio WHERE user_id=%s AND ticker=%s",
-                    (uid, ticker)
-                )
-            row  = cursor.fetchone()
-            held = float(row["shares"]) if row else 0.0
-            if held < shares - 1e-6:
-                raise ValueError(f"庫存不足：持有 {held:.4f}，欲賣 {shares:.4f}")
-
-        # INSERT — idempotency_key UNIQUE 索引是第二層防護
-        # 若 DB 拋 Duplicate Entry（重複提交），由外層 except 捕獲並回傳 429
+        # 庫存依完整交易日期序列驗證，不以今天的持倉推斷過去可賣股數。
+        # 兼容可能具有唯一索引的資料庫，重複鍵回傳業務錯誤。
         try:
             cursor.execute(
                 "INSERT INTO user_transactions "

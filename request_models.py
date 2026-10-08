@@ -1,6 +1,6 @@
 """API 使用的 Pydantic 請求與回應模型。"""
-from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import Optional
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator, ConfigDict
+from typing import Optional, Literal
 from datetime import date, datetime
 
 
@@ -59,6 +59,7 @@ class WatchlistAddIn(BaseModel):
 # ══════════════════════════════════════════════════════════
 
 class TransactionIn(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
     ticker: str = Field(..., min_length=1, max_length=20)
     transaction_type: str
     shares: float = Field(..., gt=0)
@@ -99,18 +100,36 @@ class TransactionIn(BaseModel):
 # ══════════════════════════════════════════════════════════
 
 class BacktestIn(BaseModel):
-    ticker: str = "0050"
-    price_mode: str = "open"  # open | low | high
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_period(self):
+        try:
+            start, end = date.fromisoformat(self.start_date), date.fromisoformat(self.end_date)
+        except ValueError:
+            raise ValueError("回測日期格式必須為 YYYY-MM-DD")
+        if not self.ticker or (self.benchmark_ticker is not None and not self.benchmark_ticker):
+            raise ValueError("ETF 代碼不可為空")
+        if start > end or end > date.today() or start < date(1970, 1, 1):
+            raise ValueError("回測日期區間不合理或包含未來日期")
+        if self.initial_amount == 0 and self.monthly_amount == 0:
+            raise ValueError("初始或每月投入至少一項必須大於 0")
+        return self
+
+    ticker: str = Field("0050", min_length=1, max_length=20)
+    price_mode: Literal["open", "low", "high"] = "open"  # open | low | high
     start_date: str = "2020-01-01"
     end_date: str = "2024-12-31"
-    initial_amount: float = 0.0
-    monthly_amount: float = 10000.0
+    initial_amount: float = Field(0.0, ge=0, le=1e12)
+    monthly_amount: float = Field(10000.0, ge=0, le=1e12)
     enable_drip: bool = False        # 股息再投入
     enable_dip: bool = False         # 低檔加碼
-    dip_threshold_20d: float = 10.0  # 20日跌幅觸發 (%)
-    dip_threshold_60d: float = 15.0  # 60日跌幅觸發 (%)
-    dip_extra_pct: float = 50.0      # 加碼比例 (%)
-    benchmark_ticker: Optional[str] = None  # 對比 ETF
+    dip_threshold_20d: float = Field(10.0, gt=0, le=100)  # 20日跌幅觸發 (%)
+    dip_threshold_60d: float = Field(15.0, gt=0, le=100)  # 60日跌幅觸發 (%)
+    dip_extra_pct: float = Field(50.0, ge=0, le=1000)      # 加碼比例 (%)
+    benchmark_ticker: Optional[str] = Field(None, max_length=20)  # 對比 ETF
+    commission_rate: Optional[float] = Field(None, ge=0, le=0.1)
+    min_commission: Optional[float] = Field(None, ge=0, le=10000)
 
     @field_validator("ticker", "benchmark_ticker")
     @classmethod
@@ -118,21 +137,8 @@ class BacktestIn(BaseModel):
         return v.strip().upper() if v else v
 
 
-class BacktestCompareIn(BaseModel):
-    ticker: str = "0050"
-    start_date: str = "2020-01-01"
-    end_date: str = "2024-12-31"
-    monthly_amount: float = 10000.0
-    initial_amount: float = 0.0
-    enable_drip: bool = False
-    dip_threshold_20d: float = 10.0
-    dip_threshold_60d: float = 15.0
-    dip_extra_pct: float = 50.0
-
-    @field_validator("ticker")
-    @classmethod
-    def upper_ticker(cls, v: str) -> str:
-        return v.strip().upper()
+class BacktestCompareIn(BacktestIn):
+    """策略比較沿用相同輸入驗證，避免比較端點漏驗日期與金額。"""
 
 
 # ══════════════════════════════════════════════════════════

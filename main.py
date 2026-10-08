@@ -192,7 +192,7 @@ def health_check():
         logger.exception("Basic health check database query failed")
         checks["db"] = "error"
         checks["status"] = "degraded"
-    return safe_json(checks)
+    return safe_json(checks, 503 if checks["db"] == "error" else 200)
 
 
 @app.get("/health/detail")

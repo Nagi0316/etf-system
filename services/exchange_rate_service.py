@@ -67,8 +67,7 @@ def get_usd_twd() -> float:
         logger.warning(f"FX 所有來源失敗，使用最後已知匯率 {last_known}")
         return last_known
 
-    logger.error("無法取得 USD/TWD 匯率，使用預設值 32.0 避免系統崩潰")
-    return 32.0
+    raise RuntimeError("無法取得可信的 USD/TWD 匯率")
 
 
 def _fetch_usd_twd() -> float:

@@ -7,7 +7,7 @@ services/backtest_engine.py — 增強版回測引擎
   - volatility        年化波動率 (%)
   - sharpe_ratio      夏普比率 (無風險利率 2%)
   - sortino_ratio     索提諾比率（只計下行波動）
-  - calmar_ratio      卡瑪比率 = 年化報酬 / |最大回撤|
+  - calmar_ratio      卡瑪比率 = 標的價格年化報酬 / |價格最大回撤|
   - win_rate_monthly  月勝率 (%)
 """
 from __future__ import annotations
@@ -23,11 +23,14 @@ MIN_COMMISSION  = 20.0              # 台股低消 20 元（原值 1.0 遠低於
 TW_STT_RATE     = 0.001            # 台灣證券交易稅 0.1%（賣出時收取）
 
 
-def _calc_shares(price: float, budget: float) -> tuple[float, float]:
+def _calc_shares(price: float, budget: float, commission_rate: float = COMMISSION_RATE,
+                 min_commission: float = MIN_COMMISSION) -> tuple[float, float]:
     """回傳 (shares_bought, fee)"""
     if price <= 0 or budget <= 0:
         return 0.0, 0.0
-    fee = max(MIN_COMMISSION, budget * COMMISSION_RATE)
+    fee = max(min_commission, budget * commission_rate / (1 + commission_rate))
+    if budget <= fee:
+        return 0.0, 0.0
     shares = (budget - fee) / price
     return shares, fee
 
@@ -44,79 +47,101 @@ def run_accumulate(
     dip_extra_pct: float,
     dividend_series: Optional[pd.Series] = None,
     exit_tax_rate: float = 0.0,
+    commission_rate: float = COMMISSION_RATE,
+    min_commission: float = MIN_COMMISSION,
 ) -> dict:
     """
     定期定額 + 選配低檔加碼 + 選配 DRIP
     """
     from services.price_alert_service import pyramid_extra_amount
 
+    if hist.empty:
+        return {"transactions": [], "error": "無足夠資料計算摘要"}
+    hist = hist.sort_index()
     transactions = []
-    total_invested = 0.0
-    total_shares   = 0.0
+    total_invested = total_shares = cash_balance = 0.0
 
-    start_dt = hist.index[0]
-    end_dt   = hist.index[-1]
+    # 交易依日期執行。月內極值屬事後情境，不能冒充月初可執行策略。
+    purchases = {}
+    for _, month in hist.groupby(hist.index.to_period("M")):
+        if price_mode == "low":
+            purchase_date = month["Low"].idxmin()
+        elif price_mode == "high":
+            purchase_date = month["High"].idxmax()
+        else:
+            purchase_date = month.index[0]
+        purchases[purchase_date] = _price_from_mode(month, price_mode)
 
-    # 初始單筆
-    if initial_amount > 0:
-        row0 = hist.iloc[:1]
-        p = _price_from_mode(row0, price_mode)
-        if p > 0:
-            shares, fee = _calc_shares(p, initial_amount)
+    dividends = {}
+    if dividend_series is not None:
+        for dt, amount in dividend_series.items():
+            dt = pd.Timestamp(dt).normalize()
+            if hist.index[0] <= dt <= hist.index[-1] and np.isfinite(amount) and amount > 0:
+                # 非交易日事件移到下一個有報價日；仍在該日買入前判斷持股。
+                pos = hist.index.searchsorted(dt)
+                if pos < len(hist):
+                    day = hist.index[pos]
+                    dividends[day] = dividends.get(day, 0.0) + float(amount)
+
+    for dt, row in hist.iterrows():
+        # 除息日才買入的股份不享有該次股息。
+        dividend_cash = dividends.get(dt, 0.0) * total_shares
+        cash_balance += dividend_cash
+        if dividend_cash > 0:
+            transactions.append(_tx("現金配息", dt, dividend_cash, float(row["Close"]),
+                                    0.0, 0.0, total_shares))
+
+        if dt == hist.index[0] and initial_amount > 0:
+            p = _price_from_mode(hist.iloc[:1], price_mode)
+            shares, fee = _calc_shares(p, initial_amount, commission_rate, min_commission)
             if shares > 0:
                 total_invested += initial_amount
-                total_shares   += shares
-                transactions.append(_tx("期初單筆", hist.index[0], initial_amount, p, shares, fee, total_shares))
+                total_shares += shares
+                transactions.append(_tx("期初單筆", dt, initial_amount, p, shares, fee, total_shares))
 
-    current_ym = start_dt.to_period("M")
-    end_ym     = end_dt.to_period("M")
+        if dt in purchases:
+            p = purchases[dt]
+            extra = 0.0
+            if enable_dip and total_shares > 0:
+                window = hist.loc[hist.index < dt, "Close"].tail(65).tolist()
+                extra = pyramid_extra_amount(monthly_amount, window, p,
+                    dip_threshold_20d, dip_threshold_60d, dip_extra_pct)
+            budget = monthly_amount + extra
+            shares, fee = _calc_shares(p, budget, commission_rate, min_commission)
+            if shares > 0:
+                total_invested += budget
+                total_shares += shares
+                tx_type = "低檔加碼" if extra > 0 else "定期定額"
+                tx = _tx(tx_type, dt, budget, p, shares, fee, total_shares)
+                tx["extra_amount"] = round(extra, 2)
+                transactions.append(tx)
 
-    while current_ym <= end_ym:
-        mask = hist.index.to_period("M") == current_ym
-        month_data = hist[mask]
-        if month_data.empty:
-            current_ym += 1
-            continue
+        # 缺少實際發放日時，以除息日收盤再投入作近似，明確在 API 揭露。
+        if enable_drip and cash_balance > 0:
+            p = float(row["Close"])
+            shares, fee = _calc_shares(p, cash_balance, commission_rate, min_commission)
+            if shares > 0:
+                transactions.append(_tx("DRIP配息再投入", dt, cash_balance, p,
+                                        shares, fee, total_shares + shares))
+                total_shares += shares
+                cash_balance = 0.0
 
-        p = _price_from_mode(month_data, price_mode)
-        if p <= 0:
-            current_ym += 1
-            continue
-
-        # ── 低檔加碼 ──
-        extra = 0.0
-        if enable_dip and len(transactions) > 0:
-            # 取最近 65 日的收盤價作為歷史視窗
-            window_end_idx = month_data.index[0]
-            window = hist[hist.index < window_end_idx]["Close"].tail(65).tolist()
-            extra = pyramid_extra_amount(
-                monthly_amount, window, p,
-                dip_threshold_20d, dip_threshold_60d, dip_extra_pct
-            )
-
-        budget = monthly_amount + extra
-        shares, fee = _calc_shares(p, budget)
-        if shares > 0:
-            total_invested += budget
-            total_shares   += shares
-            tx_type = "低檔加碼" if extra > 0 else "定期定額"
-            transactions.append(_tx(tx_type, month_data.index[0], budget, p, shares, fee, total_shares))
-
-        # ── DRIP：配息再投入 ──
-        if enable_drip and dividend_series is not None:
-            month_divs = dividend_series[dividend_series.index.to_period("M") == current_ym]
-            if not month_divs.empty:
-                total_div_cash = float(month_divs.sum()) * total_shares
-                if total_div_cash > 0:
-                    drip_shares, drip_fee = _calc_shares(p, total_div_cash)
-                    if drip_shares > 0:
-                        total_shares += drip_shares
-                        transactions.append(_tx("DRIP配息再投入", month_data.index[-1],
-                                               total_div_cash, p, drip_shares, drip_fee, total_shares))
-
-        current_ym += 1
-
-    return _summarize(transactions, total_invested, total_shares, hist, exit_tax_rate)
+    result = _summarize(transactions, total_invested, total_shares, hist,
+                        exit_tax_rate, cash_balance)
+    result["assumptions"] = [
+        "年化報酬使用實際投入日期的資金加權報酬率（XIRR）。",
+        "月最低／最高價格為事後情境，不代表可預先執行的交易策略。",
+        "風險指標基於標的價格序列，並非定期定額帳戶的報酬序列。",
+        "跨市場比較使用標的原幣金額，未模擬歷史換匯；不能當作同台幣投入比較。",
+        "允許零碎股；手續費採固定模型，未含個人稅負與期末賣出手續費。",
+        "只計入已取得的配息事件；沒有事件不代表該期間沒有配息。",
+    ]
+    result["trading_costs"] = {"commission_rate": commission_rate, "min_commission": min_commission,
+                               "exit_tax_rate": exit_tax_rate}
+    result["assumptions"].append(f"模型佣金率 {commission_rate * 100:.4f}%，每筆最低 {min_commission:g} 原幣；不代表所有券商。")
+    if enable_drip:
+        result["assumptions"].append("DRIP 以除息日收盤價再投入，未模擬發放日與股息稅。")
+    return result
 
 
 def run_benchmark(
@@ -167,11 +192,11 @@ def _tx(tx_type: str, date, amount: float, price: float, shares: float, fee: flo
 
 
 def _compute_risk_metrics(hist: pd.DataFrame, annual_return_pct: float) -> dict:
-    """從每日收盤價計算六項風險指標，全部皆用真實歷史資料，無推估成分。
+    """從每日收盤價計算六項風險指標，使用歷史價格與固定年化／無風險利率假設。
 
     Args:
         hist: OHLC DataFrame，index 為 datetime
-        annual_return_pct: 已知年化報酬率（%），用來計算 Calmar
+        annual_return_pct: 相容舊呼叫介面的參數；Calmar 使用標的價格年化
 
     Returns:
         dict with max_drawdown, volatility, sharpe_ratio,
@@ -195,9 +220,7 @@ def _compute_risk_metrics(hist: pd.DataFrame, annual_return_pct: float) -> dict:
         vol = float(daily_ret.std() * np.sqrt(252) * 100)
 
         # ── 最大回撤（Peak-to-Trough）────────────
-        cum = (1 + daily_ret).cumprod()
-        roll_max = cum.cummax()
-        dd_series = (cum - roll_max) / roll_max
+        dd_series = prices / prices.cummax() - 1
         max_dd = float(dd_series.min() * 100)   # 負數，如 -35.2
 
         # ── Sharpe Ratio（無風險利率 2%）─────────
@@ -208,12 +231,14 @@ def _compute_risk_metrics(hist: pd.DataFrame, annual_return_pct: float) -> dict:
                   if excess.std() > 1e-10 else 0.0)
 
         # ── Sortino Ratio（僅計下行偏差）─────────
-        downside = excess[excess < 0]
-        sortino = (float(excess.mean() / downside.std() * np.sqrt(252))
-                   if len(downside) > 5 and downside.std() > 1e-10 else 0.0)
+        downside_deviation = float(np.sqrt(np.mean(np.minimum(excess, 0) ** 2)))
+        sortino = (float(excess.mean() / downside_deviation * np.sqrt(252))
+                   if downside_deviation > 1e-10 else None)
 
         # ── Calmar Ratio = 年化報酬 / |最大回撤| ──
-        calmar = abs(annual_return_pct / max_dd) if max_dd < -0.01 else 0.0
+        years = (prices.index[-1] - prices.index[0]).days / 365.25
+        price_annual = ((prices.iloc[-1] / prices.iloc[0]) ** (1 / years) - 1) * 100 if years > 0 else 0
+        calmar = float(price_annual / abs(max_dd)) if max_dd < -0.01 else None
 
         # ── 月勝率 ─────────────────────────────
         monthly = prices.resample("ME").last().pct_change().dropna()
@@ -223,8 +248,8 @@ def _compute_risk_metrics(hist: pd.DataFrame, annual_return_pct: float) -> dict:
             "max_drawdown":     round(max_dd,  2),
             "volatility":       round(vol,     2),
             "sharpe_ratio":     round(sharpe,  2),
-            "sortino_ratio":    round(sortino, 2),
-            "calmar_ratio":     round(calmar,  2),
+            "sortino_ratio":    round(sortino, 2) if sortino is not None else None,
+            "calmar_ratio":     round(calmar,  2) if calmar is not None else None,
             "win_rate_monthly": round(win_rate, 1) if win_rate is not None else None,
         }
     except Exception as e:
@@ -232,8 +257,40 @@ def _compute_risk_metrics(hist: pd.DataFrame, annual_return_pct: float) -> dict:
         return empty
 
 
+def _money_weighted_return(transactions: list, end_date, final_value: float) -> float | None:
+    """單向投入與期末資產的 XIRR；同日無持有期間時不虛構年化。"""
+    flows = {}
+    for tx in transactions:
+        if tx["type"] in ("期初單筆", "定期定額", "低檔加碼"):
+            dt = pd.Timestamp(tx["date"])
+            flows[dt] = flows.get(dt, 0.0) - tx["amount"]
+    if not flows or min(flows) >= pd.Timestamp(end_date):
+        return None
+    if final_value <= 0:
+        return -100.0
+    end = pd.Timestamp(end_date)
+    flows[end] = flows.get(end, 0.0) + final_value
+    origin = min(flows)
+    amounts = np.array(list(flows.values()))
+    years = np.array([(dt - origin).days / 365.25 for dt in flows])
+    def npv(log_rate):
+        # 共同指數縮放不改變根，避免長期間接近 -100% 時溢位。
+        exponents = -log_rate * years
+        return float(np.sum(amounts * np.exp(exponents - exponents.max())))
+    lo, hi = -16.0, 16.0
+    if npv(lo) * npv(hi) > 0:
+        return None
+    for _ in range(160):
+        mid = (lo + hi) / 2
+        if npv(mid) > 0:
+            lo = mid
+        else:
+            hi = mid
+    return float(np.expm1((lo + hi) / 2) * 100)
+
+
 def _summarize(transactions: list, total_invested: float, total_shares: float,
-               hist: pd.DataFrame, exit_tax_rate: float = 0.0) -> dict:
+               hist: pd.DataFrame, exit_tax_rate: float = 0.0, cash_balance: float = 0.0) -> dict:
     if hist.empty or total_invested <= 0:
         return {"transactions": transactions, "error": "無足夠資料計算摘要"}
 
@@ -241,13 +298,13 @@ def _summarize(transactions: list, total_invested: float, total_shares: float,
     gross_value  = total_shares * final_price
     # 台股賣出時需扣除 0.1% 證券交易稅（exit_tax_rate=0.001），US ETF 為 0
     exit_tax     = gross_value * exit_tax_rate
-    final_value  = gross_value - exit_tax
+    final_value  = gross_value - exit_tax + cash_balance
     total_profit = final_value - total_invested
     total_return = total_profit / total_invested * 100
 
     days = (hist.index[-1] - hist.index[0]).days
-    years = max(0.1, days / 365.25)
-    annual_return = (((final_value / total_invested) ** (1 / years)) - 1) * 100 if final_value > 0 else 0.0
+    years = days / 365.25
+    annual_return = _money_weighted_return(transactions, hist.index[-1], final_value)
 
     strategy_boost = None
     if len(transactions) > 0:
@@ -255,7 +312,7 @@ def _summarize(transactions: list, total_invested: float, total_shares: float,
         if dip_txs:
             strategy_boost = {
                 "dip_tx_count": len(dip_txs),
-                "extra_invested": round(sum(t["amount"] for t in dip_txs), 2),
+                "extra_invested": round(sum(t.get("extra_amount", 0) for t in dip_txs), 2),
             }
 
     risk = _compute_risk_metrics(hist, annual_return)
@@ -265,7 +322,10 @@ def _summarize(transactions: list, total_invested: float, total_shares: float,
         "final_value": round(final_value, 2),
         "total_profit": round(total_profit, 2),
         "total_return": round(total_return, 2),
-        "annual_return": round(annual_return, 2),
+        "annual_return": round(annual_return, 2) if annual_return is not None else None,
+        "annual_return_method": "xirr",
+        "cash_balance": round(cash_balance, 2),
+        "risk_basis": "underlying_price",
         # 不輸出 return_3y / return_5y：這兩個欄位過去等於整段年化報酬（不是真正的 3Y/5Y 子期間報酬），
         # 容易誤導前端。前端應直接使用 annual_return 搭配 years_span 自行判斷回測長度。
         "final_price": round(final_price, 2),

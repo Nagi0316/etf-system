@@ -56,25 +56,38 @@
       <!-- 投入金額 -->
       <div class="space-y-3 mb-3">
         <div>
-          <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">期初單筆投入 (元)</label>
+          <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">期初單筆投入（原幣）</label>
           <input type="number" id="bt-initial" value="0" min="0" step="10000" class="input text-sm">
         </div>
         <div>
-          <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">每月定期定額 (元)</label>
+          <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">每月定期定額（原幣）</label>
           <div class="flex gap-1 mb-1">
             <button onclick="setMonthly(5000)"  class="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-700 hover:bg-indigo-100">$5K</button>
             <button onclick="setMonthly(10000)" class="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-700 hover:bg-indigo-100">$10K</button>
             <button onclick="setMonthly(30000)" class="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-700 hover:bg-indigo-100">$30K</button>
           </div>
-          <input type="number" id="bt-monthly" value="10000" min="1000" step="1000" class="input text-sm">
+          <input type="number" id="bt-monthly" value="10000" min="0" step="1000" class="input text-sm">
         </div>
       </div>
+
+      <p class="text-xs text-slate-500 mb-3">台股金額為新台幣，美股金額為美元；跨市場結果未換算匯率。</p>
+      <div class="grid grid-cols-2 gap-2 mb-3">
+        <div>
+          <label for="bt-fee-rate" class="block text-xs text-slate-600 mb-1">買入手續費率 (%)</label>
+          <input id="bt-fee-rate" type="number" min="0" max="10" step="0.0001" placeholder="使用市場預設" class="input text-sm">
+        </div>
+        <div>
+          <label for="bt-min-fee" class="block text-xs text-slate-600 mb-1">最低手續費（原幣）</label>
+          <input id="bt-min-fee" type="number" min="0" max="10000" step="1" placeholder="使用市場預設" class="input text-sm">
+        </div>
+      </div>
+      <p class="text-xs text-slate-500 mb-3">台股預設 0.0399%、最低 20 元；美股預設零佣金情境，可依券商調整。</p>
 
       <!-- 買入時機 -->
       <div class="mb-3">
         <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">買入時機（單策略）</label>
         <select id="bt-price-mode" class="input text-sm">
-          <option value="open">月初買進（實際可行）</option>
+          <option value="open">月初買進（歷史價格模擬）</option>
           <option value="low">每月最低點買進（樂觀情境）</option>
           <option value="high">每月最高點買進（悲觀情境）</option>
         </select>
@@ -87,7 +100,7 @@
         <label class="flex items-center justify-between cursor-pointer">
           <div>
             <div class="text-xs font-medium text-slate-700 dark:text-slate-200">股息再投入 (DRIP)</div>
-            <div class="text-xs text-slate-400">配息自動買回股份，複利加速</div>
+            <div class="text-xs text-slate-400">以除息日收盤價模擬再投入，實際入帳日可能不同</div>
           </div>
           <div class="relative">
             <input type="checkbox" id="bt-drip" class="sr-only">
@@ -168,6 +181,7 @@
     <!-- 單策略結果 -->
     <div id="single-panel">
       <div id="result-summary" class="hidden space-y-4">
+        <p id="backtest-assumptions" class="text-xs text-slate-500 mb-3"></p>
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3" id="kpi-cards"></div>
 
         <!-- 風險指標卡片 -->
@@ -310,7 +324,9 @@ function _buildCommonBody() {
     start_date:    _ymToStartDate(startYm),
     end_date:      _ymToEndDate(endYm),
     initial_amount: parseFloat(document.getElementById('bt-initial').value || 0),
-    monthly_amount: parseFloat(document.getElementById('bt-monthly').value || 10000),
+    monthly_amount: parseFloat(document.getElementById('bt-monthly').value || 0),
+    commission_rate: document.getElementById('bt-fee-rate').value === '' ? null : Number(document.getElementById('bt-fee-rate').value) / 100,
+    min_commission: document.getElementById('bt-min-fee').value === '' ? null : Number(document.getElementById('bt-min-fee').value),
     enable_drip:    dripOn,
     dip_threshold_20d: parseFloat(document.getElementById('bt-dip-20')?.value || 10),
     dip_threshold_60d: parseFloat(document.getElementById('bt-dip-60')?.value || 15),
@@ -378,7 +394,7 @@ function renderRiskMetrics(d) {
       fmt:   v => v.toFixed(2) + '%',
       color: v => v < -20 ? 'text-red-600' : v < -10 ? 'text-orange-500' : 'text-yellow-600',
       icon:  'fa-arrow-down',
-      tip:   '歷史上從最高點到最低點的最大跌幅，越小越穩健',
+      tip:   '標的價格從最高點到最低點的跌幅，非定期定額帳戶回撤',
     },
     {
       label: '年化波動率',
@@ -410,7 +426,7 @@ function renderRiskMetrics(d) {
       fmt:   v => v.toFixed(2),
       color: v => v >= 0.5 ? 'text-green-600' : v >= 0.2 ? 'text-blue-500' : 'text-orange-500',
       icon:  'fa-tachometer-alt',
-      tip:   '年化報酬 / |最大回撤|，越高代表風險收益比越好',
+      tip:   '標的價格年化報酬 / |價格最大回撤|，非帳戶 XIRR',
     },
     {
       label: '月勝率',
@@ -453,7 +469,7 @@ function renderSingleResult(d, ticker) {
     { label:'總投入', value: fmtMoney(d.total_invested), icon:'fa-coins', color:'text-blue-500' },
     { label:'最終市值', value: fmtMoney(d.final_value), icon:'fa-chart-line', color:'text-indigo-500' },
     { label:'總損益', value: fmtMoney(d.total_profit), icon:'fa-dollar-sign', color: d.total_profit >= 0 ? 'text-green-500' : 'text-red-500' },
-    { label:'年化報酬率', value: fmtPct(d.annual_return), icon:'fa-percentage', color: d.annual_return >= 0 ? 'text-green-500' : 'text-red-500' },
+    { label:'年化報酬率（XIRR）', value: fmtPct(d.annual_return), icon:'fa-percentage', color: d.annual_return >= 0 ? 'text-green-500' : 'text-red-500' },
   ];
   document.getElementById('kpi-cards').innerHTML = kpis.map(k => `
     <div class="card p-4">
@@ -465,6 +481,9 @@ function renderSingleResult(d, ticker) {
     </div>`).join('');
 
   renderRiskMetrics(d);
+  const assumptions = document.getElementById('backtest-assumptions');
+  assumptions.textContent = (d.assumptions || []).join(' ');
+
 
   const noteBox = document.getElementById('strategy-note-box');
   if (d.strategy_note) {
@@ -541,10 +560,10 @@ function renderCompareResult(data, ticker) {
   const stratColors = { open:'#4f46e5', low:'#10b981', high:'#f59e0b', dip:'#8b5cf6' };
   const stratBg    = { open:'rgba(79,70,229,0.7)', low:'rgba(16,185,129,0.7)', high:'rgba(245,158,11,0.7)', dip:'rgba(139,92,246,0.7)' };
   document.getElementById('cmp-ticker-label').textContent = ticker;
-  const annuals = Object.values(data).map(r => r.annual_return || 0);
-  const maxAnn = Math.max(...annuals);
+  const annuals = Object.values(data).map(r => r.annual_return ?? null);
+  const maxAnn = Math.max(...annuals.filter(v => v != null));
   const rows = Object.entries(data).map(([key, r]) => {
-    const isBest = (r.annual_return || 0) === maxAnn;
+    const isBest = (r.annual_return ?? null) === maxAnn;
     return `<tr class="table-row border-b border-slate-50 dark:border-slate-800 ${isBest ? 'bg-indigo-50 dark:bg-indigo-900/10' : ''}">
       <td class="px-4 py-3 font-medium" style="color:${stratColors[key]}">${isBest ? '🏆 ' : ''}${stratLabels[key]}</td>
       <td class="px-4 py-3 text-right font-mono text-slate-600 dark:text-slate-300">${fmtMoney(r.total_invested)}</td>
@@ -565,7 +584,7 @@ function renderCompareResult(data, ticker) {
   if (cmpChart) cmpChart.destroy();
   cmpChart = new Chart(document.getElementById('cmp-chart'), {
     type:'bar',
-    data:{ labels, datasets:[{ label:'年化報酬率 (%)', data:keys.map(k=>data[k]?.annual_return||0),
+    data:{ labels, datasets:[{ label:'年化報酬率 (%)', data:keys.map(k=>data[k]?.annual_return ?? null),
       backgroundColor:keys.map(k=>stratBg[k]), borderColor:keys.map(k=>stratColors[k]), borderWidth:2, borderRadius:6 }] },
     options:{ responsive:true, maintainAspectRatio:true,
       plugins:{ legend:{ display:false } },

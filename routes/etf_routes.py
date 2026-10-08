@@ -549,8 +549,9 @@ async def get_etf_detail(ticker: str):
         try:
             usd_twd = await asyncio.to_thread(get_usd_twd)
         except Exception:
-            usd_twd = 32.0
-        row["price_twd"] = round(float(row.get("current_price", 0)) * usd_twd, 2)
+            usd_twd = None
+        row["price_twd"] = (round(float(row.get("current_price") or 0) * usd_twd, 2)
+                            if usd_twd is not None else None)
         row["usd_twd_rate"] = usd_twd
 
     # 資料明顯過期（> 1 天）或關鍵欄位為 0，背景靜默更新一次
@@ -1421,10 +1422,11 @@ def add_etf_to_master(body: EtfAddIn, request: Request):
         return safe_json({"status": "error", "message": "請先登入"}, 401)
     with get_db() as (conn, cursor):
         cursor.execute(
-            "INSERT INTO etf_master (ticker,name,market) VALUES (%s,%s,%s) "
-            "ON DUPLICATE KEY UPDATE name=VALUES(name), market=VALUES(market)",
+            "INSERT IGNORE INTO etf_master (ticker,name,market,auto_discovered) VALUES (%s,%s,%s,1)",
             (body.ticker, body.name, body.market)
         )
+        if cursor.rowcount == 0:
+            return safe_json({"status": "error", "message": "ETF 已存在，不能覆寫既有商品資料"}, 409)
         conn.commit()
 
     cache.delete("etf:index")   # 讓搜尋/自動補全立即包含新 ETF
