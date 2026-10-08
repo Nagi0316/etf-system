@@ -68,6 +68,17 @@ python3 scripts/data_source_diagnostics.py
 測試範圍包含報價來源、價格歷史、分割還原、資料同步狀態、快取、前端格式化行為、公開頁面渲染與靜態資產完整性。
 GitHub Actions 會在每次推送與 Pull Request 自動重跑 Python 測試、前端建置及語法檢查。
 
+## 免費公開網站部署（Render）
+
+原本 Railway Web Service 若需要付費，**不必要求訪客付錢**：可將 FastAPI 專案改部署到 Render 的 Free Web Service。根目錄的 [`render.yaml`](render.yaml) 已準備免費 Python 服務（新加坡節點、`/health` 健康檢查），不需更改前端、移除使用者登入或購買主機方案。
+
+1. 在 [Render Dashboard](https://dashboard.render.com/) 登入，選擇 **New → Blueprint**，連接 `Nagi0316/etf-system` 的 GitHub `main` 分支，再選擇此專案的 `render.yaml`。
+2. 部署設定提示輸入 `DB_HOST`、`DB_USER`、`DB_PASSWORD` 時，請使用**原本 Railway 連接的 TiDB/MySQL 同一套資料庫**。`DB_NAME` 預設 `etf_tracker`，若原本不同請自行修改；`JWT_SECRET` 自動產生新的安全值。絕不能把金鑰或密碼提交至 GitHub。**免費 Render 的 SQLite 無法持久保存資料**，網站因此會在沒有遠端資料庫設定時拒絕啟動，而不是讓用戶資料日後無聲消失。
+3. 如需使用 Google 登入，填入 `GOOGLE_CLIENT_ID` 與 `GOOGLE_CLIENT_SECRET`，並在 Google Cloud OAuth 用戶端的「已授權的重新導向 URI」新增 `https://<實際服務網址>.onrender.com/api/auth/google/callback`。APP_URL 和回呼 URL 未另外設定時會由 Render 網址自動推導；有自訂網域時應分別設定正確的 `APP_URL` 和 `GOOGLE_REDIRECT_URI`。
+4. 部署完成後檢查網站首頁、`/health`、ETF 查詢及登入流程。確認新站讀取的是既有資料庫，然後才修改對外網址並關閉 Railway 計費服務；勿先刪除 Railway 上的環境變數或資料庫。
+
+**免費方案限制：** Render Free Web Service 閒置 15 分鐘會休眠，下次訪客開啟可能約需一分鐘喚醒；每個工作區每月包含 750 免費執行小時，另有流量與建置額度。休眠時站內 APScheduler 不會繼續執行定時行情同步，因此價格可能暫時較舊；需要可靠的全天候背景同步時，應另外採用可持續執行的排程架構。TiDB/MySQL 本身是否免費由其服務方案決定；免費主機不等於外部服務永遠無費用。詳情見 [Render 免費方案說明](https://render.com/docs/free)。
+
 ## 資料正確性原則
 
 - 台股報價優先使用證交所/櫃買中心公開資料，美股與歷史價設有多來源備援。

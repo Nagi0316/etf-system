@@ -18,6 +18,13 @@ DB_NAME     = os.getenv("DB_NAME", "etf_tracker")
 SQLITE_PATH = str(BASE_DIR / "etf_tracker.db")
 USE_MYSQL   = bool(DB_HOST and DB_USER and DB_PASSWORD)
 
+# Render 免費主機的本機檔案會在休眠／重啟後消失，正式站絕不可將會員資料寫入 SQLite。
+if os.getenv("RENDER", "").lower() == "true" and not USE_MYSQL:
+    raise RuntimeError(
+        "Render 部署必須設定 DB_HOST、DB_USER、DB_PASSWORD，"
+        "並連線到既有的 TiDB/MySQL 資料庫；禁止使用暫存 SQLite 儲存會員資料。"
+    )
+
 # ── JWT ──
 _raw_jwt_secret = os.getenv("JWT_SECRET", "")
 if not _raw_jwt_secret:
@@ -38,10 +45,11 @@ JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "168"))  # 7 days
 # ── Google OAuth ──
 GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
-GOOGLE_REDIRECT_URI  = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/auth/google/callback")
+GOOGLE_REDIRECT_URI  = os.getenv("GOOGLE_REDIRECT_URI", "").strip()
 
 # ── App ──
-APP_URL       = os.getenv("APP_URL", "http://localhost:8000").rstrip("/")
+APP_URL       = (os.getenv("APP_URL") or os.getenv("RENDER_EXTERNAL_URL") or "http://localhost:8000").rstrip("/")
+GOOGLE_REDIRECT_URI = GOOGLE_REDIRECT_URI or f"{APP_URL}/api/auth/google/callback"
 TEMPLATES_DIR = str(BASE_DIR / "templates")
 STATIC_DIR    = str(BASE_DIR / "static")
 AVATAR_DIR    = str(BASE_DIR / "static" / "uploads" / "avatars")
@@ -64,7 +72,7 @@ def _resolve_asset_version() -> str:
     if configured:
         return configured
 
-    commit_sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", "").strip()
+    commit_sha = (os.getenv("RENDER_GIT_COMMIT") or os.getenv("RAILWAY_GIT_COMMIT_SHA") or "").strip()
     if commit_sha:
         return commit_sha[:12]
 
