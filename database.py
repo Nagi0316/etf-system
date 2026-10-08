@@ -456,6 +456,7 @@ def init_db():
         modify_stmts = [
             # 舊版帳密會員表要求密碼；Google OAuth 會員沒有本機密碼。
             "ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) DEFAULT NULL",
+            "ALTER TABLE users MODIFY COLUMN username VARCHAR(100) NOT NULL",
             # dividend_yield 精度修正（歷史原因）
             "ALTER TABLE etf_daily_data MODIFY COLUMN dividend_yield DECIMAL(10,4) DEFAULT NULL",
             "ALTER TABLE etf_daily_data MODIFY COLUMN payout_freq VARCHAR(20) DEFAULT NULL",
@@ -473,6 +474,14 @@ def init_db():
                     logger.info(f"✅ {col} 欄位定義已更新")
                 except Exception as e:
                     logger.debug(f"MODIFY COLUMN 略過（已是正確型別）: {e}")
+
+            # 舊版 username 唯一索引與 OAuth 顯示名稱衝突；登入以唯一 email 辨識。
+            try:
+                cursor.execute("ALTER TABLE users DROP INDEX username")
+                conn.commit()
+                logger.info("✅ 已移除舊版會員顯示名稱唯一索引")
+            except Exception as e:
+                logger.debug(f"舊版 username 索引移除略過: {e}")
 
     new_cols = [
         ("etf_daily_data", "discount_premium",   "DECIMAL(10,2) DEFAULT 0"),
