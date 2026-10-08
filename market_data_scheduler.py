@@ -639,7 +639,7 @@ async def _check_price_alerts():
     try:
         with get_db() as (conn, cursor):
             cursor.execute("""
-                SELECT pa.ticker, d.current_price
+                SELECT DISTINCT pa.ticker, d.current_price
                 FROM price_alerts pa
                 JOIN (
                     SELECT d1.ticker, d1.current_price FROM etf_daily_data d1
@@ -649,7 +649,6 @@ async def _check_price_alerts():
                     ) d2 ON d1.ticker=d2.ticker AND d1.date=d2.md
                 ) d ON pa.ticker=d.ticker
                 WHERE pa.is_active=1 AND pa.is_triggered=0
-                GROUP BY pa.ticker
             """)
             rows = cursor.fetchall()
         for row in rows:
