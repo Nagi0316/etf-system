@@ -454,6 +454,8 @@ def init_db():
     # 平滑升級舊資料庫（MODIFY 欄位型別 / DEFAULT，若無改動則靜默略過）
     if USE_MYSQL:
         modify_stmts = [
+            # 舊版帳密會員表要求密碼；Google OAuth 會員沒有本機密碼。
+            "ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) DEFAULT NULL",
             # dividend_yield 精度修正（歷史原因）
             "ALTER TABLE etf_daily_data MODIFY COLUMN dividend_yield DECIMAL(10,4) DEFAULT NULL",
             "ALTER TABLE etf_daily_data MODIFY COLUMN payout_freq VARCHAR(20) DEFAULT NULL",
